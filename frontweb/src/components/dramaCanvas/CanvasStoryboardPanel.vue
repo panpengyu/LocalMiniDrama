@@ -416,9 +416,9 @@ async function runStep(step) {
   width: min(560px, 94vw);
   padding: 10px 14px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(129, 140, 248, 0.45);
-  background: rgba(15, 15, 18, 0.97);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(129, 140, 248, 0.55);
+  background: #3f3f46 !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 .panel-head {
   display: flex;
@@ -452,11 +452,30 @@ async function runStep(step) {
 .compact-form :deep(.el-input__wrapper),
 .compact-form :deep(.el-select__wrapper) {
   min-height: 28px;
+  background: #52525b !important;
+  box-shadow: none;
+}
+.compact-form :deep(.el-input__wrapper:hover) {
+  background: #3f3f46 !important;
+}
+.compact-form :deep(.el-input__wrapper.is-focus) {
+  background: #52525b !important;
+}
+.compact-form :deep(.el-input__inner) {
+  color: #f4f4f5 !important;
 }
 .compact-form :deep(.el-textarea__inner) {
   resize: vertical;
   min-height: 52px;
   line-height: 1.45;
+  background: #52525b !important;
+  color: #f4f4f5 !important;
+}
+.compact-form :deep(.el-textarea__inner:hover) {
+  background: #3f3f46 !important;
+}
+.compact-form :deep(.el-textarea__inner:focus) {
+  background: #52525b !important;
 }
 .relation-row {
   display: flex;

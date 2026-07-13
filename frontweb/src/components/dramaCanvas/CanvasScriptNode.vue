@@ -67,6 +67,9 @@ const isNodeBusy = computed(() => {
   flex-direction: column;
   align-items: flex-start;
 }
+.canvas-node-stack:has(.canvas-script-node.focused) {
+  z-index: 2000 !important;
+}
 .canvas-script-node {
   position: relative;
   width: 220px;

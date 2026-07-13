@@ -1,10 +1,10 @@
 <template>
   <div class="canvas-node-stack">
-    <div class="canvas-sb-node" :class="{ selected: selected, highlighted: data.highlighted, dimmed: data.dimmed, processing: isProcessing || isNodeBusy, focused: showPanel }">
     <Handle id="chain-in" type="target" :position="Position.Top" />
-    <Handle type="target" :position="Position.Left" />
+    <Handle id="asset-in" type="target" :position="Position.Left" />
     <Handle type="source" :position="Position.Right" />
     <Handle id="chain-out" type="source" :position="Position.Bottom" />
+    <div class="canvas-sb-node" :class="{ selected: selected, highlighted: data.highlighted, dimmed: data.dimmed, processing: isProcessing || isNodeBusy, focused: showPanel }">
       <CanvasNodeStatusOverlay :node-id="id" />
       <div class="head">
         <span class="num">#{{ data.storyboard?.storyboard_number ?? data.index }}</span>
@@ -64,6 +64,9 @@ const isNodeBusy = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+}
+.canvas-node-stack:has(.canvas-sb-node.focused) {
+  z-index: 2000 !important;
 }
 .canvas-sb-node {
   position: relative;

@@ -1,7 +1,27 @@
+/**
+ * 音频路由模块
+ * 
+ * 提供分镜语音合成（TTS）功能，支持单条分镜语音生成和批量分镜语音生成。
+ * 根据 tts_kind 参数区分对白（dialogue）和旁白（narration）两种模式，
+ * 分别保存到不同的字段：对白保存到 audio_local_path，旁白保存到 narration_audio_local_path。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {object} 音频路由处理函数集合
+ */
 const response = require('../response');
 const path = require('path');
 
 function routes(db, log, cfg) {
+  /**
+   * 获取本地存储路径
+   * 
+   * 优先使用传入的 cfg 配置，若未提供则动态加载配置文件。
+   * 将相对路径转换为绝对路径。
+   * 
+   * @returns {string} 本地存储绝对路径
+   */
   function getStoragePath() {
     const loadConfig = require('../config').loadConfig;
     const c = (cfg && cfg.storage) ? cfg : loadConfig();
@@ -11,7 +31,20 @@ function routes(db, log, cfg) {
   }
 
   return {
-    /** 为单条分镜生成 TTS：对白 → audio_local_path；旁白 → narration_audio_local_path（body.tts_kind === 'narration'） */
+    /**
+     * 为单条分镜生成 TTS（语音合成）
+     * 
+     * 根据 tts_kind 参数区分对白和旁白模式：
+     * - dialogue（默认）：从分镜的 dialogue 字段提取文本，合成后保存到 audio_local_path
+     * - narration：从分镜的 narration 字段提取文本，合成后保存到 narration_audio_local_path
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} [req.body.storyboard_id] - 分镜 ID（可选，若提供则从数据库读取文本）
+     * @param {string} [req.body.text] - 待合成文本（可选，若提供则直接使用）
+     * @param {string} [req.body.tts_kind='dialogue'] - 语音类型：'dialogue'（对白）或 'narration'（旁白）
+     * @returns {object} 合成结果（包含本地路径和 URL）
+     */
     extract: async (req, res) => {
       const { storyboard_id, text, tts_kind } = req.body || {};
       if (!text && !storyboard_id) return response.badRequest(res, '请提供 storyboard_id 或 text');
@@ -62,7 +95,17 @@ function routes(db, log, cfg) {
       }
     },
 
-    /** 批量为多条分镜生成 TTS */
+    /**
+     * 批量为多条分镜生成 TTS（语音合成）
+     * 
+     * 遍历指定的分镜 ID 列表，逐一为每个分镜的对白（dialogue）字段生成语音。
+     * 每个分镜独立处理，单个失败不影响其他分镜。
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number[]} req.body.storyboard_ids - 分镜 ID 列表
+     * @returns {object[]} 批量合成结果列表（每个元素包含 storyboard_id 和结果/错误信息）
+     */
     extractBatch: async (req, res) => {
       const { storyboard_ids } = req.body || {};
       if (!Array.isArray(storyboard_ids) || storyboard_ids.length === 0) {

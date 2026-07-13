@@ -12,7 +12,6 @@
         },
       ]"
     >
-      <Handle type="source" :position="Position.Right" />
       <div class="cover">
         <img v-if="thumbUrl && !isNodeBusy" :src="thumbUrl" alt="" />
         <div v-else-if="!isNodeBusy" class="cover-placeholder">{{ kindIcon }}</div>
@@ -91,6 +90,11 @@ const statusChip = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  position: relative;
+  z-index: 10;
+}
+.canvas-node-stack:has(.canvas-asset-node.focused) {
+  z-index: 2000 !important;
 }
 .canvas-asset-node {
   position: relative;

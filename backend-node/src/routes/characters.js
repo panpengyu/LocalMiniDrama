@@ -1,3 +1,15 @@
+/**
+ * 角色路由模块
+ * 
+ * 提供角色的完整 CRUD 操作，包括角色创建、查询、更新、删除、图片上传、
+ * AI 生成图片、四视图生成、提示词生成、锚点提炼、素材库管理等功能。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @param {object} uploadService - 文件上传服务
+ * @returns {object} 角色路由处理函数集合
+ */
 const fs = require('fs');
 const path = require('path');
 const response = require('../response');
@@ -7,6 +19,14 @@ const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 
 function routes(db, cfg, log, uploadService) {
   return {
+    /**
+     * 获取单个角色详情接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 角色详情数据
+     */
     getOne: (req, res) => {
       try {
         const row = db.prepare(
@@ -37,6 +57,16 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 更新角色信息接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {object} req.body - 更新数据
+     * @returns {object} 操作结果
+     */
     update: (req, res) => {
       try {
         const out = characterLibraryService.updateCharacter(db, log, req.params.id, req.body || {});
@@ -50,6 +80,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 删除角色接口（软删除）
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 操作结果
+     */
     delete: (req, res) => {
       try {
         const out = characterLibraryService.deleteCharacter(db, log, req.params.id);
@@ -63,6 +102,17 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 批量生成角色图片接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number[]} req.body.character_ids - 角色 ID 数组
+     * @param {string} [req.body.model] - AI 模型名称
+     * @param {string} [req.body.style] - 风格参数
+     * @returns {object} 批量生成结果
+     */
     batchGenerateImages: (req, res) => {
       try {
         const body = req.body || {};
@@ -94,6 +144,17 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 生成角色图片接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {string} [req.body.model] - AI 模型名称
+     * @param {string} [req.body.style] - 风格参数
+     * @returns {object} 生成任务信息
+     */
     generateImage: async (req, res) => {
       try {
         const body = req.body || {};
@@ -119,6 +180,16 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 上传角色图片接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {object} req.file - 上传文件对象
+     * @returns {object} 上传结果（包含 URL 和本地路径）
+     */
     uploadImage: (req, res) => {
       if (!req.file || !req.file.buffer) {
         return response.badRequest(res, '请选择文件');
@@ -154,6 +225,19 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 更新角色图片接口（支持多字段更新）
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {string} [req.body.image_url] - 图片 URL
+     * @param {string} [req.body.local_path] - 本地路径
+     * @param {string} [req.body.extra_images] - 额外图片
+     * @param {string} [req.body.ref_image] - 参考图片
+     * @returns {object} 操作结果
+     */
     putImage: (req, res) => {
       try {
         const body = req.body || {};
@@ -168,7 +252,6 @@ function routes(db, cfg, log, uploadService) {
           image_url: nextImg,
           local_path: nextLp,
         });
-        // 只有明确传了 image_url 时才更新主图，避免只传 ref_image 时清掉主图
         if (body.image_url !== undefined) {
           const out = characterLibraryService.uploadCharacterImage(db, log, req.params.id, body.image_url, {
             skipStaleMark: true,
@@ -194,6 +277,16 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 从角色库应用图片到角色接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {number} req.body.library_id - 角色库项 ID
+     * @returns {object} 操作结果
+     */
     imageFromLibrary: (req, res) => {
       try {
         const libraryId = (req.body || {}).library_id;
@@ -210,6 +303,16 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 将角色添加到本剧角色库接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {string} [req.body.category] - 分类
+     * @returns {object} 操作结果（包含库项信息）
+     */
     addToLibrary: (req, res) => {
       try {
         const category = (req.body || {}).category;
@@ -224,6 +327,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 将角色添加到全局素材库接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 操作结果（包含库项信息）
+     */
     addToMaterialLibrary: (req, res) => {
       try {
         const out = characterLibraryService.addCharacterToMaterialLibrary(db, log, req.params.id);
@@ -237,6 +349,17 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 提炼角色身份锚点接口（异步执行）
+     * 
+     * 根据角色外貌描述自动提炼身份锚点信息。
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 操作结果（立即返回，后台异步执行）
+     */
     extractAnchors: (req, res) => {
       const charRow = db.prepare(
         'SELECT id, appearance, identity_anchors FROM characters WHERE id = ? AND deleted_at IS NULL'
@@ -249,6 +372,17 @@ function routes(db, cfg, log, uploadService) {
       });
       response.success(res, { message: '锚点提炼已启动，请稍后刷新查看' });
     },
+
+    /**
+     * 生成角色四视图图片接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {string} [req.body.model_name] - AI 模型名称
+     * @param {string} [req.body.style] - 风格参数
+     * @returns {object} 生成任务信息
+     */
     generateFourViewImage: async (req, res) => {
       try {
         const body = req.body || {};
@@ -266,6 +400,17 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 生成角色提示词接口（仅生成提示词，不生成图片）
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {string} [req.body.model_name] - AI 模型名称
+     * @param {string} [req.body.style] - 风格参数
+     * @returns {object} 生成的提示词
+     */
     generatePrompt: async (req, res) => {
       try {
         const body = req.body || {};
@@ -282,6 +427,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 从图片提取角色外貌描述接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 提取的外貌描述
+     */
     extractFromImage: async (req, res) => {
       try {
         const out = await characterLibraryService.extractAppearanceFromImage(db, log, cfg, req.params.id);
@@ -295,7 +449,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
-    /** 即梦素材库 asset 注册（Seedance 2.0 等视频引用 asset://） */
+
+    /**
+     * 即梦素材库 asset 注册接口（Seedance 2.0 等视频引用 asset://）
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 注册结果（包含 seedance2_asset）
+     */
     sd2Certify: async (req, res) => {
       try {
         const out = await characterLibraryService.registerCharacterJimengMaterialAsset(db, log, cfg, req.params.id);
@@ -309,6 +471,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 刷新即梦素材库认证状态接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 刷新后的认证状态
+     */
     sd2CertifyRefresh: async (req, res) => {
       try {
         const out = await characterLibraryService.refreshCharacterJimengMaterialAsset(db, log, cfg, req.params.id);
@@ -322,7 +493,16 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
-    /** Seedance 2.0 角色音色参考音频上传 */
+
+    /**
+     * Seedance 2.0 角色音色参考音频上传接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @param {object} req.file - 音频文件对象
+     * @returns {object} 上传结果（包含 seedance2_voice_asset）
+     */
     sd2VoiceUpload: async (req, res) => {
       try {
         const charId = Number(req.params.id);
@@ -378,6 +558,15 @@ function routes(db, cfg, log, uploadService) {
         response.internalError(res, err.message);
       }
     },
+
+    /**
+     * 刷新角色音色参考状态接口
+     * 
+     * @param {object} req - Express 请求对象
+     * @param {object} res - Express 响应对象
+     * @param {number} req.params.id - 角色 ID
+     * @returns {object} 刷新后的音色参考状态
+     */
     sd2VoiceRefresh: async (req, res) => {
       try {
         const charId = Number(req.params.id);

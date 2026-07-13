@@ -42,15 +42,23 @@ function ensureSingleDefaultPerType(db) {
   }
 }
 
-function listConfigs(db, serviceType) {
+function listConfigs(db, serviceType, userId) {
   ensureSingleDefaultPerType(db);
   const order = 'ORDER BY is_default DESC, priority DESC, created_at DESC';
-  let sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL ' + order;
+  let sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL ';
   const params = [];
+  
+  if (userId !== undefined && userId !== null) {
+    sql += 'AND (user_id IS NULL OR user_id = ?) ';
+    params.push(userId);
+  }
+  
   if (serviceType) {
-    sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL AND service_type = ? ' + order;
+    sql += 'AND service_type = ? ';
     params.push(serviceType);
   }
+  
+  sql += order;
   const rows = params.length ? db.prepare(sql).all(...params) : db.prepare(sql).all();
   return rows.map(rowToConfig);
 }
@@ -113,8 +121,8 @@ function createConfig(db, log, req) {
   }
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
   const info = db.prepare(
-    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
   ).run(
     req.service_type || 'text',
     req.provider || '',
@@ -129,10 +137,11 @@ function createConfig(db, log, req) {
     req.priority ?? 0,
     req.is_default ? 1 : 0,
     req.settings || null,
+    req.user_id || null,
     now,
     now
   );
-  log.info('AI config created', { config_id: info.lastInsertRowid, provider: req.provider });
+  log.info('AI config created', { config_id: info.lastInsertRowid, provider: req.provider, user_id: req.user_id });
   const newId = info.lastInsertRowid;
   if (req.is_default) clearOtherDefault(db, req.service_type || 'text', newId);
   return getConfig(db, newId);
@@ -212,6 +221,16 @@ function deleteConfig(db, log, id) {
   return true;
 }
 
+function sanitizeApiKey(apiKey) {
+  if (!apiKey) return '';
+  const str = String(apiKey).trim();
+  return str.replace(/[\x00-\x1F\x7F]/g, '');
+}
+
+function sanitizeApiKeyForHeader(apiKey) {
+  return sanitizeApiKey(apiKey);
+}
+
 function rowToConfig(r) {
   const cfg = {
     id: r.id,
@@ -220,7 +239,7 @@ function rowToConfig(r) {
     api_protocol: r.api_protocol || '',
     name: r.name,
     base_url: r.base_url,
-    api_key: r.api_key,
+    api_key: sanitizeApiKey(r.api_key),
     model: modelFromDb(r.model),
     default_model: r.default_model ? String(r.default_model).trim() : null,
     endpoint: r.endpoint,
@@ -265,7 +284,7 @@ async function testConnection(opts) {
     const url = base + '/api/v1/nanobanana/record-info?taskId=test-connectivity';
     const res = await fetch(url, {
       method: 'GET',
-      headers: { Authorization: 'Bearer ' + (opts.api_key || '') },
+      headers: { Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key || '') },
     });
     if (res.status === 401 || res.status === 403) {
       const text = await res.text();
@@ -308,7 +327,7 @@ async function testConnection(opts) {
     const probeBody = JSON.stringify({ model: model || 'speech-02-hd', text: 'hi', stream: false });
     const res = await fetch(probeUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (opts.api_key || '') },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key || '') },
       body: probeBody,
     });
     if (res.status === 401 || res.status === 403) {
@@ -350,7 +369,7 @@ async function testConnection(opts) {
     console.log('[testConnection] DashScope 非文本服务，用 compatible chat 验证 key', { chatUrl, serviceType, model });
     const res = await fetch(chatUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + opts.api_key },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key) },
       body: JSON.stringify(body),
     });
     // 401/403 = key 无效，其他均视为联通
@@ -372,7 +391,7 @@ async function testConnection(opts) {
     console.log('[testConnection] 视频服务，用 chat/completions 验证 key', { url, serviceType, model });
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (opts.api_key || '') },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key || '') },
       body: JSON.stringify(body),
     });
     // 401/403 = key 无效；其他（400 模型不存在等）视为联通
@@ -396,7 +415,7 @@ async function testConnection(opts) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + (opts.api_key || ''),
+        Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key || ''),
       },
       body: JSON.stringify(body),
     });
@@ -444,7 +463,7 @@ async function testConnection(opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (opts.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(opts.api_key || ''),
     },
     body: JSON.stringify(body),
   });

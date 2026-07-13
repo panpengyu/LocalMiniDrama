@@ -23,7 +23,7 @@ function hasColumn(db, table, column) {
   }
   const key = `${table}.${column}`;
   if (tableCache.has(key)) return tableCache.get(key);
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  const columns = db.prepare(`SELECT column_name as name FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = ?`).all(table);
   const found = columns.some((row) => row.name === column);
   tableCache.set(key, found);
   return found;

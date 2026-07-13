@@ -301,12 +301,13 @@ function highlightRelated() {
 <style scoped>
 .asset-panel {
   margin-top: 10px;
-  width: min(520px, 92vw);
+  margin-left: 320px;
+  width: min(480px, 80vw);
   padding: 10px 14px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  background: rgba(15, 15, 18, 0.97);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(52, 211, 153, 0.5);
+  background: #3f3f46 !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 .panel-head {
   display: flex;
@@ -332,8 +333,8 @@ function highlightRelated() {
   height: 108px;
   border-radius: 10px;
   overflow: hidden;
-  background: #09090b;
-  border: 1px solid #3f3f46;
+  background: #27272a;
+  border: 1px solid #52525b;
 }
 .preview-box img {
   width: 100%;
@@ -357,7 +358,7 @@ function highlightRelated() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: rgba(9, 9, 11, 0.82);
+  background: #27272a;
   font-size: 10px;
   color: #d4d4d8;
   text-align: center;
@@ -395,11 +396,30 @@ function highlightRelated() {
 .compact-form :deep(.el-input__wrapper),
 .compact-form :deep(.el-select__wrapper) {
   min-height: 28px;
+  background: #52525b !important;
+  box-shadow: none;
+}
+.compact-form :deep(.el-input__wrapper:hover) {
+  background: #3f3f46 !important;
+}
+.compact-form :deep(.el-input__wrapper.is-focus) {
+  background: #52525b !important;
+}
+.compact-form :deep(.el-input__inner) {
+  color: #f4f4f5 !important;
 }
 .compact-form :deep(.el-textarea__inner) {
   resize: vertical;
   min-height: 52px;
   line-height: 1.45;
+  background: #52525b !important;
+  color: #f4f4f5 !important;
+}
+.compact-form :deep(.el-textarea__inner:hover) {
+  background: #3f3f46 !important;
+}
+.compact-form :deep(.el-textarea__inner:focus) {
+  background: #52525b !important;
 }
 .form-row-2 {
   display: flex;

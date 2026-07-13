@@ -8,6 +8,12 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 
+function sanitizeApiKey(apiKey) {
+  if (!apiKey) return '';
+  const str = String(apiKey).trim();
+  return str.replace(/[\x00-\x1F\x7F]/g, '');
+}
+
 /**
  * 使用 MiniMax T2A v2 合成语音
  */
@@ -35,7 +41,7 @@ async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${sanitizeApiKey(apiKey)}`,
         'Content-Length': Buffer.byteLength(body),
       },
     };
@@ -89,7 +95,7 @@ async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed) 
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
-        ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+        ...(apiKey ? { 'Authorization': `Bearer ${sanitizeApiKey(apiKey)}` } : {}),
       },
     };
     const req = mod.request(reqOpts, (res) => {

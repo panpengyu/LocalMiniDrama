@@ -477,8 +477,8 @@ async function generateSingleFrame(db, log, cfg, sb, scene, characterNames, mode
   };
 }
 
-async function processFramePromptGeneration(db, log, taskId, storyboardId, frameType, panelCount, model) {
-  let cfg = loadConfig();
+async function processFramePromptGeneration(db, log, taskId, storyboardId, frameType, panelCount, model, cfg) {
+  let effectiveCfg = cfg || loadConfig();
   taskService.updateTaskStatus(db, taskId, 'processing', 0, '正在生成帧提示词...');
 
   const sb = loadStoryboard(db, storyboardId);
@@ -497,7 +497,7 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
       const dramaRow = db.prepare('SELECT style, metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(epRow.drama_id);
       if (dramaRow) {
         const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
-        let next = { ...cfg, style: { ...(cfg?.style || {}) } };
+        let next = { ...effectiveCfg, style: { ...(effectiveCfg?.style || {}) } };
         if (dramaRow.metadata) {
           const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
           if (meta && meta.aspect_ratio) {
@@ -505,7 +505,7 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
             next.style.default_video_ratio = meta.aspect_ratio;
           }
         }
-        cfg = mergeCfgStyleWithDrama(next, dramaRow);
+        effectiveCfg = mergeCfgStyleWithDrama(next, dramaRow);
       }
     }
   } catch (_) {}
@@ -530,7 +530,7 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
   try {
     if (frameType === 'first' || frameType === 'key' || frameType === 'last') {
       const frameKind = frameType;
-      const single = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, frameKind, sanitizeOpts);
+      const single = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, frameKind, sanitizeOpts);
       saveFramePrompt(db, log, storyboardId, frameType, single.prompt, single.description, '');
       combinedPrompt = single.prompt;
       description = single.description;
@@ -539,35 +539,35 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
       layout = `horizontal_${count}`;
       const prompts = [];
       if (count === 3) {
-        const first = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
-        const key = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-        const last = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
+        const first = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
+        const key = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+        const last = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
         prompts.push(first.prompt, key.prompt, last.prompt);
         description = '分镜板组合提示词';
       } else if (count === 4) {
-        const first = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
-        const key1 = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-        const key2 = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-        const last = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
+        const first = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
+        const key1 = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+        const key2 = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+        const last = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
         prompts.push(first.prompt, key1.prompt, key2.prompt, last.prompt);
         description = '分镜板组合提示词';
       } else {
-        prompts.push((await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'first', sanitizeOpts)).prompt);
+        prompts.push((await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'first', sanitizeOpts)).prompt);
         for (let i = 0; i < count - 2; i++) {
-          prompts.push((await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts)).prompt);
+          prompts.push((await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts)).prompt);
         }
-        prompts.push((await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'last', sanitizeOpts)).prompt);
+        prompts.push((await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'last', sanitizeOpts)).prompt);
         description = '分镜板组合提示词';
       }
       combinedPrompt = prompts.join('\n---\n');
       saveFramePrompt(db, log, storyboardId, frameType, combinedPrompt, description, layout);
     } else if (frameType === 'action') {
       layout = 'horizontal_5';
-      const first = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
-      const key1 = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-      const key2 = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-      const key3 = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
-      const last = await generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
+      const first = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'first', sanitizeOpts);
+      const key1 = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+      const key2 = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+      const key3 = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'key', sanitizeOpts);
+      const last = await generateSingleFrame(db, log, effectiveCfg, sb, scene, characterNames, model, 'last', sanitizeOpts);
       combinedPrompt = [first.prompt, key1.prompt, key2.prompt, key3.prompt, last.prompt].join('\n---\n');
       description = '动作序列组合提示词';
       saveFramePrompt(db, log, storyboardId, frameType, combinedPrompt, description, layout);
@@ -589,7 +589,7 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
   }
 }
 
-function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model) {
+function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model, cfg) {
   const sid = Number(storyboardId);
   const sb = db.prepare('SELECT id FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(sid);
   if (!sb) {
@@ -601,7 +601,7 @@ function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model
   }
   const task = taskService.createTask(db, log, 'frame_prompt_generation', String(storyboardId));
   setImmediate(() => {
-    processFramePromptGeneration(db, log, task.id, storyboardId, frameType, panelCount || 0, model);
+    processFramePromptGeneration(db, log, task.id, storyboardId, frameType, panelCount || 0, model, cfg);
   });
   log.info('Frame prompt task created', { task_id: task.id, storyboard_id: storyboardId, frame_type: frameType });
   return task.id;

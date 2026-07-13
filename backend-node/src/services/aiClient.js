@@ -5,6 +5,18 @@ const https = require('https');
 const http = require('http');
 
 /**
+ * 清理 API Key 中的非法字符，确保可以安全地用于 HTTP Authorization 头。
+ * HTTP 头不允许包含控制字符（00-1F, 7F）和其他特殊字符。
+ * @param {string} apiKey - 原始 API Key
+ * @returns {string} 清理后的 API Key
+ */
+function sanitizeApiKeyForHeader(apiKey) {
+  if (!apiKey) return '';
+  const str = String(apiKey).trim();
+  return str.replace(/[\x00-\x1F\x7F]/g, '');
+}
+
+/**
  * 非流式 POST，发送 JSON body，等待完整 HTTP 响应后返回。
  * 用于视觉分析等短请求，兼容 o-series 推理模型和各种第三方代理。
  */
@@ -238,7 +250,7 @@ function getModelFromConfig(config, preferredModel) {
  */
 function getConfigFromModelMap(db, sceneKey) {
   try {
-    const row = db.prepare('SELECT * FROM ai_model_map WHERE key = ?').get(sceneKey);
+    const row = db.prepare('SELECT * FROM ai_model_map WHERE `key` = ?').get(sceneKey);
     if (!row) return null;
     const configs = aiConfigService.listConfigs(db, row.service_type || 'text');
     let config = null;
@@ -337,7 +349,8 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
   body = applyDeepSeekChatOptions(config, body);
   const startMs = Date.now();
   log.info('AI generateText request', { url: url.slice(0, 60), model, max_tokens: finalMaxTokens ?? '(model default)', json_mode, stream: true });
-  const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 60000, (receivedLen, event, accumulated) => {
+  const sanitizedKey = sanitizeApiKeyForHeader(config.api_key);
+  const res = await postJSONStream(url, { Authorization: 'Bearer ' + sanitizedKey }, body, 60000, (receivedLen, event, accumulated) => {
     if (event === 'first_token') {
       log.info('AI stream first token', { model, ttft_ms: Date.now() - startMs });
     } else if (receivedLen > 0 && receivedLen % 500 < 20) {
@@ -441,9 +454,10 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
     stream: true,
   });
   let lastLen = 0;
+  const sanitizedKey = sanitizeApiKeyForHeader(config.api_key);
   const res = await postJSONStream(
     url,
-    { Authorization: 'Bearer ' + (config.api_key || '') },
+    { Authorization: 'Bearer ' + sanitizedKey },
     body,
     silenceMs,
     (receivedLen, event, accumulated) => {
@@ -592,7 +606,8 @@ async function generateTextWithVision(db, log, serviceType, userPrompt, systemPr
   let res;
   try {
     // 使用非流式请求：视觉分析响应短，且流式对推理模型（o1/o3/o4）和部分代理兼容性差
-    res = await postJSONNonStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 120000);
+    const sanitizedKey = sanitizeApiKeyForHeader(config.api_key);
+    res = await postJSONNonStream(url, { Authorization: 'Bearer ' + sanitizedKey }, body, 120000);
   } catch (httpErr) {
     log.error('[Vision] HTTP 请求失败', { model, url: url.slice(0, 80), error: httpErr.message });
     throw httpErr;

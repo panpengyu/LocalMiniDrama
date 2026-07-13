@@ -6,7 +6,7 @@ const propService = require('./propService');
 const { safeParseAIJSON, extractFirstArray } = require('../utils/safeJson');
 let _cfg = null; // 由 extractPropsForEpisode 注入，供异步任务使用
 
-async function processPropExtraction(db, log, taskId, episodeId) {
+async function processPropExtraction(db, log, taskId, episodeId, cfg) {
   taskService.updateTaskStatus(db, taskId, 'processing', 0, '正在分析剧本...');
 
   const episode = db.prepare(
@@ -24,13 +24,13 @@ async function processPropExtraction(db, log, taskId, episodeId) {
   }
 
   const loadConfig = require('../config').loadConfig;
-  let cfg = loadConfig();
+  let effectiveCfg = cfg || loadConfig();
   // 用项目的 aspect_ratio 和 style 覆盖全局配置，使 image_prompt 使用正确比例和风格
   try {
     const dramaRow = db.prepare('SELECT style, metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(episode.drama_id);
     if (dramaRow) {
       const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
-      let next = { ...cfg, style: { ...(cfg?.style || {}), default_prop_style: '' } };
+      let next = { ...effectiveCfg, style: { ...(effectiveCfg?.style || {}), default_prop_style: '' } };
       if (dramaRow.metadata) {
         const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
         if (meta && meta.aspect_ratio) {
@@ -38,11 +38,11 @@ async function processPropExtraction(db, log, taskId, episodeId) {
           next.style.default_image_ratio = meta.aspect_ratio;
         }
       }
-      cfg = mergeCfgStyleWithDrama(next, dramaRow);
+      effectiveCfg = mergeCfgStyleWithDrama(next, dramaRow);
     }
   } catch (_) {}
-  const systemPrompt = promptI18n.getPropExtractionPrompt(cfg);
-  const contentLabel = promptI18n.isEnglish(cfg) ? '[Script Content]\n' : '【剧本内容】\n';
+  const systemPrompt = promptI18n.getPropExtractionPrompt(effectiveCfg);
+  const contentLabel = promptI18n.isEnglish(effectiveCfg) ? '[Script Content]\n' : '【剧本内容】\n';
   const prompt = contentLabel + String(scriptContent).trim();
 
   let response;
@@ -142,7 +142,7 @@ function extractPropsForEpisode(db, log, episodeId, cfg) {
 
   const task = taskService.createTask(db, log, 'prop_extraction', String(episodeId));
   setImmediate(() => {
-    processPropExtraction(db, log, task.id, episodeId).catch((err) => {
+    processPropExtraction(db, log, task.id, episodeId, cfg).catch((err) => {
       log.error('processPropExtraction fatal', { error: err.message, task_id: task.id });
     });
   });

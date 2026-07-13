@@ -4,6 +4,8 @@ import { dramaAPI } from '@/api/drama'
 import { storyboardsAPI } from '@/api/storyboards'
 import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
+import { uploadAPI } from '@/api/upload'
+import { characterAPI } from '@/api/characters'
 
 /** 合并 drama 级与本集已关联角色，避免 drama.characters 被布局保存截断后漏传 */
 function collectExistingCharacters(dramaData, episodeId) {
@@ -18,6 +20,16 @@ function collectExistingCharacters(dramaData, episodeId) {
     }
   }
   return [...map.values()]
+}
+
+function dataUrlToFile(dataUrl, filename) {
+  const arr = dataUrl.split(',')
+  const mime = (arr[0].match(/:(.*?);/) || [])[1] || 'image/png'
+  const bstr = atob(arr[1])
+  let n = bstr.length
+  const u8arr = new Uint8Array(n)
+  while (n--) u8arr[n] = bstr.charCodeAt(n)
+  return new File([u8arr], filename || 'reference.png', { type: mime })
 }
 
 function toCharacterSavePayload(c) {
@@ -173,6 +185,19 @@ export function useCanvasCrud(deps) {
     await refreshCanvas()
     const newChar = (drama.value?.characters || []).find((c) => !beforeIds.has(c.id))
       || (drama.value?.characters || []).find((c) => c.name === name)
+    
+    if (newChar?.id && form.refImage) {
+      try {
+        const file = dataUrlToFile(form.refImage.dataUrl, form.refImage.filename || 'reference.png')
+        const uploadRes = await uploadAPI.uploadImage(file, { dramaId })
+        const refPath = uploadRes.local_path || uploadRes.url || ''
+        await characterAPI.putRefImage(newChar.id, refPath)
+        await refreshCanvas()
+      } catch (e) {
+        console.warn('[createCharacter] 保存参考图失败:', e.message)
+      }
+    }
+
     const nodeId = newChar?.id ? `char:${newChar.id}` : null
     const pos = pendingFlowPosition.value
     if (nodeId && pos) await saveNodePosition(nodeId, pos)

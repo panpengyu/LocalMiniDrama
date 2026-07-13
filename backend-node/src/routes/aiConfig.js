@@ -1,13 +1,41 @@
+/**
+ * AI 配置路由模块
+ * 
+ * 提供 AI 配置的完整 CRUD 操作，包括配置列表、查询、创建、更新、删除、
+ * 连接测试、厂商锁定模式管理、批量更新 API Key、ModelArk 资产代理、
+ * 即梦2素材列表等功能。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {object} AI 配置路由处理函数集合
+ */
 const aiConfigService = require('../services/aiConfigService');
 const response = require('../response');
 
+/**
+ * 获取 AI 配置列表接口
+ * 
+ * 超级管理员可查看所有配置，普通用户仅查看自己的配置。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @returns {function} Express 路由处理函数
+ */
 function list(db) {
   return (req, res) => {
-    const list = aiConfigService.listConfigs(db, req.query.service_type);
+    const userId = req.user?.id;
+    const isAdmin = req.user?.role === 'super_admin';
+    const list = aiConfigService.listConfigs(db, req.query.service_type, isAdmin ? undefined : userId);
     response.success(res, list);
   };
 }
 
+/**
+ * 获取单个 AI 配置详情接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @returns {function} Express 路由处理函数
+ */
 function get(db) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
@@ -18,6 +46,12 @@ function get(db) {
   };
 }
 
+/**
+ * 获取厂商锁定模式状态接口
+ * 
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function vendorLock(cfg) {
   return (req, res) => {
     const status = aiConfigService.getVendorLockStatus(cfg);
@@ -25,6 +59,16 @@ function vendorLock(cfg) {
   };
 }
 
+/**
+ * 创建 AI 配置接口
+ * 
+ * 厂商锁定模式下不允许创建新配置。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function create(db, log, cfg) {
   return (req, res) => {
     if (aiConfigService.getVendorLockStatus(cfg).enabled) {
@@ -38,9 +82,11 @@ function create(db, log, cfg) {
       return response.badRequest(res, '缺少必填字段: api_key');
     }
     try {
+      const isAdmin = req.user?.role === 'super_admin';
       const config = aiConfigService.createConfig(db, log, {
         ...body,
         model: body.model ?? [],
+        user_id: isAdmin ? null : req.user?.id,
       });
       response.created(res, config);
     } catch (err) {
@@ -50,13 +96,22 @@ function create(db, log, cfg) {
   };
 }
 
+/**
+ * 更新 AI 配置接口
+ * 
+ * 厂商锁定模式下只允许修改 api_key、default_model、is_default 字段。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function update(db, log, cfg) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return response.badRequest(res, '无效的配置ID');
 
     let body = req.body || {};
-    // 锁定模式下只允许修改 api_key、default_model、is_default
     if (aiConfigService.getVendorLockStatus(cfg).enabled) {
       const allowed = {};
       if (body.api_key !== undefined) allowed.api_key = body.api_key;
@@ -71,6 +126,16 @@ function update(db, log, cfg) {
   };
 }
 
+/**
+ * 删除 AI 配置接口（软删除）
+ * 
+ * 厂商锁定模式下不允许删除配置。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function remove(db, log, cfg) {
   return (req, res) => {
     if (aiConfigService.getVendorLockStatus(cfg).enabled) {
@@ -84,6 +149,16 @@ function remove(db, log, cfg) {
   };
 }
 
+/**
+ * 批量更新 API Key 接口
+ * 
+ * 仅在厂商锁定模式下可用，用于统一更新所有配置的 API Key。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function bulkUpdateKey(db, log, cfg) {
   return (req, res) => {
     if (!aiConfigService.getVendorLockStatus(cfg).enabled) {
@@ -103,6 +178,12 @@ function bulkUpdateKey(db, log, cfg) {
   };
 }
 
+/**
+ * 测试 AI 服务连接接口
+ * 
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function testConnection(log) {
   return async (req, res) => {
     const body = req.body || {};
@@ -127,7 +208,14 @@ function testConnection(log) {
   };
 }
 
-/** ModelArk / 方舟私有资产库：代理调用 CreateAssetGroup、ListAssets 等（与官方 Action 名一致） */
+/**
+ * ModelArk / 方舟私有资产库代理接口
+ * 
+ * 代理调用 CreateAssetGroup、ListAssets 等官方 Action，与官方接口名一致。
+ * 
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function modelArkAsset(log) {
   return async (req, res) => {
     const body = req.body || {};
@@ -162,7 +250,14 @@ function modelArkAsset(log) {
   };
 }
 
-/** 即梦2角色认证：代理 GET 素材列表（表单未保存也可用当前填写的网关与 Token） */
+/**
+ * 即梦2角色认证：代理获取素材列表接口
+ * 
+ * 表单未保存也可用当前填写的网关与 Token 进行测试。
+ * 
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function listJimeng2MaterialAssets(log) {
   return async (req, res) => {
     const body = req.body || {};

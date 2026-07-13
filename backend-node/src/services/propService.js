@@ -112,7 +112,7 @@ function softDeletePropsByEpisodeId(db, log, episodeId) {
 
 function associateWithStoryboard(db, log, storyboardId, propIds) {
   db.prepare('DELETE FROM storyboard_props WHERE storyboard_id = ?').run(storyboardId);
-  const ins = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+  const ins = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
   for (const pid of propIds || []) ins.run(storyboardId, pid);
   log.info('Props associated with storyboard', { storyboard_id: storyboardId });
   return true;

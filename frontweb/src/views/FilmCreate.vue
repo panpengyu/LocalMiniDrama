@@ -3524,7 +3524,7 @@ function imageUrl(url) {
   const base = (baseUrl.value || '').replace(/\/$/, '')
   return base ? base + '/' + url.replace(/^\//, '') : url
 }
-/** 优先使用本地地址，避免远程图失效。item 为 { image_url, local_path } 或字符串 url */
+/** 优先使用本地地址，避免远程图失效。item 为 { image_url, local_path, ref_image } 或字符串 url */
 function assetImageUrl(item) {
   if (!item) return ''
   if (typeof item === 'string') return imageUrl(item)
@@ -3533,12 +3533,14 @@ function assetImageUrl(item) {
     const p = localPath.replace(/^\//, '')
     return '/static/' + p
   }
+  const refImg = item.ref_image && String(item.ref_image).trim()
+  if (refImg) return refImg.startsWith('http') ? refImg : '/static/' + refImg.replace(/^\//, '')
   if (item.image_url) return imageUrl(item.image_url)
   return ''
 }
 function hasAssetImage(item) {
   if (!item) return false
-  return !!(item.image_url || item.local_path)
+  return !!(item.image_url || item.local_path || item.ref_image)
 }
 function getSelectedStyle() {
   return getSelectedStylePrompt()

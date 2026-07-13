@@ -1,3 +1,14 @@
+/**
+ * 后端路由总入口模块
+ * 
+ * 负责将所有子路由模块整合到一个 Express Router 中，定义完整的 API 路由表。
+ * 路由按功能模块分组，包括：认证、管理员、剧本、AI配置、生成、资源库、角色、道具、场景、分镜等。
+ * 
+ * @param {object} cfg - 配置对象
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {object} Express Router 实例
+ */
 const express = require('express');
 const response = require('../response');
 const dramaRoutes = require('./drama');
@@ -21,6 +32,8 @@ const assetRoutes = require('./assets');
 const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
+const authRoutes = require('./auth');
+const adminRoutes = require('./admin');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -39,7 +52,7 @@ function setupRouter(cfg, db, log) {
   const characters = characterRoutes(db, cfg, log, uploadService);
   const uploadHandlers = uploadModule.routes(cfg, log, db);
   const scenes = sceneRoutes(db, log, cfg);
-  const storyboards = storyboardRoutes(db, log);
+  const storyboards = storyboardRoutes(db, log, cfg);
   const tailFrameLink = tailFrameLinkRoutes(db, cfg, log);
   const images = imageRoutes(db, cfg, log);
   const videos = videoRoutes(db, log);
@@ -47,8 +60,39 @@ function setupRouter(cfg, db, log) {
   const assets = assetRoutes(db, log);
   const audio = audioRoutes(db, log, cfg);
   const promptOverrides = promptOverridesRoutes.routes(db, log);
+  const auth = authRoutes(db, log);
+  const admin = adminRoutes(db, log);
+  const { requireAuth, requireRole } = require('../middleware/auth');
 
-  // ---------- dramas ----------
+  // ---------- 认证模块 ----------
+  r.post('/auth/register', auth.register);
+  r.post('/auth/login', auth.login);
+  r.post('/auth/logout', auth.logout);
+  r.get('/auth/profile', auth.profile);
+  
+  r.get('/admin-test', (req, res) => {
+    res.json({ success: true, message: 'admin test', user: req.user ? { id: req.user.id, role: req.user.role } : null });
+  });
+
+  // ---------- 管理员模块（超级管理员权限）----------
+  r.get('/admin/stats', requireAuth, requireRole(['super_admin']), admin.getStats);
+  
+  r.get('/admin/users', requireAuth, requireRole(['super_admin']), admin.getUsers);
+  r.post('/admin/users', requireAuth, requireRole(['super_admin']), admin.createUser);
+  r.put('/admin/users/:id', requireAuth, requireRole(['super_admin']), admin.updateUser);
+  r.delete('/admin/users/:id', requireAuth, requireRole(['super_admin']), admin.deleteUser);
+  
+  r.get('/admin/enterprises', requireAuth, requireRole(['super_admin']), admin.getEnterprises);
+  r.post('/admin/enterprises', requireAuth, requireRole(['super_admin']), admin.createEnterprise);
+  r.put('/admin/enterprises/:id', requireAuth, requireRole(['super_admin']), admin.updateEnterprise);
+  r.delete('/admin/enterprises/:id', requireAuth, requireRole(['super_admin']), admin.deleteEnterprise);
+  
+  r.get('/admin/teams', requireAuth, requireRole(['super_admin']), admin.getTeams);
+  r.post('/admin/teams', requireAuth, requireRole(['super_admin']), admin.createTeam);
+  r.put('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.updateTeam);
+  r.delete('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.deleteTeam);
+  
+  // ---------- 剧本模块 ----------
   r.get('/dramas', drama.listDramas);
   r.post('/dramas', drama.createDrama);
   r.get('/dramas/stats', drama.getDramaStats);
@@ -90,19 +134,19 @@ function setupRouter(cfg, db, log) {
   r.put('/dramas/:id', drama.updateDrama);
   r.delete('/dramas/:id', drama.deleteDrama);
 
-  // ---------- ai-configs ----------
+  // ---------- AI配置模块 ----------
   r.get('/ai-configs', aiConfig.list);
   r.post('/ai-configs', aiConfig.create);
   r.post('/ai-configs/test', aiConfig.testConnection);
   r.post('/ai-configs/jimeng2-list-assets', aiConfig.listJimeng2MaterialAssets);
   r.post('/ai-configs/model-ark-asset', aiConfig.modelArkAsset);
-  r.get('/ai-configs/vendor-lock', aiConfig.vendorLock);  // 必须在 /:id 之前
-  r.put('/ai-configs/bulk-update-key', aiConfig.bulkUpdateKey);  // 必须在 /:id 之前
+  r.get('/ai-configs/vendor-lock', aiConfig.vendorLock);
+  r.put('/ai-configs/bulk-update-key', aiConfig.bulkUpdateKey);
   r.get('/ai-configs/:id', aiConfig.get);
   r.put('/ai-configs/:id', aiConfig.update);
   r.delete('/ai-configs/:id', aiConfig.delete);
 
-  // ---------- generation (角色生成：AI + 入库 + 任务结果) ----------
+  // ---------- AI生成模块 ----------
   r.post('/generation/characters', (req, res) => {
     const characterGenerationService = require('../services/characterGenerationService');
     try {
@@ -110,7 +154,8 @@ function setupRouter(cfg, db, log) {
       if (!body.drama_id) {
         return response.badRequest(res, 'drama_id 必填');
       }
-      const taskId = characterGenerationService.generateCharacters(db, cfg, log, body);
+      const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
+      const taskId = characterGenerationService.generateCharacters(db, userCfg, log, body);
       response.success(res, { task_id: taskId, status: 'pending' });
     } catch (err) {
       log.error('generation/characters', { error: err.message });
@@ -118,16 +163,16 @@ function setupRouter(cfg, db, log) {
     }
   });
 
-  // 故事生成：带 drama_id 时异步生成并入库；否则同步返回 episodes（兼容旧调用）
   r.post('/generation/story', async (req, res) => {
     const storyGenerationService = require('../services/storyGenerationService');
     try {
       const body = req.body || {};
+      const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
       if (body.drama_id) {
-        const taskId = storyGenerationService.startStoryGeneration(db, log, body);
+        const taskId = storyGenerationService.startStoryGeneration(db, log, body, userCfg);
         return response.success(res, { task_id: taskId, status: 'pending' });
       }
-      const result = await storyGenerationService.generateStory(db, log, body);
+      const result = await storyGenerationService.generateStory(db, log, body, userCfg);
       response.success(res, result);
     } catch (err) {
       log.error('generation/story', { error: err.message });
@@ -138,28 +183,28 @@ function setupRouter(cfg, db, log) {
     }
   });
 
-  // ---------- character-library ----------
+  // ---------- 角色库模块 ----------
   r.get('/character-library', charLibrary.list);
   r.post('/character-library', charLibrary.create);
   r.get('/character-library/:id', charLibrary.get);
   r.put('/character-library/:id', charLibrary.update);
   r.delete('/character-library/:id', charLibrary.delete);
 
-  // ---------- scene-library ----------
+  // ---------- 场景库模块 ----------
   r.get('/scene-library', sceneLibrary.list);
   r.post('/scene-library', sceneLibrary.create);
   r.get('/scene-library/:id', sceneLibrary.get);
   r.put('/scene-library/:id', sceneLibrary.update);
   r.delete('/scene-library/:id', sceneLibrary.delete);
 
-  // ---------- prop-library ----------
+  // ---------- 道具库模块 ----------
   r.get('/prop-library', propLibrary.list);
   r.post('/prop-library', propLibrary.create);
   r.get('/prop-library/:id', propLibrary.get);
   r.put('/prop-library/:id', propLibrary.update);
   r.delete('/prop-library/:id', propLibrary.delete);
 
-  // ---------- characters ----------
+  // ---------- 角色模块 ----------
   r.get('/characters/:id', characters.getOne);
   r.put('/characters/:id', characters.update);
   r.delete('/characters/:id', characters.delete);
@@ -179,7 +224,7 @@ function setupRouter(cfg, db, log) {
   r.post('/characters/:id/extract-from-image', characters.extractFromImage);
   r.post('/characters/:id/extract-anchors', characters.extractAnchors);
 
-  // ---------- props ----------
+  // ---------- 道具模块 ----------
   r.get('/props/:id', prop.getPropById);
   r.post('/props', prop.createProp);
   r.put('/props/:id', prop.updateProp);
@@ -190,7 +235,7 @@ function setupRouter(cfg, db, log) {
   r.post('/props/:id/add-to-material-library', prop.addToMaterialLibrary);
   r.post('/props/:id/extract-from-image', prop.extractPropFromImage);
 
-  // ---------- vision: 从图片提取描述（不依赖已有实体 ID）----------
+  // ---------- 图片提取描述 ----------
   r.post('/extract-description-from-image', async (req, res) => {
     const { image_url, entity_type, entity_name } = req.body || {};
     if (!image_url) return response.badRequest(res, '缺少 image_url');
@@ -206,12 +251,10 @@ function setupRouter(cfg, db, log) {
     }
   });
 
-  // ---------- upload ----------
+  // ---------- 上传模块 ----------
   r.post('/upload/image', uploadModule.multerSingle, uploadHandlers.uploadImage);
 
-  // ---------- episodes ----------
-  // 注意：drama.generateStoryboard 已处理所有逻辑（包括参数解析），这里统一使用 drama 模块的实现
-  // 之前可能有部分路由指向了 storyboards.episodeStoryboardsGenerate，这可能导致参数解析不一致
+  // ---------- 剧集模块 ----------
   r.post('/episodes/:episode_id/storyboards', drama.generateStoryboard);
   r.post('/episodes/:episode_id/props/extract', prop.extractProps);
   r.post('/episodes/:episode_id/characters/extract', stub.episodeCharactersExtract);
@@ -219,12 +262,12 @@ function setupRouter(cfg, db, log) {
   r.post('/episodes/:episode_id/finalize', drama.finalizeEpisode);
   r.get('/episodes/:episode_id/download', drama.downloadEpisodeVideo);
 
-  // ---------- tasks ----------
+  // ---------- 任务模块 ----------
   r.get('/tasks/:task_id', task.getTaskStatus);
   r.post('/tasks/:task_id/cancel', task.cancelTaskStatus);
   r.get('/tasks', task.getResourceTasks);
 
-  // ---------- scenes ----------
+  // ---------- 场景模块 ----------
   r.get('/scenes/:scene_id', scenes.getOne);
   r.post('/scenes/:scene_id/generate-prompt', scenes.generatePrompt);
   r.put('/scenes/:scene_id', scenes.update);
@@ -237,7 +280,7 @@ function setupRouter(cfg, db, log) {
   r.post('/scenes/:scene_id/add-to-material-library', scenes.addToMaterialLibrary);
   r.post('/scenes/:scene_id/extract-from-image', scenes.extractFromImage);
 
-  // ---------- images ----------
+  // ---------- 图片模块 ----------
   r.get('/images', images.list);
   r.post('/images', images.create);
   r.get('/images/episode/:episode_id/backgrounds', images.episodeBackgrounds);
@@ -248,7 +291,7 @@ function setupRouter(cfg, db, log) {
   r.get('/images/:id', images.get);
   r.delete('/images/:id', images.delete);
 
-  // ---------- videos ----------
+  // ---------- 视频模块 ----------
   r.get('/videos', videos.list);
   r.post('/videos', videos.create);
   r.post('/videos/image/:image_gen_id', videos.fromImage);
@@ -256,13 +299,13 @@ function setupRouter(cfg, db, log) {
   r.get('/videos/:id', videos.get);
   r.delete('/videos/:id', videos.delete);
 
-  // ---------- video-merges ----------
+  // ---------- 视频合成模块 ----------
   r.get('/video-merges', videoMerges.list);
   r.post('/video-merges', videoMerges.create);
   r.get('/video-merges/:merge_id', videoMerges.get);
   r.delete('/video-merges/:merge_id', videoMerges.delete);
 
-  // ---------- assets ----------
+  // ---------- 资源模块 ----------
   r.get('/assets', assets.list);
   r.post('/assets', assets.create);
   r.post('/assets/import/image/:image_gen_id', assets.importImage);
@@ -271,7 +314,7 @@ function setupRouter(cfg, db, log) {
   r.put('/assets/:id', assets.update);
   r.delete('/assets/:id', assets.delete);
 
-  // ---------- storyboards ----------
+  // ---------- 分镜模块 ----------
   r.get('/storyboards/episode/:episode_id/generate', storyboards.episodeStoryboardsGenerate);
   r.post('/storyboards', storyboards.create);
   r.post('/storyboards/:id/insert-before', storyboards.insertBefore);
@@ -294,22 +337,22 @@ function setupRouter(cfg, db, log) {
   r.post('/storyboards/:id/rebuild-video-prompt', storyboards.rebuildVideoPrompt);
   r.post('/storyboards/:id/split-by-audio', storyboards.splitByAudio);
 
-  // ---------- audio ----------
+  // ---------- 音频模块 ----------
   r.post('/audio/extract', audio.extract);
   r.post('/audio/extract/batch', audio.extractBatch);
 
-  // ---------- settings ----------
+  // ---------- 设置模块 ----------
   r.get('/settings/language', settings.getLanguage);
   r.put('/settings/language', settings.updateLanguage);
   r.get('/settings/generation', settings.getGenerationSettings);
   r.put('/settings/generation', settings.updateGenerationSettings);
 
-  // ---------- prompt overrides ----------
+  // ---------- 提示词覆盖模块 ----------
   r.get('/settings/prompts', promptOverrides.list);
   r.put('/settings/prompts/:key', promptOverrides.update);
   r.delete('/settings/prompts/:key', promptOverrides.reset);
 
-  // ---------- scene model map ----------
+  // ---------- 场景模型映射模块 ----------
   r.get('/scene-model-map', sceneModelMap.list);
   r.post('/scene-model-map', sceneModelMap.create);
   r.get('/scene-model-map/:key', sceneModelMap.get);

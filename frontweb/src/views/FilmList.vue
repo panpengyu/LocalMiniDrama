@@ -20,6 +20,30 @@
         </div>
         <!-- 右侧操作区 -->
         <div class="header-actions">
+          <template v-if="!userStore.isLoggedIn">
+            <el-button type="primary" class="btn-login" @click="showLoginDialog = true">
+              <el-icon><User /></el-icon>登录
+            </el-button>
+          </template>
+          <template v-else>
+            <el-dropdown class="user-dropdown">
+              <span class="user-info">
+                <el-icon><User /></el-icon>
+                <span>{{ userStore.user?.nickname || userStore.user?.username }}</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="userStore.isAdmin" @click="$router.push('/ai-config')">
+                    <el-icon><Setting /></el-icon>AI配置
+                  </el-dropdown-item>
+                  <el-dropdown-item divided @click="handleLogout">
+                    <el-icon><SwitchButton /></el-icon>退出登录
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
           <!-- 暂时隐藏，功能待完善 -->
           <!-- <el-button class="btn-library" title="自由创作" @click="$router.push('/free-create')">
             <el-icon><MagicStick /></el-icon>自由创作
@@ -27,21 +51,21 @@
           <el-button class="btn-library" title="媒体素材库" @click="$router.push('/media-library')">
             <el-icon><Files /></el-icon>素材库
           </el-button> -->
-          <el-button v-if="!vendorLockEnabled" class="btn-wechat" title="扫码联系作者" @click="showWechat = true">
+          <el-button v-if="!vendorLockEnabled && userStore.isLoggedIn" class="btn-wechat" title="扫码联系作者" @click="showWechat = true">
             <el-icon><ChatDotSquare /></el-icon>微信我
           </el-button>
           <el-button class="btn-theme" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
             <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
             {{ isDark ? '浅色' : '暗色' }}
           </el-button>
-          <el-button class="btn-settings" @click="showAiConfigDialog = true">
+          <el-button v-if="userStore.isLoggedIn" class="btn-settings" @click="showAiConfigDialog = true">
             <el-icon><Setting /></el-icon>AI配置
           </el-button>
-          <el-button class="btn-import" :loading="importing" @click="triggerImport">
+          <el-button v-if="userStore.isLoggedIn" class="btn-import" :loading="importing" @click="triggerImport">
             <el-icon><Upload /></el-icon>导入项目
           </el-button>
-          <input ref="importFileInput" type="file" accept=".zip" style="display:none" @change="onImportFile" />
-          <el-button type="primary" class="btn-new" @click="goNewProject">
+          <input v-if="userStore.isLoggedIn" ref="importFileInput" type="file" accept=".zip" style="display:none" @change="onImportFile" />
+          <el-button v-if="userStore.isLoggedIn" type="primary" class="btn-new" @click="goNewProject">
             <el-icon><Plus /></el-icon>新建项目
           </el-button>
         </div>
@@ -51,8 +75,8 @@
     <main class="main">
       <div v-loading="loading" class="projects-wrap">
         <div class="project-grid">
-          <!-- 操作卡片：始终作为第一个格子 -->
-          <div class="project-card action-card">
+          <!-- 操作卡片：普通用户显示 -->
+          <div v-if="!userStore.isAdmin" class="project-card action-card">
             <div class="action-card-inner">
               <h3 class="action-card-title">快速开始</h3>
               <div class="action-card-buttons">
@@ -105,7 +129,12 @@
                 <span v-if="d.style" class="badge badge-style">{{ formatStyle(d.style) }}</span>
                 <span v-if="d.genre" class="badge badge-genre">{{ formatGenre(d.genre) }}</span>
               </div>
-              <p class="project-meta">{{ formatDate(d.updated_at) }}</p>
+              <p class="project-meta">
+                {{ formatDate(d.updated_at) }}
+                <span v-if="userStore.isAdmin && d.creator" class="creator-info">
+                  由 {{ d.creator.nickname || d.creator.username }} 创建
+                </span>
+              </p>
             </div>
           </div>
         </div>
@@ -313,6 +342,111 @@
       </template>
     </el-dialog>
 
+    <!-- 登录弹窗 -->
+    <el-dialog
+      v-model="showLoginDialog"
+      title="登录 / 注册"
+      width="420px"
+      :close-on-click-modal="false"
+      @closed="resetLoginForm"
+    >
+      <el-tabs v-model="loginTab" class="login-tabs">
+        <el-tab-pane label="登录" name="login">
+          <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" class="login-form">
+            <el-form-item prop="username">
+              <el-input 
+                v-model="loginForm.username" 
+                placeholder="请输入用户名或手机号"
+                prefix-icon="User"
+                size="large"
+              />
+            </el-form-item>
+            <el-form-item prop="password">
+              <el-input 
+                v-model="loginForm.password" 
+                type="password"
+                placeholder="请输入密码"
+                prefix-icon="Lock"
+                size="large"
+                show-password
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button 
+                type="primary" 
+                size="large" 
+                class="btn-login-submit"
+                :loading="loginLoading"
+                @click="handleLogin"
+              >
+                <el-icon><CircleCheck /></el-icon>登录
+              </el-button>
+            </el-form-item>
+          </el-form>
+          <div class="login-tip">
+            <el-alert 
+              title="管理员账号：admin / admin123" 
+              type="info" 
+              :closable="false" 
+              show-icon
+              class="tip-alert"
+            />
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="注册" name="register">
+          <el-form ref="registerFormRef" :model="registerForm" :rules="registerRules" class="register-form">
+            <el-form-item prop="phone">
+              <el-input 
+                v-model="registerForm.phone" 
+                placeholder="请输入手机号"
+                prefix-icon="Mobile"
+                size="large"
+              />
+            </el-form-item>
+            <el-form-item prop="password">
+              <el-input 
+                v-model="registerForm.password" 
+                type="password"
+                placeholder="请输入密码（至少6位）"
+                prefix-icon="Lock"
+                size="large"
+                show-password
+              />
+            </el-form-item>
+            <el-form-item prop="confirmPassword">
+              <el-input 
+                v-model="registerForm.confirmPassword" 
+                type="password"
+                placeholder="请确认密码"
+                prefix-icon="Lock"
+                size="large"
+                show-password
+              />
+            </el-form-item>
+            <el-form-item prop="nickname">
+              <el-input 
+                v-model="registerForm.nickname" 
+                placeholder="请输入昵称（选填）"
+                prefix-icon="User"
+                size="large"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button 
+                type="primary" 
+                size="large" 
+                class="btn-register-submit"
+                :loading="registerLoading"
+                @click="handleRegister"
+              >
+                <el-icon><Plus /></el-icon>注册
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
+    </el-dialog>
+
     <!-- 微信二维码 -->
     <el-dialog v-if="!vendorLockEnabled" v-model="showWechat" title="微信联系作者" width="320px" align-center>
       <div style="text-align:center;padding:8px 0 4px">
@@ -353,10 +487,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Edit, Delete, Setting, Plus, User, PictureFilled, Box, Sunny, Moon, ChatDotSquare, Download, Upload, QuestionFilled, FolderOpened, MagicStick, Files } from '@element-plus/icons-vue'
+import { Edit, Delete, Setting, Plus, User, PictureFilled, Box, Sunny, Moon, ChatDotSquare, Download, Upload, QuestionFilled, FolderOpened, MagicStick, Files, ArrowDown, CircleCheck, SwitchButton } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { dramaAPI } from '@/api/drama'
 import { characterLibraryAPI } from '@/api/characterLibrary'
@@ -367,9 +501,143 @@ import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const { isDark, toggle: toggleTheme } = useTheme()
+const userStore = useUserStore()
+
+const showLoginDialog = ref(false)
+const loginTab = ref('login')
+const loginFormRef = ref(null)
+const registerFormRef = ref(null)
+const loginLoading = ref(false)
+const registerLoading = ref(false)
+
+const loginForm = reactive({
+  username: '',
+  password: ''
+})
+
+const loginRules = {
+  username: [
+    { required: true, message: '请输入用户名或手机号', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码至少6位', trigger: 'blur' }
+  ]
+}
+
+const registerForm = reactive({
+  phone: '',
+  password: '',
+  confirmPassword: '',
+  nickname: ''
+})
+
+const registerRules = {
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '请输入有效的手机号', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码至少6位', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认密码', trigger: 'blur' },
+    { 
+      validator: (rule, value, callback) => {
+        if (value !== registerForm.password) {
+          callback(new Error('两次输入的密码不一致'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur'
+    }
+  ],
+  nickname: [
+    { max: 50, message: '昵称不能超过50个字符', trigger: 'blur' }
+  ]
+}
+
+async function handleLogin() {
+  const valid = await loginFormRef.value.validate()
+  if (!valid) return
+  
+  loginLoading.value = true
+  try {
+    const response = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(loginForm)
+    })
+    const data = await response.json()
+    
+    if (data.success) {
+      userStore.login(data.data.user, data.data.token)
+      ElMessage.success(data.data.message || '登录成功')
+      showLoginDialog.value = false
+      loadDramas()
+    } else {
+      ElMessage.error(data.error?.message || '登录失败')
+    }
+  } catch (error) {
+    ElMessage.error('网络错误，请稍后重试')
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+async function handleRegister() {
+  const valid = await registerFormRef.value.validate()
+  if (!valid) return
+  
+  registerLoading.value = true
+  try {
+    const response = await fetch('/api/v1/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: registerForm.phone,
+        password: registerForm.password,
+        nickname: registerForm.nickname
+      })
+    })
+    const data = await response.json()
+    
+    if (data.success) {
+      userStore.login(data.data.user, data.data.token)
+      ElMessage.success(data.data.message || '注册成功')
+      showLoginDialog.value = false
+      loadDramas()
+    } else {
+      ElMessage.error(data.error?.message || '注册失败')
+    }
+  } catch (error) {
+    ElMessage.error('网络错误，请稍后重试')
+  } finally {
+    registerLoading.value = false
+  }
+}
+
+function handleLogout() {
+  userStore.logout()
+  ElMessage.success('已退出登录')
+  router.push('/')
+}
+
+function resetLoginForm() {
+  loginForm.username = ''
+  loginForm.password = ''
+  registerForm.phone = ''
+  registerForm.password = ''
+  registerForm.confirmPassword = ''
+  registerForm.nickname = ''
+  loginTab.value = 'login'
+}
 
 // 库编辑图片 – 文件输入 refs
 const charLibFileRef  = ref(null)
@@ -1222,6 +1490,14 @@ html.light .btn-import {
   color: #71717a;
   margin: 0;
 }
+.creator-info {
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+  font-size: 0.68rem;
+  color: #a5b4fc;
+}
 .project-card-actions {
   position: absolute;
   top: 12px;
@@ -1369,5 +1645,64 @@ html.light .badge-status--draft {
   max-height: 90vh;
   border-radius: 8px;
   object-fit: contain;
+}
+
+/* ===== 登录按钮 ===== */
+.btn-login {
+  --el-button-bg-color: #6366f1;
+  --el-button-border-color: #6366f1;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #4f46e5;
+  --el-button-hover-border-color: #4f46e5;
+}
+
+/* ===== 用户下拉菜单 ===== */
+.user-dropdown {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.user-dropdown:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.user-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 14px;
+}
+.user-info .el-icon {
+  font-size: 16px;
+}
+html.light .user-info {
+  color: #1e1b4b;
+}
+html.light .user-dropdown:hover {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* ===== 登录弹窗样式 ===== */
+.login-tabs {
+  margin-top: 8px;
+}
+.login-form,
+.register-form {
+  padding: 8px 0;
+}
+.btn-login-submit,
+.btn-register-submit {
+  width: 100%;
+  height: 44px;
+  font-size: 16px;
+}
+.login-tip {
+  margin-top: 12px;
+}
+.tip-alert {
+  font-size: 12px;
 }
 </style>

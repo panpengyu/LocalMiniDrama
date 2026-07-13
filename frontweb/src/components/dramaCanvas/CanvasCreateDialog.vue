@@ -23,6 +23,18 @@
       </template>
 
       <template v-else-if="type === 'character'">
+        <el-form-item label="参考图">
+          <div class="ref-image-zone">
+            <div class="ref-image-box" @click="refFileInput?.click()" @drop.prevent="onRefImageDrop($event)" @dragover.prevent>
+              <img v-if="refImage" :src="refImage.dataUrl" class="ref-preview-img" />
+              <div v-else class="ref-upload-hint"><span class="ref-upload-icon">🖼</span><span>点击或拖入参考图</span></div>
+            </div>
+            <div v-if="refImage" class="ref-actions">
+              <el-button size="small" @click="refImage = null">移除</el-button>
+            </div>
+          </div>
+          <input ref="refFileInput" type="file" accept="image/*" class="hidden-file-input" @change="onRefImageFileChange" />
+        </el-form-item>
         <el-form-item label="角色名称" required>
           <el-input v-model="form.name" placeholder="必填" />
         </el-form-item>
@@ -90,6 +102,8 @@ const visible = computed({
 })
 
 const submitting = ref(false)
+const refFileInput = ref(null)
+const refImage = ref(null)
 const form = reactive({
   title: '',
   description: '',
@@ -100,6 +114,35 @@ const form = reactive({
   time: '',
   prompt: '',
 })
+
+function getFirstImageFile(dataTransfer) {
+  if (!dataTransfer?.files?.length) return null
+  const file = Array.from(dataTransfer.files).find((f) => f.type.startsWith('image/'))
+  return file || null
+}
+
+function readFileAsRefImage(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (ev) => resolve({ dataUrl: ev.target.result, filename: file.name })
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onRefImageFileChange(event) {
+  const file = event.target?.files?.[0]
+  if (!file) return
+  const result = await readFileAsRefImage(file)
+  refImage.value = result
+  event.target.value = ''
+}
+
+async function onRefImageDrop(event) {
+  const file = getFirstImageFile(event.dataTransfer)
+  if (!file) return
+  const result = await readFileAsRefImage(file)
+  refImage.value = result
+}
 
 const dialogTitle = computed(() => {
   const map = {
@@ -121,6 +164,7 @@ function resetForm() {
   form.location = ''
   form.time = ''
   form.prompt = ''
+  refImage.value = null
   submitting.value = false
 }
 
@@ -145,9 +189,61 @@ async function onSubmit() {
   submitting.value = true
   try {
     const handler = props.onSubmit || ((form) => emit('submit', form))
-    await handler({ ...form })
+    await handler({ ...form, refImage: refImage.value })
   } finally {
     submitting.value = false
   }
 }
 </script>
+
+<style scoped>
+.hidden-file-input {
+  display: none;
+}
+
+.ref-image-zone {
+  width: 100%;
+}
+
+.ref-image-box {
+  width: 100%;
+  height: 140px;
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.ref-image-box:hover {
+  border-color: #6366f1;
+}
+
+.ref-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.ref-upload-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #909399;
+}
+
+.ref-upload-icon {
+  font-size: 28px;
+}
+
+.ref-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+</style>

@@ -1,10 +1,12 @@
 <template>
   <div class="app">
+    <FloatingNavigation />
     <router-view />
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup>
+import FloatingNavigation from '@/components/FloatingNavigation.vue'
 </script>
 
 <style>

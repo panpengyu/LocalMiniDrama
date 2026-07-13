@@ -180,7 +180,7 @@ async function processCharacterGeneration(db, cfg, log, taskID, req) {
     const episodeId = Number(req.episode_id);
     for (const c of characters) {
       try {
-        db.prepare('INSERT OR IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)').run(episodeId, c.id);
+        db.prepare('INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)').run(episodeId, c.id);
       } catch (_) {}
     }
   }

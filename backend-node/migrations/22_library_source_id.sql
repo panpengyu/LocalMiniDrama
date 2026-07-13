@@ -2,13 +2,13 @@ ALTER TABLE character_libraries ADD COLUMN drama_id INTEGER;
 ALTER TABLE scene_libraries ADD COLUMN drama_id INTEGER;
 ALTER TABLE prop_libraries ADD COLUMN drama_id INTEGER;
 
-ALTER TABLE character_libraries ADD COLUMN source_id TEXT;
-ALTER TABLE scene_libraries ADD COLUMN source_id TEXT;
-ALTER TABLE prop_libraries ADD COLUMN source_id TEXT;
+ALTER TABLE character_libraries ADD COLUMN source_id VARCHAR(36);
+ALTER TABLE scene_libraries ADD COLUMN source_id VARCHAR(36);
+ALTER TABLE prop_libraries ADD COLUMN source_id VARCHAR(36);
 
 UPDATE character_libraries
 SET source_id = (
-  SELECT CAST(c.id AS TEXT)
+  SELECT CAST(c.id AS CHAR)
   FROM characters c
   WHERE c.deleted_at IS NULL
     AND character_libraries.source_type = 'character'
@@ -29,7 +29,7 @@ WHERE source_id IS NULL
 
 UPDATE scene_libraries
 SET source_id = (
-  SELECT CAST(s.id AS TEXT)
+  SELECT CAST(s.id AS CHAR)
   FROM scenes s
   WHERE s.deleted_at IS NULL
     AND scene_libraries.source_type = 'scene'
@@ -50,7 +50,7 @@ WHERE source_id IS NULL
 
 UPDATE prop_libraries
 SET source_id = (
-  SELECT CAST(p.id AS TEXT)
+  SELECT CAST(p.id AS CHAR)
   FROM props p
   WHERE p.deleted_at IS NULL
     AND prop_libraries.source_type = 'prop'

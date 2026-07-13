@@ -18,6 +18,12 @@ const {
   jwtPartLengths,
 } = require('./klingJwt');
 
+function sanitizeApiKey(apiKey) {
+  if (!apiKey) return '';
+  const str = String(apiKey).trim();
+  return str.replace(/[\x00-\x1F\x7F]/g, '');
+}
+
 /**
  * ?? provider ??????????api_protocol ??????????
  */
@@ -671,7 +677,7 @@ async function callVolcengineOmniVideoApi(config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: JSON.stringify(body),
   });
@@ -798,7 +804,7 @@ async function callKlingOmniVideoApi(config, log, opts) {
 
   const headers = {
     'Content-Type': 'application/json',
-    Authorization: bearerToken.startsWith('Bearer ') ? bearerToken : `Bearer ${bearerToken}`,
+    Authorization: bearerToken.startsWith('Bearer ') ? bearerToken : `Bearer ${sanitizeApiKey(bearerToken)}`,
   };
 
   log.info('[KlingOmni] 创建任务', {
@@ -1243,7 +1249,7 @@ async function callKlingVideoApi(config, log, opts) {
   } = opts;
 
   const base = (config.base_url || 'https://api.klingai.com').replace(/\/$/, '');
-  const apiKey = config.api_key || '';
+  const apiKey = sanitizeApiKey(config.api_key || '');
   const headers = {
     'Content-Type': 'application/json',
     Authorization: 'Bearer ' + apiKey,
@@ -1528,7 +1534,7 @@ async function callDashScopeVideoApi(config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
       'X-DashScope-Async': 'enable',
     },
     body: JSON.stringify(body),
@@ -1858,7 +1864,7 @@ function viduMismatchAspectPromptSuffix(targetRatioLabel) {
  */
 async function callViduVideoApi(config, log, opts) {
   const { prompt, model, duration, aspect_ratio, resolution: resolutionOpt, image_url, video_gen_id, files_base_url, storage_local_path } = opts;
-  const apiKey = config.api_key || '';
+  const apiKey = sanitizeApiKey(config.api_key || '');
   const base = (config.base_url || 'https://api.vidu.cn').replace(/\/$/, '');
   const modelName = model || 'viduq2';
   const dur = Math.min(10, Math.max(1, Math.round(Number(duration) || 5)));
@@ -2208,7 +2214,7 @@ async function callVeo3VideoApi(config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: JSON.stringify(body),
   });
@@ -2488,7 +2494,7 @@ async function callAgnesVideoApi(db, config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: JSON.stringify(body),
   });
@@ -2695,7 +2701,7 @@ async function callSoraVideoApi(config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: bodyBuffer,
   });
@@ -2810,7 +2816,7 @@ async function callJimengAiApiVideo(config, log, opts) {
   if (!base) {
     return { error: 'Jimeng AI API 未配置 Base URL（请填写自建服务地址，如 http://127.0.0.1:8000）' };
   }
-  let apiKey = (config.api_key || '').trim();
+  let apiKey = sanitizeApiKey(config.api_key || '').trim();
   if (/^bearer\s+/i.test(apiKey)) apiKey = apiKey.replace(/^bearer\s+/i, '').trim();
   if (!apiKey) {
     return { error: 'Jimeng AI API 未配置 Session（填入 API Key 字段，多个用英文逗号分隔）' };
@@ -3107,7 +3113,7 @@ async function callXaiVideoApi(config, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: JSON.stringify(body),
   });
@@ -3688,7 +3694,7 @@ async function callVideoApi(db, log, opts) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     },
     body: JSON.stringify(body),
   });
@@ -3779,7 +3785,7 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
         qep = String(qep).replace(/\{taskId\}/gi, encodeURIComponent(actualTaskId)).replace(/\{task_id\}/gi, encodeURIComponent(actualTaskId)).replace(/\{id\}/gi, encodeURIComponent(actualTaskId));
         if (!qep.startsWith('/')) qep = '/' + qep;
         url = klingBase + qep;
-        headers = { Authorization: 'Bearer ' + (config.api_key || '') };
+        headers = { Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || '') };
       } else if (isKlingOmni) {
         const cfgOmni = applyKlingOmniEnvOverrides(config);
         const omniBase = resolveKlingOmniBaseUrl(cfgOmni);
@@ -3808,10 +3814,10 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
         qep = String(qep).replace(/\{taskId\}/gi, encodeURIComponent(taskId)).replace(/\{task_id\}/gi, encodeURIComponent(taskId)).replace(/\{id\}/gi, encodeURIComponent(taskId));
         if (!qep.startsWith('/')) qep = '/' + qep;
         url = viduBase + qep;
-        headers = { Authorization: (isOfficialVidu ? 'Token ' : 'Bearer ') + (config.api_key || '') };
+        headers = { Authorization: (isOfficialVidu ? 'Token ' : 'Bearer ') + sanitizeApiKey(config.api_key || '') };
       } else {
         url = queryUrl();
-        headers = { Authorization: 'Bearer ' + (config.api_key || '') };
+        headers = { Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || '') };
       }
       const pollRound = attempt + 1;
       log.info('[poll] 发起查询', { video_gen_id: videoGenId, round: pollRound, url });

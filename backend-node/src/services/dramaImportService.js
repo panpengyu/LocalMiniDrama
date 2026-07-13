@@ -121,9 +121,10 @@ function saveExtraImages(storagePath, projectDir, category, files, zipPaths, pre
 /**
  * 导入 ZIP，创建剧集并还原所有数据
  * @param {Buffer} zipBuffer
+ * @param {object} user - 当前用户对象（包含 id, enterprise_id, team_id）
  * @returns {{ drama_id: number, title: string }}
  */
-function importDrama(db, cfg, log, zipBuffer) {
+function importDrama(db, cfg, log, zipBuffer, user = null) {
   const storagePath = getStoragePath(cfg);
   const { data, files } = parseZip(zipBuffer);
 
@@ -145,18 +146,18 @@ function importDrama(db, cfg, log, zipBuffer) {
   // 用事务包裹全部写入：任何步骤失败时整体回滚，避免部分导入
   let result;
   const runImport = db.transaction(() => {
-    result = _doImport(db, storagePath, files, data, d, title, metaStr, now, log);
+    result = _doImport(db, storagePath, files, data, d, title, metaStr, now, log, user);
   });
   runImport();
   return result;
 }
 
-function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
+function _doImport(db, storagePath, files, data, d, title, metaStr, now, log, user = null) {
 
   // ---- 创建 drama ----
   const dramaInfo = db.prepare(
-    `INSERT INTO dramas (title, description, genre, style, status, tags, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO dramas (title, description, genre, style, status, tags, metadata, created_by, enterprise_id, team_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     title,
     d.description || null,
@@ -165,6 +166,9 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
     d.status || 'draft',
     d.tags || null,
     metaStr,
+    user ? user.id : null,
+    user ? user.enterprise_id : null,
+    user ? user.team_id : null,
     now,
     now
   );
@@ -202,7 +206,7 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
 
   // ---- 关联角色到所有集（episode_characters） ----
   if (charNewIds.length > 0 && episodeIdList.length > 0) {
-    const insEC = db.prepare('INSERT OR IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)');
+    const insEC = db.prepare('INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)');
     for (const charId of charNewIds) {
       if (!charId) continue;
       for (const epId of episodeIdList) {
@@ -348,7 +352,7 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
 
       // 还原 storyboard_props（分镜与道具的关联）
       if (sbPropNewIds.length > 0) {
-        const insSP = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        const insSP = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of sbPropNewIds) insSP.run(sbId, pid);
       }
 

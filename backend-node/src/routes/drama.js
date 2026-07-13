@@ -1,9 +1,27 @@
+/**
+ * 剧本路由模块
+ * 
+ * 提供剧本的完整 CRUD 操作，包括创建、查询、更新、删除、导出导入、分镜生成等功能。
+ * 同时支持角色管理、章节管理、进度保存、画布布局保存等子功能。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @returns {object} 剧本路由处理函数集合
+ */
 const dramaService = require('../services/dramaService');
 const propService = require('../services/propService');
 const response = require('../response');
 const dramaExportService = require('../services/dramaExportService');
 const dramaImportService = require('../services/dramaImportService');
 
+/**
+ * 创建剧本接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function createDrama(db, log) {
   return (req, res) => {
     const body = req.body || {};
@@ -11,7 +29,7 @@ function createDrama(db, log) {
       return response.badRequest(res, '标题不能为空');
     }
     try {
-      const drama = dramaService.createDrama(db, log, body);
+      const drama = dramaService.createDrama(db, log, body, req.user);
       response.created(res, drama);
     } catch (err) {
       log.error('Create drama failed', { error: err.message, stack: err.stack });
@@ -20,6 +38,13 @@ function createDrama(db, log) {
   };
 }
 
+/**
+ * 获取单个剧本详情接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function getDrama(db, cfg) {
   return (req, res) => {
     const drama = dramaService.getDrama(db, req.params.id, cfg?.storage?.base_url);
@@ -28,6 +53,13 @@ function getDrama(db, cfg) {
   };
 }
 
+/**
+ * 获取剧本列表接口（支持分页、筛选、搜索）
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function listDramas(db, log) {
   return (req, res) => {
     const page = req.query.page || 1;
@@ -42,7 +74,7 @@ function listDramas(db, log) {
         status,
         genre,
         keyword,
-      });
+      }, req.user);
       response.successWithPagination(res, dramas, total, p, ps);
     } catch (err) {
       log.errorw('List dramas failed', { error: err.message });
@@ -51,6 +83,13 @@ function listDramas(db, log) {
   };
 }
 
+/**
+ * 更新剧本信息接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function updateDrama(db, log) {
   return (req, res) => {
     const drama = dramaService.updateDrama(db, log, req.params.id, req.body || {});
@@ -59,6 +98,13 @@ function updateDrama(db, log) {
   };
 }
 
+/**
+ * 删除剧本接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function deleteDrama(db, log) {
   return (req, res) => {
     const ok = dramaService.deleteDrama(db, log, req.params.id);
@@ -67,6 +113,13 @@ function deleteDrama(db, log) {
   };
 }
 
+/**
+ * 获取剧本统计数据接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function getDramaStats(db, log) {
   return (req, res) => {
     try {
@@ -79,6 +132,13 @@ function getDramaStats(db, log) {
   };
 }
 
+/**
+ * 保存剧本大纲接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function saveOutline(db, log) {
   return (req, res) => {
     const ok = dramaService.saveOutline(db, log, req.params.id, req.body || {});
@@ -87,6 +147,12 @@ function saveOutline(db, log) {
   };
 }
 
+/**
+ * 获取剧本角色列表接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @returns {function} Express 路由处理函数
+ */
 function getCharacters(db) {
   return (req, res) => {
     const characters = dramaService.getCharacters(db, req.params.id, req.query.episode_id);
@@ -95,6 +161,13 @@ function getCharacters(db) {
   };
 }
 
+/**
+ * 保存剧本角色列表接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function saveCharacters(db, log) {
   return (req, res) => {
     const body = req.body || {};
@@ -105,6 +178,13 @@ function saveCharacters(db, log) {
   };
 }
 
+/**
+ * 保存剧本章节列表接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function saveEpisodes(db, log) {
   return (req, res) => {
     const body = req.body || {};
@@ -115,6 +195,13 @@ function saveEpisodes(db, log) {
   };
 }
 
+/**
+ * 保存剧本创作进度接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function saveProgress(db, log) {
   return (req, res) => {
     const body = req.body || {};
@@ -125,6 +212,13 @@ function saveProgress(db, log) {
   };
 }
 
+/**
+ * 保存画布布局接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function saveCanvasLayout(db, log) {
   return (req, res) => {
     try {
@@ -139,6 +233,12 @@ function saveCanvasLayout(db, log) {
   };
 }
 
+/**
+ * 获取剧本道具列表接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @returns {function} Express 路由处理函数
+ */
 function listProps(db) {
   return (req, res) => {
     const props = propService.listByDramaId(db, req.params.id);
@@ -146,6 +246,14 @@ function listProps(db) {
   };
 }
 
+/**
+ * 完成剧集接口（合成视频）
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @param {object} cfg - 配置对象
+ * @returns {function} Express 路由处理函数
+ */
 function finalizeEpisode(db, log, cfg) {
   return (req, res) => {
     const episodeId = req.params.episode_id;
@@ -157,6 +265,12 @@ function finalizeEpisode(db, log, cfg) {
   };
 }
 
+/**
+ * 下载剧集视频接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @returns {function} Express 路由处理函数
+ */
 function downloadEpisodeVideo(db) {
   return (req, res) => {
     const episodeId = req.params.episode_id;
@@ -168,6 +282,14 @@ function downloadEpisodeVideo(db) {
   };
 }
 
+/**
+ * 导出剧本接口（ZIP 格式）
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function exportDrama(db, cfg, log) {
   return (req, res) => {
     try {
@@ -183,13 +305,21 @@ function exportDrama(db, cfg, log) {
   };
 }
 
+/**
+ * 导入剧本接口（ZIP 格式）
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function importDrama(db, cfg, log) {
   return (req, res) => {
     try {
       if (!req.file || !req.file.buffer) {
         return response.badRequest(res, '请上传 ZIP 文件');
       }
-      const result = dramaImportService.importDrama(db, cfg, log, req.file.buffer);
+      const result = dramaImportService.importDrama(db, cfg, log, req.file.buffer, req.user);
       response.created(res, result);
     } catch (err) {
       log.error('Import drama failed', { error: err.message });
@@ -201,6 +331,13 @@ function importDrama(db, cfg, log) {
   };
 }
 
+/**
+ * 获取示例剧本目录路径
+ * 
+ * 优先使用环境变量 EXAMPLE_DRAMA_PATH，其次使用项目根目录下的 example_drama 目录
+ * 
+ * @returns {string|null} 示例目录路径或 null
+ */
 function getExampleDramaDir() {
   const path = require('path');
   const fs = require('fs');
@@ -212,6 +349,12 @@ function getExampleDramaDir() {
   return null;
 }
 
+/**
+ * 获取示例剧本列表接口
+ * 
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function listExamples(log) {
   return (_req, res) => {
     const fs = require('fs');
@@ -231,6 +374,14 @@ function listExamples(log) {
   };
 }
 
+/**
+ * 导入示例剧本接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function importExample(db, cfg, log) {
   return (req, res) => {
     const fs = require('fs');
@@ -246,7 +397,7 @@ function importExample(db, cfg, log) {
     if (!fs.existsSync(filePath)) return response.notFound(res, '示例文件不存在');
     try {
       const buffer = fs.readFileSync(filePath);
-      const result = dramaImportService.importDrama(db, cfg, log, buffer);
+      const result = dramaImportService.importDrama(db, cfg, log, buffer, req.user);
       response.created(res, result);
     } catch (err) {
       log.error('Import example failed', { error: err.message });
@@ -255,13 +406,20 @@ function importExample(db, cfg, log) {
   };
 }
 
+/**
+ * 生成分镜接口（AI 生成）
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function generateStoryboard(db, log) {
   return async (req, res) => {
     const body = req.body || {};
     try {
-      // 显式处理 model 为空的情况，转为 undefined 以便 service 层触发默认逻辑
       const model = (body.model && String(body.model).trim()) ? body.model : undefined;
       log.info('Generate storyboard request', { episode_id: req.params.episode_id, storyboard_count: body.storyboard_count, video_duration: body.video_duration });
+      const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
       const resData = await dramaService.generateStoryboard(db, log, req.params.episode_id, {
         model: model,
         style: body.style,
@@ -270,7 +428,7 @@ function generateStoryboard(db, log) {
         aspect_ratio: body.aspect_ratio,
         include_narration: body.include_narration,
         universal_omni_storyboard: body.universal_omni_storyboard,
-      });
+      }, userCfg);
       response.success(res, resData);
     } catch (err) {
       log.error('Generate storyboard failed', { error: err.message });

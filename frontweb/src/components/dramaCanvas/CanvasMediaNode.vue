@@ -71,6 +71,9 @@ const kindLabel = computed(() => {
   flex-direction: column;
   align-items: flex-start;
 }
+.canvas-node-stack:has(.canvas-media-node.focused) {
+  z-index: 2000 !important;
+}
 .canvas-media-node {
   position: relative;
   width: 168px;

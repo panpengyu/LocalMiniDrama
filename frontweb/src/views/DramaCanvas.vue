@@ -12,11 +12,14 @@
         <el-select
           v-model="filterEpisodeId"
           class="episode-select"
-          placeholder="全部集数"
-          clearable
           size="small"
           style="width: 150px"
         >
+          <el-option
+            key="all"
+            label="全部集数"
+            value="all"
+          />
           <el-option
             v-for="ep in (drama?.episodes || [])"
             :key="ep.id"
@@ -44,7 +47,7 @@
             <el-icon><Plus /></el-icon>
             集
           </el-button>
-          <el-button size="small" :loading="aligningNodes" @click="onAlignNodes">
+          <el-button size="small" :loading="aligningNodes" @click="onAlignNodes('horizontal')">
             <el-icon><Grid /></el-icon>
             对齐节点
           </el-button>
@@ -105,7 +108,7 @@
           size="small"
           type="primary"
           :loading="episodeGenerating"
-          :disabled="!filterEpisodeId || workflowRunning"
+          :disabled="filterEpisodeId === 'all' || workflowRunning"
           @click="aiGenerateStoryboards"
         >
           AI 生成分镜
@@ -113,7 +116,7 @@
         <el-button
           size="small"
           :loading="episodeGenerating"
-          :disabled="!filterEpisodeId || workflowRunning"
+          :disabled="filterEpisodeId === 'all' || workflowRunning"
           @click="batchGenerateImages"
         >
           批量生图
@@ -121,7 +124,7 @@
         <el-button
           size="small"
           :loading="episodeGenerating"
-          :disabled="!filterEpisodeId || workflowRunning"
+          :disabled="filterEpisodeId === 'all' || workflowRunning"
           @click="batchGenerateVideos"
         >
           批量生视频
@@ -232,10 +235,15 @@
           @viewport-change="onViewportChange"
           @move-end="scheduleLayoutSave"
           @selection-change="onSelectionChange"
+          @contextmenu.prevent
         >
           <CanvasFlowAligner />
           <Background pattern-color="#3f3f46" :gap="20" />
-          <Controls />
+          <Controls>
+            <template #icon-zoom-in><ZoomIn :size="16" /></template>
+            <template #icon-zoom-out><ZoomOut :size="16" /></template>
+            <template #icon-fit-view><FullScreen :size="16" /></template>
+          </Controls>
           <MiniMap pannable zoomable />
         </VueFlow>
         <el-empty v-else-if="!loading" description="暂无画布数据" />
@@ -265,7 +273,7 @@ import { VueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-import { List, Moon, Plus, Sunny, Grid } from '@element-plus/icons-vue'
+import { List, Moon, Plus, Sunny, Grid, ZoomIn, ZoomOut, FullScreen, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import '@vue-flow/core/dist/style.css'
@@ -327,7 +335,10 @@ const loading = ref(false)
 const drama = ref(null)
 const nodes = ref([])
 const edges = ref([])
-const filterEpisodeId = ref(null)
+const filterEpisodeId = ref('all')
+const resolvedEpisodeId = computed(() => {
+  return filterEpisodeId.value === 'all' ? null : filterEpisodeId.value
+})
 const highlightAssetId = ref(null)
 const layoutCache = ref(null)
 const workflowGroups = ref([])
@@ -392,7 +403,7 @@ function rebuildGraph() {
     return
   }
   const graph = buildDramaCanvasGraph(drama.value, {
-    episodeId: filterEpisodeId.value,
+    episodeId: resolvedEpisodeId.value,
     savedLayout: savedLayout.value,
     workflowGroups: workflowGroups.value,
     imagesBySbId: imagesBySbId.value,
@@ -434,7 +445,7 @@ function setHighlightAsset(assetNodeId) {
 async function refreshDrama(preserveFocus = true) {
   const keepId = preserveFocus ? focusedNodeId.value : null
   await loadDrama(true)
-  await loadForDrama(drama.value, filterEpisodeId.value)
+  await loadForDrama(drama.value, resolvedEpisodeId.value)
   rebuildGraph()
   if (keepId) focusedNodeId.value = keepId
 }
@@ -644,7 +655,7 @@ Object.assign(
 )
 
 function focusScriptNode() {
-  let epId = filterEpisodeId.value
+  let epId = resolvedEpisodeId.value
   if (!epId) {
     const eps = drama.value?.episodes || []
     if (eps.length === 1) epId = eps[0].id
@@ -653,20 +664,21 @@ function focusScriptNode() {
     ElMessage.warning('请先选择或新建集数')
     return
   }
-  if (!filterEpisodeId.value) filterEpisodeId.value = epId
+  if (filterEpisodeId.value === 'all') filterEpisodeId.value = epId
   focusedNodeId.value = scriptNodeId(epId)
 }
 
-async function onAlignNodes() {
+async function onAlignNodes(mode = 'horizontal') {
   if (!drama.value || !nodes.value.length || aligningNodes.value) return
   aligningNodes.value = true
   focusedNodeId.value = null
   try {
     const { positions } = computeAutoLayoutPositions(drama.value, {
-      episodeId: filterEpisodeId.value,
+      episodeId: resolvedEpisodeId.value,
       workflowGroups: workflowGroups.value,
       imagesBySbId: imagesBySbId.value,
       videosBySbId: videosBySbId.value,
+      layoutMode: mode,
     })
     nodes.value = nodes.value.map((n) => {
       const pos = positions[n.id]
@@ -705,12 +717,15 @@ async function loadDrama(silent = false) {
   if (!silent) loading.value = true
   try {
     drama.value = await dramaAPI.get(dramaId.value)
-    layoutCache.value = parseCanvasLayout(drama.value.metadata)
+    const parsedLayout = parseCanvasLayout(drama.value.metadata)
+    if (!layoutCache.value) {
+      layoutCache.value = parsedLayout
+    }
     syncWorkflowFromDrama()
     const vp = resolveViewport(layoutCache.value)
     currentViewport.value = vp
     if (route.query.episode) filterEpisodeId.value = Number(route.query.episode)
-    await loadForDrama(drama.value, filterEpisodeId.value)
+    await loadForDrama(drama.value, resolvedEpisodeId.value)
     rebuildGraph()
   } catch (e) {
     if (!silent) ElMessage.error(e?.message || '加载项目失败')
@@ -791,7 +806,7 @@ async function onRunActiveGroup() {
       },
     })
     await loadDrama(true)
-    await loadForDrama(drama.value, filterEpisodeId.value)
+    await loadForDrama(drama.value, resolvedEpisodeId.value)
     rebuildGraph()
     if (summary.failed.length) {
       ElMessage.warning(`完成 ${summary.ok.length} 镜，失败 ${summary.failed.length} 镜`)
@@ -832,7 +847,7 @@ function stopStatusPoll() {
 }
 
 function goListMode() {
-  const query = filterEpisodeId.value ? { episode: String(filterEpisodeId.value) } : {}
+  const query = resolvedEpisodeId.value ? { episode: String(resolvedEpisodeId.value) } : {}
   router.push({ path: `/film/${dramaId.value}`, query })
 }
 
@@ -855,7 +870,9 @@ function onNodeDoubleClick({ node }) {
 
 function onPaneClick(event) {
   if (paneClickSuppressed.value) return
-  const target = event?.event?.target || event?.target
+  const nativeEvent = event?.event || event
+  if (nativeEvent?.button === 2) return
+  const target = nativeEvent?.target
   if (target?.closest?.('.canvas-node-panel') || target?.closest?.('.el-popper') || target?.closest?.('.canvas-context-menu')) {
     return
   }

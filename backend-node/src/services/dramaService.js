@@ -24,7 +24,7 @@ function parseJsonColumn(value) {
   }
 }
 
-function createDrama(db, log, req) {
+function createDrama(db, log, req, user = null) {
   const now = new Date().toISOString();
   let meta = {};
   if (req.metadata) {
@@ -42,8 +42,8 @@ function createDrama(db, log, req) {
   }
   const metadataStr = Object.keys(meta).length ? JSON.stringify(meta) : null;
   const stmt = db.prepare(`
-    INSERT INTO dramas (title, description, genre, style, metadata, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)
+    INSERT INTO dramas (title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
   `);
   const info = stmt.run(
     req.title || '',
@@ -51,11 +51,14 @@ function createDrama(db, log, req) {
     req.genre || null,
     req.style || 'realistic',
     metadataStr,
+    user ? user.id : null,
+    user ? user.enterprise_id : null,
+    user ? user.team_id : null,
     now,
     now
   );
   const id = info.lastInsertRowid;
-  log.info('Drama created', { drama_id: id });
+  log.info('Drama created', { drama_id: id, created_by: user ? user.id : null });
   return getDramaById(db, id);
 }
 
@@ -164,31 +167,57 @@ function getDrama(db, dramaId, baseUrl) {
   return drama;
 }
 
-function listDramas(db, query) {
-  let sql = 'FROM dramas WHERE deleted_at IS NULL';
+function listDramas(db, query, user = null) {
+  let sql = 'FROM dramas d LEFT JOIN users u ON d.created_by = u.id WHERE d.deleted_at IS NULL';
   const params = [];
+  
+  if (user) {
+    if (user.role === 'super_admin') {
+      // 超管可以看到所有项目及其创建者信息
+    } else if (user.role === 'enterprise_admin') {
+      sql += ' AND d.enterprise_id = ?';
+      params.push(user.enterprise_id);
+    } else if (user.role === 'team_admin' || user.role === 'team_member') {
+      sql += ' AND d.team_id = ?';
+      params.push(user.team_id);
+    } else {
+      sql += ' AND d.created_by = ?';
+      params.push(user.id);
+    }
+  }
+  
   if (query.status) {
-    sql += ' AND status = ?';
+    sql += ' AND d.status = ?';
     params.push(query.status);
   }
   if (query.genre) {
-    sql += ' AND genre = ?';
+    sql += ' AND d.genre = ?';
     params.push(query.genre);
   }
   if (query.keyword) {
-    sql += ' AND (title LIKE ? OR description LIKE ?)';
+    sql += ' AND (d.title LIKE ? OR d.description LIKE ?)';
     const k = '%' + query.keyword + '%';
     params.push(k, k);
   }
-  const countRow = db.prepare('SELECT COUNT(*) as total ' + sql).get(...params);
+  const countRow = db.prepare('SELECT COUNT(DISTINCT d.id) as total ' + sql).get(...params);
   const total = countRow.total || 0;
   const page = Math.max(1, parseInt(query.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, parseInt(query.page_size, 10) || 20));
   const offset = (page - 1) * pageSize;
   const list = db.prepare(
-    'SELECT * ' + sql + ' ORDER BY updated_at DESC LIMIT ? OFFSET ?'
+    'SELECT d.*, u.nickname as creator_nickname, u.username as creator_username, u.user_type as creator_user_type, u.enterprise_id as creator_enterprise_id ' + sql + ' ORDER BY d.updated_at DESC LIMIT ? OFFSET ?'
   ).all(...params, pageSize, offset);
-  const dramas = list.map((r) => rowToDrama(r));
+  const dramas = list.map((r) => {
+    const drama = rowToDrama(r);
+    drama.creator = {
+      id: r.created_by,
+      nickname: r.creator_nickname,
+      username: r.creator_username,
+      user_type: r.creator_user_type,
+      enterprise_id: r.creator_enterprise_id
+    };
+    return drama;
+  });
   for (const d of dramas) {
     const episodes = db.prepare(
       'SELECT * FROM episodes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY episode_number ASC'
@@ -253,10 +282,9 @@ function updateDrama(db, log, dramaId, req) {
   return getDramaById(db, dramaId);
 }
 
-function generateStoryboard(db, log, episodeId, options) {
+function generateStoryboard(db, log, episodeId, options, cfg) {
   const episodeStoryboardService = require('./episodeStoryboardService');
   const { model, style, storyboard_count, video_duration, aspect_ratio, include_narration, universal_omni_storyboard } = options || {};
-  // 转换可能为字符串的数字
   const count = storyboard_count ? Number(storyboard_count) : undefined;
   const duration = video_duration ? Number(video_duration) : undefined;
   return episodeStoryboardService.generateStoryboard(
@@ -269,7 +297,8 @@ function generateStoryboard(db, log, episodeId, options) {
     duration,
     aspect_ratio,
     include_narration,
-    universal_omni_storyboard
+    universal_omni_storyboard,
+    cfg
   );
 }
 
@@ -639,7 +668,7 @@ function saveCharacters(db, log, dramaId, req) {
   }
   if (req.episode_id && characterIds.length > 0) {
     db.prepare('DELETE FROM episode_characters WHERE episode_id = ?').run(req.episode_id);
-    const ins = db.prepare('INSERT OR IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)');
+    const ins = db.prepare('INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)');
     for (const cid of characterIds) ins.run(req.episode_id, cid);
   }
   db.prepare('UPDATE dramas SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), did);

@@ -145,7 +145,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Picture, MagicStick, Loading, CircleClose } from '@element-plus/icons-vue'
 import { imagesAPI } from '@/api/images'
@@ -153,7 +154,8 @@ import { videosAPI } from '@/api/videos'
 import { uploadAPI } from '@/api/upload'
 import { generationSettingsAPI } from '@/api/prompts'
 
-const mode = ref('image')
+const route = useRoute()
+const mode = ref(route.query.mode === 'video' ? 'video' : 'image')
 const prompt = ref('')
 const style = ref('')
 const aspectRatio = ref('16:9')
@@ -173,6 +175,10 @@ onMounted(async () => {
     const m = Math.max(1, Number(res?.video_generation_timeout_minutes) || 30)
     videoPollMaxMs.value = m * 60 * 1000
   } catch (_) {}
+})
+
+watch(() => route.query.mode, (value) => {
+  if (value === 'image' || value === 'video') mode.value = value
 })
 
 function triggerRefImageUpload() {

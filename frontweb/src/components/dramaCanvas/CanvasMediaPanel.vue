@@ -137,9 +137,9 @@ async function runStep(step) {
   width: min(360px, 90vw);
   padding: 10px 12px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(129, 140, 248, 0.4);
-  background: rgba(15, 15, 18, 0.96);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(129, 140, 248, 0.5);
+  background: #3f3f46 !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 .panel-head {
   display: flex;
@@ -182,7 +182,7 @@ async function runStep(step) {
   flex-shrink: 0;
   border-radius: 6px;
   overflow: hidden;
-  background: #09090b;
+  background: #27272a;
 }
 .preview-img,
 .preview-vid {
@@ -207,7 +207,7 @@ async function runStep(step) {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  background: rgba(9, 9, 11, 0.85);
+  background: #27272a;
   font-size: 10px;
   color: #d4d4d8;
 }

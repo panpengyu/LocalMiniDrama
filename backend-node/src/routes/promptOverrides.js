@@ -64,10 +64,16 @@ function routes(db, log) {
   return {
     list: (req, res) => {
       try {
+        const userId = req.user?.id;
+        const isAdmin = req.user?.role === 'super_admin';
         const defs = getPromptDefinitions();
-        const overrides = promptOverridesService.listOverrides(db);
+        const overrides = promptOverridesService.listOverrides(db, isAdmin ? null : userId);
         const overrideMap = {};
-        for (const o of overrides) overrideMap[o.key] = o.content;
+        for (const o of overrides) {
+          if (!overrideMap[o.key] || o.user_id !== null) {
+            overrideMap[o.key] = o.content;
+          }
+        }
         const prompts = defs.map((d) => ({
           key: d.key,
           label: d.label,
@@ -86,6 +92,8 @@ function routes(db, log) {
     update: (req, res) => {
       const { key } = req.params;
       const { content } = req.body || {};
+      const userId = req.user?.id;
+      const isAdmin = req.user?.role === 'super_admin';
       const defs = getPromptDefinitions();
       if (!defs.some((d) => d.key === key)) {
         return response.badRequest(res, `未知的提示词 key: ${key}`);
@@ -94,9 +102,9 @@ function routes(db, log) {
         return response.badRequest(res, 'content 不能为空');
       }
       try {
-        promptOverridesService.setOverride(db, key, content.trim());
-        promptI18n.setOverrideInMemory(key, content.trim());
-        log.info('prompt override updated', { key });
+        promptOverridesService.setOverride(db, key, content.trim(), isAdmin ? null : userId);
+        promptI18n.setOverrideInMemory(key, content.trim(), isAdmin ? null : userId);
+        log.info('prompt override updated', { key, user_id: userId });
         response.success(res, { ok: true, key });
       } catch (err) {
         log.error('prompts update', { error: err.message });
@@ -105,14 +113,16 @@ function routes(db, log) {
     },
     reset: (req, res) => {
       const { key } = req.params;
+      const userId = req.user?.id;
+      const isAdmin = req.user?.role === 'super_admin';
       const defs = getPromptDefinitions();
       if (!defs.some((d) => d.key === key)) {
         return response.badRequest(res, `未知的提示词 key: ${key}`);
       }
       try {
-        promptOverridesService.deleteOverride(db, key);
-        promptI18n.clearOverrideInMemory(key);
-        log.info('prompt override reset', { key });
+        promptOverridesService.deleteOverride(db, key, isAdmin ? null : userId);
+        promptI18n.clearOverrideInMemory(key, isAdmin ? null : userId);
+        log.info('prompt override reset', { key, user_id: userId });
         response.success(res, { ok: true, key });
       } catch (err) {
         log.error('prompts reset', { error: err.message });

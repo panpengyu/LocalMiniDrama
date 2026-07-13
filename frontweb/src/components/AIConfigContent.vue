@@ -1,7 +1,17 @@
 <template>
   <div class="ai-config-content">
+    <el-alert
+      v-if="!showFullConfig"
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <template #title>💡 个人专属设置</template>
+      <template #description>您的 AI 设置为个人专属，与其他用户互不影响。您可以自由调整提示词、业务场景和生成设置。</template>
+    </el-alert>
     <el-tabs v-model="activeTab" class="config-tabs">
-      <el-tab-pane label="AI 配置" name="configs">
+      <el-tab-pane v-if="showFullConfig" label="AI 配置" name="configs">
         <div class="tab-content">
           <!-- 普通模式操作栏 -->
           <div v-if="!vendorLock.enabled" class="content-actions">
@@ -194,7 +204,7 @@
           </div>
         </div>
       </el-tab-pane>
-      <el-tab-pane label="SD2 资产管理" name="sd2_assets">
+      <el-tab-pane v-if="showFullConfig" label="SD2 资产管理" name="sd2_assets">
         <div class="tab-content">
           <Sd2AssetManagement :configs="list" @saved="loadList" />
         </div>
@@ -1102,8 +1112,12 @@ import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
 import SceneModelMap from '@/components/SceneModelMap.vue'
 import Sd2AssetManagement from '@/components/Sd2AssetManagement.vue'
+import { useUserStore } from '@/stores/user'
 
-const activeTab = ref('configs')
+const userStore = useUserStore()
+const showFullConfig = computed(() => userStore.isAdmin)
+
+const activeTab = ref(showFullConfig.value ? 'configs' : 'prompts')
 const importFileRef = ref(null)
 
 // ---- 生成设置 ----

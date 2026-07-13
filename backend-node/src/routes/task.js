@@ -1,6 +1,22 @@
+/**
+ * 任务路由模块
+ * 
+ * 提供任务状态查询、资源关联任务查询和任务取消等功能。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {object} 任务路由处理函数集合
+ */
 const taskService = require('../services/taskService');
 const response = require('../response');
 
+/**
+ * 获取任务状态接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function getTaskStatus(db, log) {
   return (req, res) => {
     const task = taskService.getTask(db, req.params.task_id);
@@ -9,6 +25,15 @@ function getTaskStatus(db, log) {
   };
 }
 
+/**
+ * 获取资源关联的任务列表接口
+ * 
+ * 通过 resource_id 查询该资源相关的所有任务。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function getResourceTasks(db, log) {
   return (req, res) => {
     const resourceId = req.query.resource_id;
@@ -23,6 +48,13 @@ function getResourceTasks(db, log) {
   };
 }
 
+/**
+ * 取消任务接口
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} log - 日志模块
+ * @returns {function} Express 路由处理函数
+ */
 function cancelTaskStatus(db, log) {
   return (req, res) => {
     try {

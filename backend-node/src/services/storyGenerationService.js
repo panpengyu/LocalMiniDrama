@@ -6,12 +6,12 @@ const dramaService = require('./dramaService');
 const { safeParseAIJSON } = require('../utils/safeJson');
 const loadConfig = require('../config').loadConfig;
 
-async function generateStory(db, log, body) {
+async function generateStory(db, log, body, userCfg) {
   const premise = (body.premise || body.prompt || body.text || '').trim();
   if (!premise) {
     throw new Error('请提供故事梗概');
   }
-  const cfg = loadConfig();
+  const cfg = userCfg || loadConfig();
   const style = body.style || body.genre || null;
   const type = body.type || null;
   const episodeCount = Math.max(1, Math.floor(Number(body.episode_count) || 1));
@@ -92,10 +92,10 @@ async function generateStory(db, log, body) {
   };
 }
 
-async function processStoryGeneration(db, log, taskId, req) {
+async function processStoryGeneration(db, log, taskId, req, cfg) {
   taskService.updateTaskStatus(db, taskId, 'processing', 10, '正在生成剧本...');
   try {
-    const result = await generateStory(db, log, req);
+    const result = await generateStory(db, log, req, cfg);
     const episodes = result?.episodes || [];
     if (episodes.length === 0) {
       taskService.updateTaskError(db, taskId, 'AI 未能生成剧本');
@@ -138,7 +138,7 @@ async function processStoryGeneration(db, log, taskId, req) {
   }
 }
 
-function startStoryGeneration(db, log, req) {
+function startStoryGeneration(db, log, req, cfg) {
   const dramaId = String(req.drama_id || '');
   if (!dramaId) throw new Error('drama_id 必填');
   if (!dramaService.getDramaById(db, Number(dramaId))) {
@@ -158,7 +158,7 @@ function startStoryGeneration(db, log, req) {
 
   const task = taskService.createTask(db, log, 'story_generation', dramaId);
   setImmediate(() => {
-    processStoryGeneration(db, log, task.id, req).catch((err) => {
+    processStoryGeneration(db, log, task.id, req, cfg).catch((err) => {
       log.error('processStoryGeneration fatal', { error: err.message, task_id: task.id });
       taskService.updateTaskError(db, task.id, err.message || '故事生成失败');
     });

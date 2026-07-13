@@ -521,7 +521,7 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
   try {
     db.prepare('DELETE FROM storyboard_props WHERE storyboard_id = ?').run(existingId);
     if (d.propIds.length > 0) {
-      const insProp = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+      const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
       for (const pid of d.propIds) insProp.run(existingId, pid);
     }
   } catch (_) {}
@@ -549,10 +549,10 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
       d.universalSegmentText != null ? d.universalSegmentText : null,
       now, now
     );
-    const newId = db.prepare('SELECT last_insert_rowid() as id').get().id;
+    const newId = db.prepare('SELECT LAST_INSERT_ID() as id').get().id;
     if (d.propIds.length > 0) {
       try {
-        const insProp = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of d.propIds) insProp.run(newId, pid);
       } catch (_) {}
     }
@@ -744,10 +744,10 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
         throw e;
       }
     }
-    const id = db.prepare('SELECT last_insert_rowid() as id').get().id;
+    const id = db.prepare('SELECT LAST_INSERT_ID() as id').get().id;
     if (d.propIds.length > 0) {
       try {
-        const insProp = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of d.propIds) insProp.run(id, pid);
       } catch (_) {}
     }
@@ -1096,8 +1096,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
   }
 }
 
-function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
-  const cfg = loadConfig();
+function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni, cfg) {
+  const effectiveCfg = cfg || loadConfig();
   const episode = db.prepare(
     'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
   ).get(Number(episodeId));
@@ -1120,7 +1120,7 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
       if (meta && meta.video_clip_duration) videoClipDuration = Number(meta.video_clip_duration) || null;
     }
   } catch (_) {}
-  const imageRatio = aspectRatio || dramaAspectRatio || cfg?.style?.default_video_ratio || '16:9';
+  const imageRatio = aspectRatio || dramaAspectRatio || effectiveCfg?.style?.default_video_ratio || '16:9';
 
   // 计算单镜建议时长（秒）：
   // 项目 metadata 中的 video_clip_duration（如 15 秒/段）优先于「总时长÷镜数」，
@@ -1172,9 +1172,9 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     propList = '[' + props.map((p) => `{"id": ${p.id}, "name": "${(p.name || '').replace(/"/g, '\\"')}"${p.type ? `, "type": "${p.type.replace(/"/g, '\\"')}"` : ''}}`).join(', ') + ']';
   }
 
-  const scriptLabel = promptI18n.formatUserPrompt(cfg, 'script_content_label');
-  const taskLabel = promptI18n.formatUserPrompt(cfg, 'task_label');
-  const taskInstruction = promptI18n.formatUserPrompt(cfg, 'task_instruction');
+  const scriptLabel = promptI18n.formatUserPrompt(effectiveCfg, 'script_content_label');
+  const taskLabel = promptI18n.formatUserPrompt(effectiveCfg, 'task_label');
+  const taskInstruction = promptI18n.formatUserPrompt(effectiveCfg, 'task_instruction');
   
   // 处理分镜数量和时长约束
   let extraConstraint = '';
@@ -1182,20 +1182,20 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   if (storyboardCount) {
     const countVal = Number(storyboardCount);
     if (Number.isFinite(countVal) && countVal > 0) {
-      const countLabel = promptI18n.formatUserPrompt(cfg, 'storyboard_count_constraint', countVal);
+      const countLabel = promptI18n.formatUserPrompt(effectiveCfg, 'storyboard_count_constraint', countVal);
       if (countLabel) extraConstraint += `\n${countLabel}`;
     }
   }
   if (videoDuration) {
     const durationVal = Number(videoDuration);
     if (Number.isFinite(durationVal) && durationVal > 0) {
-      const durationLabel = promptI18n.formatUserPrompt(cfg, 'video_duration_constraint', durationVal);
+      const durationLabel = promptI18n.formatUserPrompt(effectiveCfg, 'video_duration_constraint', durationVal);
       if (durationLabel) extraConstraint += `\n${durationLabel}`;
     }
   }
   // 当同时指定总时长和数量时，补充单镜 duration 说明（与项目「每段秒数」一致时勿用总÷镜压短）
   if (storyboardCount && videoDuration && effectiveShotDuration) {
-    const isEn = promptI18n.isEnglish(cfg);
+    const isEn = promptI18n.isEnglish(effectiveCfg);
     const clipFromProject = videoClipDuration && Number(videoClipDuration) > 0;
     const implied =
       impliedFromTotal && impliedFromTotal > 0 ? impliedFromTotal : Math.round(Number(videoDuration) / Number(storyboardCount));
@@ -1220,23 +1220,23 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     effective_shot_duration: effectiveShotDuration,
   });
 
-  const charListLabel = promptI18n.formatUserPrompt(cfg, 'character_list_label');
-  const charConstraint = promptI18n.formatUserPrompt(cfg, 'character_constraint');
-  const sceneListLabel = promptI18n.formatUserPrompt(cfg, 'scene_list_label');
-  const sceneConstraint = promptI18n.formatUserPrompt(cfg, 'scene_constraint');
-  const propListLabel = promptI18n.formatUserPrompt(cfg, 'prop_list_label');
-  const propConstraint = promptI18n.formatUserPrompt(cfg, 'prop_constraint');
-  const suffix = promptI18n.getStoryboardUserPromptSuffix(cfg, effectiveShotDuration);
+  const charListLabel = promptI18n.formatUserPrompt(effectiveCfg, 'character_list_label');
+  const charConstraint = promptI18n.formatUserPrompt(effectiveCfg, 'character_constraint');
+  const sceneListLabel = promptI18n.formatUserPrompt(effectiveCfg, 'scene_list_label');
+  const sceneConstraint = promptI18n.formatUserPrompt(effectiveCfg, 'scene_constraint');
+  const propListLabel = promptI18n.formatUserPrompt(effectiveCfg, 'prop_list_label');
+  const propConstraint = promptI18n.formatUserPrompt(effectiveCfg, 'prop_constraint');
+  const suffix = promptI18n.getStoryboardUserPromptSuffix(effectiveCfg, effectiveShotDuration);
 
   let userPrompt =
     `${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}`;
 
   const wantNarration = includeNarration === true || includeNarration === 1 || String(includeNarration).toLowerCase() === 'true';
   if (wantNarration) {
-    userPrompt += promptI18n.getStoryboardNarrationExtraInstructions(cfg);
+    userPrompt += promptI18n.getStoryboardNarrationExtraInstructions(effectiveCfg);
   }
 
-  let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg);
+  let systemPrompt = promptI18n.getStoryboardSystemPrompt(effectiveCfg);
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
   // 使"目标数量"优先于默认的"一动作一镜头、禁止合并"原则
@@ -1275,7 +1275,7 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
     universalOmni === 1 ||
     String(universalOmni || '').toLowerCase() === 'true';
   if (wantUniversalOmni) {
-    systemPrompt += promptI18n.getStoryboardUniversalOmniModeSuffix(cfg);
+    systemPrompt += promptI18n.getStoryboardUniversalOmniModeSuffix(effectiveCfg);
   }
 
   const task = taskService.createTask(db, log, 'storyboard_generation', String(episodeId));
@@ -1294,7 +1294,7 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
   setImmediate(() => {
     // 传入 imageRatio 同时覆盖 default_video_ratio 和 default_image_ratio，
     // 确保分镜图/视频提示词、场景提取提示词都使用项目设定的比例
-    const runCfg = { ...cfg, style: { ...(cfg?.style || {}), default_video_ratio: imageRatio, default_image_ratio: imageRatio } };
+    const runCfg = { ...effectiveCfg, style: { ...(effectiveCfg?.style || {}), default_video_ratio: imageRatio, default_image_ratio: imageRatio } };
     // 如果 model 为 null，则传 undefined，让 generateText 内部去兜底找默认配置
     const clipSec =
       videoClipDuration && Number(videoClipDuration) > 0 ? Number(videoClipDuration) : null;
@@ -1399,13 +1399,13 @@ function copyStoryboardAssetLinks(db, fromSbId, toSbId) {
   try {
     const chars = db.prepare('SELECT character_id FROM storyboard_characters WHERE storyboard_id = ?').all(from);
     const insC = db.prepare(
-      'INSERT OR IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
+      'INSERT IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
     );
     for (const c of chars) insC.run(to, c.character_id, now);
   } catch (_) {}
   try {
     const props = db.prepare('SELECT prop_id FROM storyboard_props WHERE storyboard_id = ?').all(from);
-    const insP = db.prepare('INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+    const insP = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
     for (const p of props) insP.run(to, p.prop_id);
   } catch (_) {}
 }

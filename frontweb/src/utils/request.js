@@ -7,9 +7,21 @@ const request = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
+request.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
 request.interceptors.response.use(
   (response) => {
-    // blob 类型直接返回原始数据，不做 JSON 解包
     if (response.config?.responseType === 'blob') {
       return response.data
     }
@@ -20,11 +32,21 @@ request.interceptors.response.use(
     return Promise.reject(new Error(res.error?.message || '请求失败'))
   },
   (error) => {
-    // 提取后端实际错误信息（优先 API 返回的 message，而非 axios 通用 "status code 500"）
     const backendMsg = error.response?.data?.error?.message
+    const status = error.response?.status
+    
+    if (status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      ElMessage.error('登录已过期，请重新登录')
+      setTimeout(() => {
+        window.location.href = '/login'
+      }, 1500)
+      return Promise.reject(new Error('登录已过期'))
+    }
+    
     const msg = backendMsg || error.message || '网络错误'
     ElMessage.error(msg)
-    // 将真实错误信息写回 message，使组件 catch 块可直接用 e.message 获取可读内容
     if (backendMsg) error.message = backendMsg
     return Promise.reject(error)
   }

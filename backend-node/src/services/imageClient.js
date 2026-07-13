@@ -23,6 +23,12 @@ function mergeNegativePromptFragments(auto, user) {
   return a || u || '';
 }
 
+function sanitizeApiKey(apiKey) {
+  if (!apiKey) return '';
+  const str = String(apiKey).trim();
+  return str.replace(/[\x00-\x1F\x7F]/g, '');
+}
+
 /** 角色/场景/道具资产生图：请求里显式传入 model 且资产上存有负面词时，与自动负面片段合并后传给图生 API */
 function resolveAssetUserNegativeForApi(explicitModelName, storedNegative) {
   const hasModel = explicitModelName != null && String(explicitModelName).trim().length > 0;
@@ -125,13 +131,20 @@ function getDefaultImageConfig(db, preferredModel, preferredProvider, imageServi
   if (preferredModel) {
     for (const c of active) {
       const models = Array.isArray(c.model) ? c.model : (c.model != null ? [c.model] : []);
-      if (models.includes(preferredModel)) return c;
+      if (models.includes(preferredModel)) {
+        c.api_key = sanitizeApiKey(c.api_key);
+        return c;
+      }
     }
   }
-  // 显式使用前端设置的「默认」：优先 is_default，再按 priority 降序（listConfigs 已按 is_default DESC, priority DESC 排序，取第一个即可）
   const defaultOne = active.find((c) => c.is_default);
-  if (defaultOne) return defaultOne;
-  return active[0];
+  if (defaultOne) {
+    defaultOne.api_key = sanitizeApiKey(defaultOne.api_key);
+    return defaultOne;
+  }
+  const cfg = active[0];
+  cfg.api_key = sanitizeApiKey(cfg.api_key);
+  return cfg;
 }
 
 // 与 Go image_generation_service 一致：openai/chatfire 使用 "/images/generations"，base_url 通常已含 /v1
@@ -386,7 +399,7 @@ function klingImageAspectRatio(size) {
 async function callKlingImageApi(config, log, opts) {
   const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const base = (config.base_url || 'https://api.klingai.com').replace(/\/$/, '');
-  const apiKey = config.api_key || '';
+  const apiKey = sanitizeApiKey(config.api_key || '');
   const headers = {
     'Content-Type': 'application/json',
     Authorization: 'Bearer ' + apiKey,
@@ -528,7 +541,7 @@ async function callKlingImageApi(config, log, opts) {
 async function callNanoBananaImageApi(config, log, opts) {
   const { prompt, model, size, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const base = (config.base_url || 'https://api.nanobananaapi.ai').replace(/\/$/, '');
-  const apiKey = config.api_key || '';
+  const apiKey = sanitizeApiKey(config.api_key || '');
   const headers = {
     'Content-Type': 'application/json',
     Authorization: 'Bearer ' + apiKey,
@@ -880,7 +893,7 @@ async function callDashScopeImageApi(config, log, opts) {
     log.info('Image API request (Qwen-Image sync)', { url: url.slice(0, 70), model: body.model, image_gen_id });
     const qwenHeaders = {
       'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
+      Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
     };
     let raw;
     let httpStatus;
@@ -968,7 +981,7 @@ async function callDashScopeImageApi(config, log, opts) {
   });
   const headers = {
     'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + (config.api_key || ''),
+    Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
   };
   if (stream) headers['X-DashScope-Sse'] = 'enable';
   let raw;
@@ -1135,7 +1148,7 @@ async function getProxyCacheValidated(db, cacheKey, log, tag) {
 function setProxyCache(db, cacheKey, proxyUrl) {
   try {
     db.prepare(
-      'INSERT OR REPLACE INTO image_proxy_cache (cache_key, proxy_url, created_at) VALUES (?, ?, ?)'
+      'REPLACE INTO image_proxy_cache (cache_key, proxy_url, created_at) VALUES (?, ?, ?)'
     ).run(cacheKey, proxyUrl, new Date().toISOString());
   } catch (_) {}
 }
@@ -1549,7 +1562,7 @@ async function callImageApi(db, log, opts) {
   });
   const openaiCompatHeaders = {
     'Content-Type': 'application/json',
-    Authorization: 'Bearer ' + (config.api_key || ''),
+    Authorization: 'Bearer ' + sanitizeApiKey(config.api_key || ''),
   };
   let raw;
   let httpStatus;

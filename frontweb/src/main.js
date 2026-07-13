@@ -36,4 +36,9 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+
+import { useUserStore } from '@/stores/user'
+const userStore = useUserStore()
+userStore.loadUser()
+
 app.mount('#app')

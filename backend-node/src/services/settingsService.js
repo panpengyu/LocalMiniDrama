@@ -49,7 +49,7 @@ function updateLanguage(cfg, log, language) {
  */
 function getGlobalSetting(db, key, defaultValue = null) {
   try {
-    const row = db.prepare('SELECT value FROM global_settings WHERE key = ?').get(key);
+    const row = db.prepare('SELECT value FROM global_settings WHERE `key` = ?').get(key);
     if (!row) return defaultValue;
     try { return JSON.parse(row.value); } catch (_) { return row.value; }
   } catch (_) { return defaultValue; }
@@ -62,9 +62,36 @@ function setGlobalSetting(db, key, value) {
   const now = new Date().toISOString();
   const str = JSON.stringify(value);
   db.prepare(
-    `INSERT INTO global_settings (key, value, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-  ).run(key, str, now);
+    `INSERT INTO global_settings (\`key\`, value, updated_at) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE value = ?, updated_at = ?`
+  ).run(key, str, now, str, now);
+}
+
+function getUserSetting(db, userId, key, defaultValue = null) {
+  try {
+    const row = db.prepare('SELECT value FROM user_settings WHERE user_id = ? AND `key` = ?').get(userId, key);
+    if (!row) return defaultValue;
+    try { return JSON.parse(row.value); } catch (_) { return row.value; }
+  } catch (_) { return defaultValue; }
+}
+
+function setUserSetting(db, userId, key, value) {
+  const now = new Date().toISOString();
+  const str = JSON.stringify(value);
+  db.prepare(
+    `INSERT INTO user_settings (user_id, \`key\`, value, updated_at) VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE value = ?, updated_at = ?`
+  ).run(userId, key, str, now, str, now);
+}
+
+function getSetting(db, userId, key, defaultValue = null) {
+  if (userId) {
+    const userValue = getUserSetting(db, userId, key);
+    if (userValue !== null && userValue !== undefined) {
+      return userValue;
+    }
+  }
+  return getGlobalSetting(db, key, defaultValue);
 }
 
 module.exports = {
@@ -73,4 +100,7 @@ module.exports = {
   updateLanguage,
   getGlobalSetting,
   setGlobalSetting,
+  getUserSetting,
+  setUserSetting,
+  getSetting,
 };

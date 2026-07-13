@@ -1,18 +1,45 @@
-// 与 Go 路由一一对应的桩实现，保证前端可一键切换；后续可逐步替换为真实逻辑
+/**
+ * 桩路由模块
+ * 
+ * 与 Go 后端路由一一对应的桩实现，保证前端可一键切换前后端；
+ * 后续可逐步替换为真实逻辑。部分接口已实现真实逻辑（如分镜生成）。
+ * 
+ * @param {object} db - 数据库连接实例
+ * @param {object} cfg - 配置对象
+ * @param {object} log - 日志模块
+ * @returns {object} 桩路由处理函数集合
+ */
 const response = require('../response');
 const taskService = require('../services/taskService');
 const episodeStoryboardService = require('../services/episodeStoryboardService');
 
+/**
+ * 返回成功响应的辅助函数
+ * 
+ * @param {object} res - Express 响应对象
+ * @param {object} data - 返回数据
+ */
 function stubSuccess(res, data = {}) {
   response.success(res, data);
 }
+
+/**
+ * 返回创建成功响应的辅助函数
+ * 
+ * @param {object} res - Express 响应对象
+ * @param {object} data - 返回数据
+ */
 function stubCreated(res, data = {}) {
   response.created(res, data);
 }
 
 module.exports = function stubRoutes(db, cfg, log) {
   return {
-    // POST /generation/characters
+    /**
+     * 生成角色接口（桩实现）
+     * 
+     * 创建角色生成任务，立即返回任务 ID。
+     */
     generationCharacters: (req, res) => {
       const body = req.body || {};
       const task = taskService.createTask(db, log, 'character_generation', body.drama_id || '');
@@ -20,13 +47,13 @@ module.exports = function stubRoutes(db, cfg, log) {
       response.success(res, { task_id: task.id, status: 'pending' });
     },
 
-    // character-library
+    // ========== 角色库接口（桩实现）==========
     characterLibraryList: (req, res) => stubSuccess(res, []),
     characterLibraryCreate: (req, res) => stubCreated(res, { id: 0, name: '', image_url: '', ...req.body }),
     characterLibraryGet: (req, res) => stubSuccess(res, { id: req.params.id, name: '', image_url: '' }),
     characterLibraryDelete: (req, res) => response.success(res, { message: '删除成功' }),
 
-    // characters
+    // ========== 角色接口（桩实现）==========
     characterUpdate: (req, res) => response.success(res, { message: '保存成功' }),
     characterDelete: (req, res) => response.success(res, { message: '删除成功' }),
     characterBatchGenerateImages: (req, res) => {
@@ -44,17 +71,24 @@ module.exports = function stubRoutes(db, cfg, log) {
     characterImageFromLibrary: (req, res) => response.success(res, { message: '应用成功' }),
     characterAddToLibrary: (req, res) => response.success(res, { message: '已加入角色库' }),
 
-    // upload
+    // ========== 上传接口（桩实现）==========
     uploadImage: (req, res) => response.success(res, { url: '', path: '' }),
 
-    // episodes (部分在 drama 里已实现 finalize, download)
+    // ========== 章节接口（部分已实现真实逻辑）==========
     episodeStoryboardsGenerate: (req, res) => {
+      const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
       const taskId = episodeStoryboardService.generateStoryboard(
         db,
         log,
         req.params.episode_id,
         req.query.model,
-        req.query.style
+        req.query.style,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        userCfg
       );
       response.success(res, { task_id: taskId, status: 'pending', message: '分镜头生成任务已创建，正在后台处理...' });
     },
@@ -68,14 +102,14 @@ module.exports = function stubRoutes(db, cfg, log) {
       response.success(res, { task_id: task.id });
     },
 
-    // scenes
+    // ========== 场景接口（桩实现）==========
     sceneUpdate: (req, res) => response.success(res, { message: '保存成功' }),
     sceneUpdatePrompt: (req, res) => response.success(res, { message: '保存成功' }),
     sceneDelete: (req, res) => response.success(res, { message: '删除成功' }),
     sceneGenerateImage: (req, res) => response.success(res, { task_id: '', image_url: '' }),
     sceneCreate: (req, res) => stubCreated(res, { id: 0, ...req.body }),
 
-    // images
+    // ========== 图片接口（桩实现）==========
     imageList: (req, res) => response.success(res, []),
     imageCreate: (req, res) => {
       const task = taskService.createTask(db, log, 'image_generation', '');
@@ -104,7 +138,7 @@ module.exports = function stubRoutes(db, cfg, log) {
     },
     imageEpisodeBatch: (req, res) => response.success(res, []),
 
-    // videos
+    // ========== 视频接口（桩实现）==========
     videoList: (req, res) => response.success(res, []),
     videoCreate: (req, res) => {
       const task = taskService.createTask(db, log, 'video_generation', '');
@@ -119,7 +153,7 @@ module.exports = function stubRoutes(db, cfg, log) {
     },
     videoEpisodeBatch: (req, res) => response.success(res, []),
 
-    // video-merges
+    // ========== 视频合并接口（桩实现）==========
     videoMergeList: (req, res) => response.success(res, []),
     videoMergeCreate: (req, res) => {
       const task = taskService.createTask(db, log, 'video_merge', req.body?.episode_id || '');
@@ -128,7 +162,7 @@ module.exports = function stubRoutes(db, cfg, log) {
     videoMergeGet: (req, res) => response.notFound(res, '记录不存在'),
     videoMergeDelete: (req, res) => response.success(res, { message: '删除成功' }),
 
-    // assets
+    // ========== 资源接口（桩实现）==========
     assetList: (req, res) => response.success(res, []),
     assetCreate: (req, res) => stubCreated(res, { id: 0 }),
     assetGet: (req, res) => response.notFound(res, '资源不存在'),
@@ -137,7 +171,7 @@ module.exports = function stubRoutes(db, cfg, log) {
     assetImportImage: (req, res) => stubCreated(res, { id: 0 }),
     assetImportVideo: (req, res) => stubCreated(res, { id: 0 }),
 
-    // storyboards (episode generate 已在上方；create/update/delete/frame-prompt)
+    // ========== 分镜接口（部分已实现真实逻辑）==========
     storyboardCreate: (req, res) => stubCreated(res, { id: 0, ...req.body }),
     storyboardUpdate: (req, res) => response.success(res, { message: '保存成功' }),
     storyboardDelete: (req, res) => response.success(res, { message: '删除成功' }),
@@ -147,7 +181,7 @@ module.exports = function stubRoutes(db, cfg, log) {
     },
     storyboardFramePromptsGet: (req, res) => response.success(res, []),
 
-    // audio
+    // ========== 音频接口（桩实现）==========
     audioExtract: (req, res) => response.success(res, { url: '' }),
     audioExtractBatch: (req, res) => response.success(res, []),
   };

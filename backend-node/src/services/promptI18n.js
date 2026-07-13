@@ -1,18 +1,43 @@
-// 内存覆盖缓存：key => body（仅存可编辑部分，不含锁定的 JSON 格式要求）
-const _overrideCache = {};
+// 内存覆盖缓存：{ global: { key => content }, user_${userId}: { key => content } }
+const _overrideCache = { global: {} };
 
 function loadOverridesIntoCache(overrides) {
   for (const o of overrides) {
-    _overrideCache[o.key] = o.content;
+    const cacheKey = o.user_id ? `user_${o.user_id}` : 'global';
+    if (!_overrideCache[cacheKey]) {
+      _overrideCache[cacheKey] = {};
+    }
+    _overrideCache[cacheKey][o.key] = o.content;
   }
 }
 
-function setOverrideInMemory(key, content) {
-  _overrideCache[key] = content;
+function setOverrideInMemory(key, content, userId = null) {
+  const cacheKey = userId ? `user_${userId}` : 'global';
+  if (!_overrideCache[cacheKey]) {
+    _overrideCache[cacheKey] = {};
+  }
+  _overrideCache[cacheKey][key] = content;
 }
 
-function clearOverrideInMemory(key) {
-  delete _overrideCache[key];
+function clearOverrideInMemory(key, userId = null) {
+  const cacheKey = userId ? `user_${userId}` : 'global';
+  if (_overrideCache[cacheKey]) {
+    delete _overrideCache[cacheKey][key];
+  }
+}
+
+function getOverrideFromCache(key, userId = null) {
+  if (userId) {
+    const userCache = _overrideCache[`user_${userId}`];
+    if (userCache && userCache[key] !== undefined) {
+      return userCache[key];
+    }
+  }
+  return _overrideCache.global[key];
+}
+
+function getUserIdFromCfg(cfg) {
+  return cfg?.userId || cfg?.user?.id || null;
 }
 
 // 与 Go application/services/prompt_i18n.go 对齐：提示词与语言
@@ -42,7 +67,8 @@ function styleTextEnForImage(cfg) {
   return (cfg?.style?.default_style_en || cfg?.style?.default_style || '').trim();
 }
 
-function getCharacterExtractionPrompt(cfg) {
+function getCharacterExtractionPrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const style = styleTextForCfgLang(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
   if (isEnglish(cfg)) {
@@ -64,7 +90,7 @@ Output Format:
 **CRITICAL: Return ONLY a valid JSON array. Do NOT include any markdown code blocks, explanations, or other text. Start directly with [ and end with ].**
 Each element is a character object containing the above fields.`;
   }
-  const _charOverride = _overrideCache['character_extraction'];
+  const _charOverride = getOverrideFromCache('character_extraction', effectiveUserId);
   if (_charOverride) {
     return _charOverride + `\n- **风格要求**：${style}\n- **图片比例**：${imageRatio}\n输出格式：\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个元素是一个角色对象，包含上述字段。`;
   }
@@ -89,7 +115,8 @@ Each element is a character object containing the above fields.`;
 每个元素是一个角色对象，包含上述字段。`;
 }
 
-function getStoryboardSystemPrompt(cfg) {
+function getStoryboardSystemPrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   if (isEnglish(cfg)) {
     return `[Role] You are a senior film storyboard artist, proficient in Robert McKee's shot breakdown theory, skilled at building emotional rhythm.
 
@@ -178,7 +205,7 @@ function getStoryboardSystemPrompt(cfg) {
 - Emotion intensity must accurately reflect script atmosphere changes
 - segment_index must be sequential integers starting from 0; all shots in the same segment share the same index and title`;
   }
-  const _sbOverride = _overrideCache['storyboard_system'];
+  const _sbOverride = getOverrideFromCache('storyboard_system', effectiveUserId);
   if (_sbOverride) {
     return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
   }
@@ -441,8 +468,10 @@ function formatUserPrompt(cfg, key, ...args) {
 /** 分镜用户提示词后缀：详细输出格式与要求
  * @param {object} cfg - 配置对象
  * @param {number|null} shotDuration - 单镜建议时长（秒），由后端从项目配置或总时长/数量推算后注入
+ * @param {number|null} userId - 用户ID，用于用户级别的提示词隔离
  */
-function getStoryboardUserPromptSuffix(cfg, shotDuration) {
+function getStoryboardUserPromptSuffix(cfg, shotDuration, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const lang = isEnglish(cfg) ? 'en' : 'zh';
   const durationHint = shotDuration && Number.isFinite(Number(shotDuration)) && Number(shotDuration) > 0
     ? Number(shotDuration)
@@ -464,7 +493,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 **Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary. Return ONLY valid JSON, no markdown.`;
   }
   const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
-  const _sbUserOverride = _overrideCache['storyboard_user_suffix'];
+  const _sbUserOverride = getOverrideFromCache('storyboard_user_suffix', effectiveUserId);
   if (_sbUserOverride) {
     return '\n\n' + _sbUserOverride + _sbUserLocked;
   }
@@ -530,7 +559,8 @@ Violation (anachronistic props, oversized objects, broken perspective, props as 
 任何生成结果出现时代错乱道具、物体过大失真、透视错误、道具成为主导元素，均视为严重失败。`;
 }
 
-function getFirstFramePrompt(cfg) {
+function getFirstFramePrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const style = isEnglish(cfg) ? styleTextEnForImage(cfg) : styleTextZhForPolish(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
   if (isEnglish(cfg)) {
@@ -559,7 +589,7 @@ Return a JSON object containing:
 - description: Simplified Chinese description (for reference)`;
   }
   const _ffLocked = `\n- **风格要求**：${style}\n- **图片比例**：${imageRatio}\n输出格式：\n返回一个JSON对象，包含：\n- prompt：完整的中文图片生成提示词（详细的电影语言描述）\n- description：简化的中文描述（供参考）`;
-  const _ffOverride = _overrideCache['first_frame_prompt'];
+  const _ffOverride = getOverrideFromCache('first_frame_prompt', effectiveUserId);
   if (_ffOverride) {
     return _ffOverride + _ffLocked;
   }
@@ -611,7 +641,8 @@ JSON字段：
 - description：一句话中文描述（供人类参考）`;
 }
 
-function getKeyFramePrompt(cfg) {
+function getKeyFramePrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const style = isEnglish(cfg) ? styleTextEnForImage(cfg) : styleTextZhForPolish(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
   if (isEnglish(cfg)) {
@@ -639,7 +670,7 @@ Return a JSON object containing:
 - description: Simplified Chinese description (for reference)`;
   }
   const _kfLocked = `\n- **风格要求**：${style}\n- **图片比例**：${imageRatio}\n输出格式：\n返回一个JSON对象，包含：\n- prompt：完整的中文图片生成提示词（详细的电影语言描述）\n- description：简化的中文描述（供参考）`;
-  const _kfOverride = _overrideCache['key_frame_prompt'];
+  const _kfOverride = getOverrideFromCache('key_frame_prompt', effectiveUserId);
   if (_kfOverride) {
     return _kfOverride + _kfLocked;
   }
@@ -688,7 +719,8 @@ JSON字段：
 - description：一句话中文描述（供人类参考）`;
 }
 
-function getLastFramePrompt(cfg) {
+function getLastFramePrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const style = isEnglish(cfg) ? styleTextEnForImage(cfg) : styleTextZhForPolish(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
   if (isEnglish(cfg)) {
@@ -725,7 +757,7 @@ Return a JSON object containing:
 - description: Simplified Chinese description (for reference)`;
   }
   const _lfLocked = `\n- **风格要求**：${style}\n- **图片比例**：${imageRatio}\n输出格式：\n返回一个JSON对象，包含：\n- prompt：完整的中文图片生成提示词（详细的电影语言描述）\n- description：简化的中文描述（供参考）`;
-  const _lfOverride = _overrideCache['last_frame_prompt'];
+  const _lfOverride = getOverrideFromCache('last_frame_prompt', effectiveUserId);
   if (_lfOverride) {
     return _lfOverride + _lfLocked;
   }
@@ -788,7 +820,8 @@ JSON字段：
 }
 
 /** 道具提取系统提示词（system prompt，剧本内容由 user prompt 单独传入） */
-function getPropExtractionPrompt(cfg) {
+function getPropExtractionPrompt(cfg, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const base = styleTextForCfgLang(cfg);
   const propExtra = (cfg?.style?.default_prop_style || '').toString().trim();
   const style = [base, propExtra].filter(Boolean).join(', ');
@@ -818,7 +851,7 @@ Each object containing:
 - image_prompt: English hero product shot prompt (single prop, solid seamless backdrop, no clutter, no environment, soft studio light, tight wording, no names/places from script, ultra-detailed only where visually grounded)`;
   }
   const _propLocked = `\n- **风格要求**：${style}\n- **图片比例**：${imageRatio}\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个对象包含：\n- name: 道具名称\n- type: 类型 (如：武器/关键证物/日常用品/特殊装置)\n- description: 在剧中的作用和中文外观描述（人名、归属可写在此字段，勿写入 image_prompt）\n- image_prompt: 单道具主图提示词（纯色无缝背景、仅主体、无杂物无场景、柔和棚拍光；**禁止**剧本人名/地名/组织名/台词/剧情标签；只写有依据的外观词，**不脑补、不扩写**；中文项目输出中文提示词并匹配项目「语音」与尺度铁律）`;
-  const _propOverride = _overrideCache['prop_extraction'];
+  const _propOverride = getOverrideFromCache('prop_extraction', effectiveUserId);
   if (_propOverride) {
     return _propOverride + _propLocked;
   }
@@ -847,7 +880,8 @@ Each object containing:
 - image_prompt: **纯中文**（中文项目）单道具主图提示词（纯色无缝背景、仅主体、无杂物无场景、柔和棚拍光；融入项目真实尺度铁律与次要道具语音；无剧本人名地名等；只写有依据的外观词，简练不扩写）`;
 }
 
-function getSceneExtractionPrompt(cfg, style) {
+function getSceneExtractionPrompt(cfg, style, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const styleText = (style || '').toString().trim();
   const s = styleText || styleTextForCfgLang(cfg);
   const imageRatio = cfg?.style?.default_image_ratio || '16:9';
@@ -870,7 +904,7 @@ function getSceneExtractionPrompt(cfg, style) {
 Each element: location, time, prompt (English image generation prompt for pure background).`;
   }
   const _sceneLocked = `\n5. **风格要求**：${s}\n   - **图片比例**：${imageRatio}\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块。直接以 [ 开头，以 ] 结尾。**\n每个元素包含：location（地点）, time（时间）, prompt（完整的中文图片生成提示词，纯背景，明确说明无人物）。`;
-  const _sceneOverride = _overrideCache['scene_extraction'];
+  const _sceneOverride = getOverrideFromCache('scene_extraction', effectiveUserId);
   if (_sceneOverride) {
     return _sceneOverride + _sceneLocked;
   }
@@ -892,7 +926,8 @@ Each element: location, time, prompt (English image generation prompt for pure b
 /**
  * 故事扩展：根据梗概生成短片剧本正文（中英文系统提示词）
  */
-function getStoryExpansionSystemPrompt(cfg, episodeCount) {
+function getStoryExpansionSystemPrompt(cfg, episodeCount, userId = null) {
+  const effectiveUserId = userId || getUserIdFromCfg(cfg);
   const n = Number(episodeCount) > 1 ? Number(episodeCount) : 1;
   const jsonNote = `\n\n**输出格式（必须严格遵守）**：\n返回一个 JSON 数组，包含 ${n} 个对象，每个对象格式如下：\n[\n  {\n    "episode": 1,\n    "title": "第一集标题（5-10字，概括本集核心内容）",\n    "content": "本集剧本正文（约800字）"\n  }\n]\n**必须只返回纯 JSON 数组，不要任何 markdown 代码块、说明文字。直接以 [ 开头，以 ] 结尾。**`;
   if (isEnglish(cfg)) {
@@ -905,7 +940,7 @@ Requirements:
 3. Each episode: approximately 800 words. Episodes must be connected in story continuity — each episode picks up from where the previous one ended.
 4. Each episode should have a clear beginning, development, and a hook or turning point at the end.${enNote}`;
   }
-  const _storyOverride = _overrideCache['story_expansion_system'];
+  const _storyOverride = getOverrideFromCache('story_expansion_system', effectiveUserId);
   const base = _storyOverride || `你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。
 
 要求：

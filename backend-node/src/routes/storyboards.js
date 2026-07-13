@@ -237,7 +237,7 @@ function normalizeUniversalSegmentAtImageSpacing(text) {
   );
 }
 
-function routes(db, log) {
+function routes(db, log, cfg) {
   return {
     create: (req, res) => {
       try {
@@ -294,7 +294,8 @@ function routes(db, log) {
         const frameType = body.frame_type || 'first';
         const panelCount = body.panel_count || 3;
         const model = body.model || '';
-        const taskId = framePromptService.generateFramePrompt(db, log, req.params.id, frameType, panelCount, model);
+        const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
+        const taskId = framePromptService.generateFramePrompt(db, log, req.params.id, frameType, panelCount, model, userCfg);
         response.success(res, {
           task_id: taskId,
           status: 'pending',
@@ -383,12 +384,19 @@ function routes(db, log) {
     },
     episodeStoryboardsGenerate: (req, res) => {
       try {
+        const userCfg = { ...cfg, userId: req.user?.id, user: req.user };
         const taskId = episodeStoryboardService.generateStoryboard(
           db,
           log,
           req.params.episode_id,
           req.query.model,
-          req.query.style
+          req.query.style,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          userCfg
         );
         response.success(res, { task_id: taskId, status: 'pending', message: '分镜头生成任务已创建，正在后台处理...' });
       } catch (err) {
@@ -510,8 +518,9 @@ function routes(db, log) {
           `REMINDER: Output a STATIC SINGLE-FRAME image prompt only. No camera motion, no transitions, no split panels.`,
         ].filter(Boolean);
 
+        const effectiveCfg = { ...cfg, userId: req.user?.id, user: req.user };
         const polishedPrompt = await aiClient.generateText(
-          db, log, 'text', userPromptLines.join('\n'), promptI18n.getImagePolishPrompt(),
+          db, log, 'text', userPromptLines.join('\n'), promptI18n.getImagePolishPrompt(effectiveCfg),
           { scene_key: 'image_polish', max_tokens: 300, temperature: 0.3 }
         );
 
