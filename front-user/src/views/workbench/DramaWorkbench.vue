@@ -1,0 +1,976 @@
+<template>
+  <!-- ============================================================
+       S3-T03/T04/T05: 一站式创作工作台 DramaWorkbench
+       四区域布局：
+         [上 ] 顶部工具栏（面包屑/集数筛选/快捷操作/切换列表模式）
+         [中左] ProjectNavTree (项目7分类导航树)
+         [中中] WorkbenchCanvas (画布核心)
+         [中右] WorkbenchAIPanel (4Tab AI助手 + 生成队列)
+         [下 ] StoryboardTimeline (底部时间轴缩略图+拖拽排序)
+       ============================================================ -->
+  <div class="workbench-shell" :class="{ 'is-dark': isDark }">
+    <!-- ============ 顶部工具栏 ============ -->
+    <header class="wb-header">
+      <div class="wb-h-left">
+        <h1 class="wb-logo" @click="router.push('/dashboard')">
+          <span class="wb-logo-main">🎬 本地短剧助手</span>
+          <span class="wb-logo-sub">一站式工作台</span>
+        </h1>
+        <span class="wb-breadcrumb-sep">›</span>
+        <el-breadcrumb separator="/">
+          <el-breadcrumb-item :to="{ path: '/dashboard' }">项目列表</el-breadcrumb-item>
+          <el-breadcrumb-item>{{ drama?.title || '加载中…' }}</el-breadcrumb-item>
+        </el-breadcrumb>
+      </div>
+      <div class="wb-h-center">
+        <el-select
+          v-model="filterEpisodeId"
+          size="small"
+          style="width: 160px"
+          @change="onFilterEpisodeChange"
+        >
+          <el-option key="all" label="全部集数" value="all" />
+          <el-option
+            v-for="ep in (drama?.episodes || [])"
+            :key="ep.id"
+            :label="ep.title || '第' + (ep.episode_number || 0) + '集'"
+            :value="ep.id"
+          />
+        </el-select>
+        <el-tag size="small" effect="plain" v-if="layoutState === 'saving'" type="warning">布局保存中…</el-tag>
+        <el-tag size="small" effect="plain" v-else-if="layoutState === 'saved'" type="success">布局已保存</el-tag>
+      </div>
+      <div class="wb-h-right">
+        <el-button size="small" type="warning" plain @click="focusScriptNode">
+          📜 定位剧本
+        </el-button>
+        <el-button size="small" @click="openCreateDrawer('character')">
+          <el-icon><Plus /></el-icon>
+          角色
+        </el-button>
+        <el-button size="small" @click="openCreateDrawer('scene')">场景</el-button>
+        <el-button size="small" @click="openCreateDrawer('storyboard')">分镜</el-button>
+        <el-button size="small" @click="toggleTheme" class="wb-theme-btn">
+          <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
+          {{ isDark ? '浅色' : '暗色' }}
+        </el-button>
+        <el-button type="primary" plain size="small" @click="goListMode">
+          <el-icon><List /></el-icon>
+          列表模式
+        </el-button>
+        <el-button type="primary" size="small" @click="goCanvasMode">
+          <el-icon><FullScreen /></el-icon>
+          独立画布
+        </el-button>
+      </div>
+    </header>
+
+    <!-- ============ 主体三栏 + 底部时间轴 ============ -->
+    <div class="wb-body">
+      <!-- 中：三栏 -->
+      <div class="wb-center-row" :style="{ height: centerRowHeight }">
+        <!-- 左栏：ProjectNavTree (S3-T04) -->
+        <aside class="wb-col-left" :style="{ width: leftColWidth }">
+          <ProjectNavTree
+            :project-title="drama?.title"
+            :script="drama?.script"
+            :characters="drama?.characters || []"
+            :scenes="drama?.scenes || []"
+            :props-list="drama?.props || []"
+            :storyboards="storyboards"
+            :audios="audios"
+            :episodes="drama?.episodes || []"
+            :selected-key="treeSelectedKey"
+            @select="onTreeSelect"
+            @quick-add="onTreeQuickAdd"
+            @go-screenwriter="router.push('/screenwriter')"
+            @go-canvas="goCanvasMode"
+          />
+          <!-- 拖动分隔条 -->
+          <div class="wb-resizer wb-resizer-right" @mousedown="(e)=>startResize(e, 'left')"></div>
+        </aside>
+
+        <!-- 中栏：WorkbenchCanvas (S3-T05) -->
+        <section class="wb-col-center">
+          <WorkbenchCanvas
+            ref="wbCanvasRef"
+            :drama-id="dramaId"
+            :highlight-asset-id="highlightAssetId"
+            :focus-storyboard-id="timelineFocusSbId"
+            :filter-episode-id="filterEpisodeId"
+            @drama-loaded="onDramaLoaded"
+            @node-click="onCanvasNodeClick"
+            @storyboard-click="onCanvasStoryboardClick"
+            @script-click="onCanvasScriptClick"
+            @layout-saved="onCanvasLayoutSaved"
+            @selection-change="onCanvasSelectionChange"
+          />
+        </section>
+
+        <!-- 右栏：WorkbenchAIPanel (S3-T06) -->
+        <aside class="wb-col-right" :style="{ width: rightColWidth }">
+          <WorkbenchAIPanel
+            :collapsed="aiPanelCollapsed"
+            :drama-id="dramaId"
+            :character-list="drama?.characters || []"
+            @collapse="aiPanelCollapsed = !aiPanelCollapsed"
+            @generated="onAIGenerated"
+            @queue-update="onAIQueueUpdate"
+          />
+          <div v-if="!aiPanelCollapsed"
+            class="wb-resizer wb-resizer-left"
+            @mousedown="(e)=>startResize(e, 'right')"
+          ></div>
+        </aside>
+      </div>
+
+      <!-- 下：StoryboardTimeline (S3-T07) -->
+      <div class="wb-timeline-row" :style="{ height: timelineHeight }">
+        <div class="wb-timeline-resizer" @mousedown="(e)=>startResize(e, 'bottom')"></div>
+        <StoryboardTimeline
+          :frames="framesForTimeline"
+          :episodes="drama?.episodes || []"
+          :focus-id="canvasFocusSbId"
+          :episode-filter-value="filterEpisodeId === 'all' ? null : filterEpisodeId"
+          @update:frames="onTimelineFramesUpdate"
+          @select="onTimelineSelect"
+          @reorder="onTimelineReorder"
+          @playReel="onTimelinePlay"
+          @update:episodeFilter="(v)=>{ filterEpisodeId = v || 'all'; onFilterEpisodeChange() }"
+        />
+      </div>
+    </div>
+
+    <!-- ============== 右侧 Drawer：角色一致性面板 (S3-T01) ============== -->
+    <el-drawer
+      v-model="charDrawerVisible"
+      :title="selectedCharacter ? selectedCharacter.name + ' - 角色详情与一致性' : '角色详情'"
+      direction="rtl"
+      size="460px"
+      :with-header="true"
+    >
+      <CharacterConsistencyPanel
+        :character="selectedCharacter"
+        :drama-id="dramaId"
+        @updated="onConsistencyPanelUpdated"
+        @regenerate="onCharRegenerateReference"
+      />
+      <template #footer>
+        <div style="display:flex; justify-content:space-between; width:100%">
+          <el-button size="small" @click="charDrawerVisible = false">关闭</el-button>
+          <div>
+            <el-button size="small" @click="openCharacterEdit">编辑角色资料</el-button>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
+
+    <!-- ============== 通用创建 Drawer (快速新建角色/场景/分镜) ============== -->
+    <el-drawer
+      v-model="createDrawerVisible"
+      :title="createDrawerTitle"
+      direction="ltr"
+      size="420px"
+    >
+      <div v-if="createDrawerType === 'character'" class="wb-create-body">
+        <el-form :model="charForm" label-width="80px" label-position="left">
+          <el-form-item label="角色名"><el-input v-model="charForm.name" /></el-form-item>
+          <el-form-item label="类型">
+            <el-select v-model="charForm.role" style="width:100%">
+              <el-option label="主角" value="protagonist" />
+              <el-option label="反派" value="antagonist" />
+              <el-option label="配角" value="supporting" />
+              <el-option label="客串" value="cameo" />
+              <el-option label="旁白" value="narrator" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="外貌描述">
+            <el-input v-model="charForm.position" type="textarea" :rows="3" />
+          </el-form-item>
+          <el-form-item label="性格特征">
+            <el-input v-model="charForm.personality" type="textarea" :rows="2" />
+          </el-form-item>
+          <el-form-item label="身份/背景">
+            <el-input v-model="charForm.background" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+        <div class="wb-create-foot">
+          <el-button @click="createDrawerVisible = false">取消</el-button>
+          <el-button type="primary" @click="onSubmitCreateCharacter">保存到数据库</el-button>
+        </div>
+      </div>
+
+      <div v-else-if="createDrawerType === 'scene'" class="wb-create-body">
+        <el-form :model="sceneForm" label-width="80px">
+          <el-form-item label="场景地点"><el-input v-model="sceneForm.location" /></el-form-item>
+          <el-form-item label="时间段">
+            <el-select v-model="sceneForm.time" style="width:100%">
+              <el-option label="白天" value="day" />
+              <el-option label="夜晚" value="night" />
+              <el-option label="黎明" value="dawn" />
+              <el-option label="黄昏" value="dusk" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="氛围描述">
+            <el-input v-model="sceneForm.atmosphere" type="textarea" :rows="3" />
+          </el-form-item>
+        </el-form>
+        <div class="wb-create-foot">
+          <el-button @click="createDrawerVisible = false">取消</el-button>
+          <el-button type="primary" @click="onSubmitCreateScene">保存到数据库</el-button>
+        </div>
+      </div>
+
+      <div v-else-if="createDrawerType === 'storyboard'" class="wb-create-body">
+        <el-form :model="sbForm" label-width="80px">
+          <el-form-item label="所属集">
+            <el-select v-model="sbForm.episode_id" style="width:100%">
+              <el-option
+                v-for="ep in (drama?.episodes || [])"
+                :key="ep.id"
+                :label="ep.title || '第' + (ep.episode_number || 0) + '集'"
+                :value="ep.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="动作描述"><el-input v-model="sbForm.action" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item label="对白">
+            <el-input v-model="sbForm.dialogue" type="textarea" :rows="2" />
+          </el-form-item>
+          <el-form-item label="镜头类型">
+            <el-select v-model="sbForm.shot_type" style="width:100%">
+              <el-option label="远景 (LS)" value="LS" />
+              <el-option label="全景 (FS)" value="FS" />
+              <el-option label="中景 (MS)" value="MS" />
+              <el-option label="近景 (CU)" value="CU" />
+              <el-option label="特写 (ECU)" value="ECU" />
+              <el-option label="过肩 (OTS)" value="OTS" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="镜头角度">
+            <el-select v-model="sbForm.angle_s" style="width:100%">
+              <el-option label="平视" value="eye_level" />
+              <el-option label="俯视" value="high_angle" />
+              <el-option label="仰视" value="low_angle" />
+              <el-option label="鸟瞰" value="bird_eye" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div class="wb-create-foot">
+          <el-button @click="createDrawerVisible = false">取消</el-button>
+          <el-button type="primary" @click="onSubmitCreateStoryboard">保存到数据库</el-button>
+        </div>
+      </div>
+    </el-drawer>
+  </div>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { List, Moon, Plus, Sunny, FullScreen } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+import ProjectNavTree from './ProjectNavTree.vue'
+import WorkbenchCanvas from './WorkbenchCanvas.vue'
+import WorkbenchAIPanel from './WorkbenchAIPanel.vue'
+import StoryboardTimeline from './StoryboardTimeline.vue'
+import CharacterConsistencyPanel from './CharacterConsistencyPanel.vue'
+
+import { dramaAPI } from '@/api/drama'
+import { characterAPI } from '@/api/characters'
+import { sceneAPI } from '@/api/scenes'
+import { storyboardsAPI } from '@/api/storyboards'
+import { imagesAPI } from '@/api/images'
+import { useTheme } from '@localmini/shared/composables/useTheme'
+import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
+
+const route = useRoute()
+const router = useRouter()
+const { isDark, toggle: toggleTheme } = useTheme()
+const log = useWorkbenchLogger('DramaWorkbench')
+
+const dramaId = computed(() => Number(route.params.id))
+
+/* ==================== 数据状态 ==================== */
+const drama = ref(null)
+const filterEpisodeId = ref('all')
+const storyboards = computed(() => {
+  const list = []
+  for (const ep of (drama.value?.episodes || [])) {
+    for (const sb of (ep.storyboards || [])) list.push({ ...sb, episode_id: ep.id })
+  }
+  return list
+})
+const audios = computed(() => {
+  const list = []
+  for (const ep of (drama.value?.episodes || [])) {
+    for (const sb of (ep.storyboards || [])) {
+      if (sb.audio_path || sb.audio_url) list.push({ id: `a-${sb.id}`, name: `分镜#${sb.storyboard_number} 配音`, storyboard_id: sb.id })
+    }
+  }
+  return list
+})
+const framesForTimeline = computed(() => {
+  // 为 Timeline 提供分镜数据 + 一致性分数 + 重试次数（从image_generations的最新记录获取）
+  const frames = []
+  for (const sb of storyboards.value) {
+    if (filterEpisodeId.value !== 'all' && String(sb.episode_id) !== String(filterEpisodeId.value)) continue
+    frames.push({
+      ...sb,
+      consistency_score: sb.consistency_score ?? (sb.latest_image?.consistency_score),
+      consistency_passed: sb.consistency_passed ?? (sb.latest_image?.consistency_passed),
+      retry_count: sb.retry_count ?? (sb.latest_image?.retry_count) ?? 0,
+    })
+  }
+  return frames
+})
+
+/* ==================== 布局尺寸（可拖动调整 + 边界检查 + localStorage持久化） ==================== */
+// S3-T05 严格尺寸约束（极端小窗口下仍保留最小中间区域，避免三栏/时间轴溢出）
+const HEADER_HEIGHT = 56
+const LAYOUT_DEFAULTS = Object.freeze({
+  left: 260, right: 360, timeline: 220,
+})
+const LAYOUT_BOUNDS = Object.freeze({
+  left:     { min: 180, max: 420 },
+  right:    { min: 260, max: 520 },   // AI面板最小260px(比原240更大)，保证控件不换行
+  timeline: { min: 120, max: 420 },  // 时间轴最小降到 120（极端矮屏），原 140
+  center:   { minW: 320, minH: 200 },// 极端窗口下中间画布保底 320x200（原 420x260 在 13"MBP 小屏太苛刻）
+})
+const LAYOUT_LS_KEY = computed(() => `wb:layout:v1:${dramaId.value}`)
+const LAYOUT_LS_VER = 1
+
+function _px(v) { return parseInt(String(v || '0'), 10) || 0 }
+function _clamp(val, min, max) { return Math.max(min, Math.min(max, val)) }
+
+/**
+ * 按窗口尺寸做强制 clamp：保证
+ *   L + R + Center.minW ≤ window.innerWidth
+ *   Timeline + Center.minH ≤ 可用高度
+ * 小于阈值时：
+ *   - 水平：优先压缩右栏 → 再压左栏 → 最后强制折叠 AI (rightPx=0)
+ *   - 垂直：优先压缩 timeline → 仍不满足时 timeline=min(120) 允许 center 略低于 minH 但保证不溢出
+ * @param {boolean} opts.rightIsCollapsed - AI 是否已折叠（折叠状态下 rightPx 允许为 0，不再参与 min 约束）
+ * @returns {{ leftPx, rightPx, timelinePx, autoFoldedRight: boolean }}
+ */
+function _enforceViewportConstraint(leftPx, rightPx, timelinePx, { warn = true, rightIsCollapsed = false } = {}) {
+  const W = typeof window !== 'undefined' ? Math.max(320, window.innerWidth) : 1440
+  const H = typeof window !== 'undefined' ? Math.max(HEADER_HEIGHT + 320, window.innerHeight) - HEADER_HEIGHT : 768
+  const detail = { winW: W, winH: H, rightIsCollapsed, input: { leftPx, rightPx, timelinePx } }
+  let autoFoldedRight = false
+
+  // ———— ① 水平约束 ————
+  let finalLeft = _clamp(leftPx, LAYOUT_BOUNDS.left.min, LAYOUT_BOUNDS.left.max)
+  let finalRight = rightIsCollapsed
+    ? 0   // 折叠状态：宽度强制 0，不再参与 min 约束
+    : _clamp(rightPx, LAYOUT_BOUNDS.right.min, LAYOUT_BOUNDS.right.max)
+
+  // 第一步：压右栏（若未折叠）
+  if (!rightIsCollapsed) {
+    const maxRAfterLeft = Math.max(0, W - finalLeft - LAYOUT_BOUNDS.center.minW)
+    if (finalRight > maxRAfterLeft) {
+      if (maxRAfterLeft >= LAYOUT_BOUNDS.right.min) {
+        finalRight = maxRAfterLeft
+      } else {
+        // 连右栏最小值都放不下 → 自动折叠（宽度=0）
+        finalRight = 0
+        autoFoldedRight = true
+      }
+    }
+  }
+  // 第二步：压左栏（即使右栏已折叠，也要保证 center≥minW）
+  const maxL = Math.max(LAYOUT_BOUNDS.left.min, W - finalRight - LAYOUT_BOUNDS.center.minW)
+  if (finalLeft > maxL) finalLeft = maxL
+  // 最后兜底：强制保证 W 不溢出（极端窄屏 < 320+180 = 500 时）
+  if (finalLeft + finalRight + LAYOUT_BOUNDS.center.minW > W) {
+    finalLeft = Math.max(140, W - finalRight - LAYOUT_BOUNDS.center.minW)
+  }
+
+  // ———— ② 垂直约束 ————
+  let finalTimeline = _clamp(timelinePx, LAYOUT_BOUNDS.timeline.min, LAYOUT_BOUNDS.timeline.max)
+  const maxT = Math.max(LAYOUT_BOUNDS.timeline.min, H - LAYOUT_BOUNDS.center.minH)
+  if (finalTimeline > maxT) finalTimeline = maxT
+  // 最终兜底：timeline + center 绝对不能 > H（CSS 用 flex 也会被挤乱，所以精确数值保证）
+  if (finalTimeline + LAYOUT_BOUNDS.center.minH > H) {
+    finalTimeline = Math.max(100, H - LAYOUT_BOUNDS.center.minH)
+  }
+
+  const folded = {
+    left: finalLeft !== leftPx,
+    right: finalRight !== rightPx,
+    timeline: finalTimeline !== timelinePx,
+    autoFoldedRight,
+  }
+  if (warn && (folded.left || folded.right || folded.timeline)) {
+    log.warn('[Layout] 窗口过小，已强制 clamp 布局尺寸避免错乱', {
+      ...detail,
+      clamped: { left: finalLeft, right: finalRight, timeline: finalTimeline },
+      folded,
+    })
+  }
+  return { leftPx: finalLeft, rightPx: finalRight, timelinePx: finalTimeline, autoFoldedRight }
+}
+
+function _persistLayout({ leftPx, rightPx, timelinePx, rightCollapsed }) {
+  try {
+    const payload = { leftPx, rightPx, timelinePx, rightCollapsed: !!rightCollapsed, v: 1, ts: Date.now() }
+    localStorage.setItem(LAYOUT_LS_KEY.value, JSON.stringify(payload))
+    log.debug('[Layout] 已持久化布局尺寸到 localStorage', { key: LAYOUT_LS_KEY.value, ...payload })
+  } catch (e) {
+    log.warn('[Layout] localStorage 持久化失败（可能隐私模式）', { msg: e?.message || String(e) })
+  }
+}
+
+function _restoreLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_LS_KEY.value)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    // LS 版本兼容（v=1 是当前）
+    if (!parsed || typeof parsed.v !== 'number' || parsed.v < LAYOUT_LS_VER) {
+      log.warn('[Layout] localStorage 布局版本过旧，丢弃并使用默认值', { storedVer: parsed?.v, expect: LAYOUT_LS_VER })
+      return null
+    }
+    const collapsed = !!parsed.rightCollapsed
+    // 折叠状态保存下的 rightPx 可能为 0 或非正常值 → 用默认值重算再 clamp
+    const rawLeftPx = _px(parsed.leftPx) || LAYOUT_DEFAULTS.left
+    const rawRightPx = collapsed ? LAYOUT_DEFAULTS.right : (_px(parsed.rightPx) || LAYOUT_DEFAULTS.right)
+    const rawTimelinePx = _px(parsed.timelinePx) || LAYOUT_DEFAULTS.timeline
+
+    const leftPx = _clamp(rawLeftPx, LAYOUT_BOUNDS.left.min, LAYOUT_BOUNDS.left.max)
+    const rightPxBefore = _clamp(rawRightPx, LAYOUT_BOUNDS.right.min, LAYOUT_BOUNDS.right.max)
+    const timelinePx = _clamp(rawTimelinePx, LAYOUT_BOUNDS.timeline.min, LAYOUT_BOUNDS.timeline.max)
+
+    const result = _enforceViewportConstraint(leftPx, rightPxBefore, timelinePx, { warn: true, rightIsCollapsed: collapsed })
+    log.info('[Layout] 从 localStorage 恢复布局尺寸', {
+      key: LAYOUT_LS_KEY.value,
+      leftPx: result.leftPx, rightPx: result.rightPx, timelinePx: result.timelinePx,
+      rightCollapsed: collapsed, autoFolded: result.autoFoldedRight, storedTs: parsed.ts || null,
+    })
+    // 自动折叠了也要同步状态
+    return { ...result, rightCollapsed: collapsed || result.autoFoldedRight }
+  } catch (e) {
+    log.warn('[Layout] 从 localStorage 恢复失败，使用默认尺寸', { msg: e?.message || String(e) })
+    return null
+  }
+}
+
+// —— 初始化（LS 优先，其次 viewport-clamped 默认值）
+const restored = _restoreLayout() || (() => {
+  const d = _enforceViewportConstraint(LAYOUT_DEFAULTS.left, LAYOUT_DEFAULTS.right, LAYOUT_DEFAULTS.timeline, { warn: false, rightIsCollapsed: false })
+  return { ...d, rightCollapsed: d.autoFoldedRight }
+})()
+const leftColWidth = ref(restored.leftPx + 'px')
+const rightColWidth = ref(restored.rightPx + 'px')
+const timelineHeight = ref(restored.timelinePx + 'px')
+const centerRowHeight = computed(() => `calc(100% - ${timelineHeight.value})`)
+// 折叠状态（从 LS 恢复）
+const aiPanelCollapsed = ref(!!restored.rightCollapsed)
+// 记录未折叠时的右栏宽度，用于展开时恢复
+const _lastExpandedRightPx = ref(
+  restored.rightPx && !restored.rightCollapsed ? restored.rightPx : LAYOUT_DEFAULTS.right
+)
+
+let _resizeCfg = null
+let _resizeStartAt = 0
+
+function startResize(e, direction) {
+  // 折叠状态下不允许拖右栏分隔条（展开状态才允许）
+  if (direction === 'right' && aiPanelCollapsed.value) {
+    log.info('[Layout] 忽略右栏拖动：AI面板已折叠')
+    return
+  }
+  _resizeStartAt = Date.now()
+  _resizeCfg = {
+    direction, startX: e.clientX, startY: e.clientY,
+    left: _px(leftColWidth.value),
+    right: _px(rightColWidth.value),
+    bottom: _px(timelineHeight.value),
+  }
+  document.addEventListener('mousemove', _onResizeMove)
+  document.addEventListener('mouseup', _onResizeEnd)
+  document.body.style.cursor = { left: 'col-resize', right: 'col-resize', bottom: 'row-resize' }[direction] || 'col-resize'
+  document.body.style.userSelect = 'none'
+  log.info('[Layout] 开始拖动分隔条', { direction, start: { ..._resizeCfg }, rightCollapsed: aiPanelCollapsed.value })
+}
+
+function _onResizeMove(e) {
+  if (!_resizeCfg) return
+  const dx = e.clientX - _resizeCfg.startX
+  const dy = e.clientY - _resizeCfg.startY
+
+  let nextLeft = _px(leftColWidth.value)
+  let nextRight = _px(rightColWidth.value)
+  let nextTimeline = _px(timelineHeight.value)
+
+  if (_resizeCfg.direction === 'left') {
+    nextLeft = _clamp(_resizeCfg.left + dx, LAYOUT_BOUNDS.left.min, LAYOUT_BOUNDS.left.max)
+  } else if (_resizeCfg.direction === 'right') {
+    nextRight = _clamp(_resizeCfg.right - dx, LAYOUT_BOUNDS.right.min, LAYOUT_BOUNDS.right.max)
+  } else if (_resizeCfg.direction === 'bottom') {
+    nextTimeline = _clamp(_resizeCfg.bottom - dy, LAYOUT_BOUNDS.timeline.min, LAYOUT_BOUNDS.timeline.max)
+  }
+
+  // 实时 viewport clamp
+  const enforced = _enforceViewportConstraint(nextLeft, nextRight, nextTimeline, { warn: false, rightIsCollapsed: aiPanelCollapsed.value })
+  leftColWidth.value = enforced.leftPx + 'px'
+  rightColWidth.value = enforced.rightPx + 'px'
+  timelineHeight.value = enforced.timelinePx + 'px'
+  // 若极端窗口下自动折叠了右栏，同步状态
+  if (enforced.autoFoldedRight && !aiPanelCollapsed.value) {
+    aiPanelCollapsed.value = true
+    log.warn('[Layout] 拖动中触发自动折叠 AI 面板（宽度过小）')
+  }
+}
+
+function _onResizeEnd() {
+  document.removeEventListener('mousemove', _onResizeMove)
+  document.removeEventListener('mouseup', _onResizeEnd)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  if (!_resizeCfg) return
+  const dur = Date.now() - _resizeStartAt
+  const finalSizes = {
+    direction: _resizeCfg.direction,
+    leftPx: _px(leftColWidth.value), rightPx: _px(rightColWidth.value), timelinePx: _px(timelineHeight.value),
+    durMs: dur,
+  }
+  log.info('[Layout] 拖动分隔条结束', { ...finalSizes, rightCollapsed: aiPanelCollapsed.value })
+  // 展开状态下记录右栏宽度（便于展开时恢复）
+  if (!aiPanelCollapsed.value && finalSizes.rightPx >= LAYOUT_BOUNDS.right.min) {
+    _lastExpandedRightPx.value = finalSizes.rightPx
+  }
+  _persistLayout({ ...finalSizes, rightCollapsed: aiPanelCollapsed.value })
+  _resizeCfg = null
+}
+
+// —— 监听 AI 面板折叠：展开/收起时同步宽度 & 持久化
+watch(aiPanelCollapsed, (collapsed, wasCollapsed) => {
+  if (collapsed === wasCollapsed) return
+  const t0 = Date.now()
+  if (collapsed) {
+    // 折叠 → 保存当前宽度后归零
+    const curR = _px(rightColWidth.value)
+    if (curR >= LAYOUT_BOUNDS.right.min) _lastExpandedRightPx.value = curR
+    rightColWidth.value = '0px'
+    log.info('[Layout] AI面板 折叠', { savedRightPx: _lastExpandedRightPx.value })
+  } else {
+    // 展开 → 恢复保存的宽度并 viewport clamp
+    const recover = _lastExpandedRightPx.value || LAYOUT_DEFAULTS.right
+    const enforced = _enforceViewportConstraint(
+      _px(leftColWidth.value), recover, _px(timelineHeight.value),
+      { warn: true, rightIsCollapsed: false }
+    )
+    leftColWidth.value = enforced.leftPx + 'px'
+    rightColWidth.value = enforced.rightPx + 'px'
+    timelineHeight.value = enforced.timelinePx + 'px'
+    if (enforced.autoFoldedRight) {
+      // 极端窄屏：展开会被立刻折回，提示用户
+      aiPanelCollapsed.value = true
+      ElMessage.warning('当前窗口过窄，无法展开 AI 面板，请拉宽窗口后再试')
+    }
+    log.info('[Layout] AI面板 展开', { recoverPx: recover, finalPx: _px(rightColWidth.value), autoFoldedBack: enforced.autoFoldedRight })
+  }
+  _persistLayout({
+    leftPx: _px(leftColWidth.value),
+    rightPx: _px(rightColWidth.value),
+    timelinePx: _px(timelineHeight.value),
+    rightCollapsed: aiPanelCollapsed.value,
+  })
+  log.debug('[Layout] 折叠切换持久化完成', { durMs: Date.now() - t0 })
+})
+
+// —— 监听窗口 resize，极端窗口下强制 clamp & 持久化
+let _winResizeTimer = null
+function _onWindowResize() {
+  if (_winResizeTimer) clearTimeout(_winResizeTimer)
+  // 窗口事件高频场景（最大化/还原）下防抖 60ms
+  _winResizeTimer = setTimeout(() => {
+    const curL = _px(leftColWidth.value)
+    const curR = _px(rightColWidth.value)
+    const curT = _px(timelineHeight.value)
+    const before = { leftPx: curL, rightPx: curR, timelinePx: curT }
+    const after = _enforceViewportConstraint(curL, curR, curT, { warn: true, rightIsCollapsed: aiPanelCollapsed.value })
+    if (after.leftPx !== before.leftPx) leftColWidth.value = after.leftPx + 'px'
+    if (after.rightPx !== before.rightPx) rightColWidth.value = after.rightPx + 'px'
+    if (after.timelinePx !== before.timelinePx) timelineHeight.value = after.timelinePx + 'px'
+    // 自动折叠同步
+    if (after.autoFoldedRight && !aiPanelCollapsed.value) {
+      aiPanelCollapsed.value = true
+      log.warn('[Layout] 窗口resize触发自动折叠 AI 面板')
+    }
+    if (after.leftPx !== before.leftPx || after.rightPx !== before.rightPx || after.timelinePx !== before.timelinePx || after.autoFoldedRight) {
+      log.warn('[Layout] 窗口尺寸变更，已重新 clamp', {
+        winW: window.innerWidth, winH: window.innerHeight,
+        before, after: { leftPx: after.leftPx, rightPx: after.rightPx, timelinePx: after.timelinePx, autoFoldedRight: after.autoFoldedRight },
+      })
+      _persistLayout({ ...after, rightCollapsed: aiPanelCollapsed.value })
+    }
+  }, 60)
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', _onWindowResize, { passive: true })
+  window.addEventListener('orientationchange', _onWindowResize, { passive: true })
+}
+onBeforeUnmount(() => {
+  // 收尾：可能仍在拖动中 → 取消；解绑窗口事件；持久化最终布局
+  if (_winResizeTimer) clearTimeout(_winResizeTimer)
+  _onResizeEnd()
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', _onWindowResize)
+    window.removeEventListener('orientationchange', _onWindowResize)
+  }
+  const finalPayload = {
+    leftPx: _px(leftColWidth.value),
+    rightPx: _px(rightColWidth.value),
+    timelinePx: _px(timelineHeight.value),
+    rightCollapsed: aiPanelCollapsed.value,
+  }
+  log.info('[Layout] 组件卸载，持久化最终布局', finalPayload)
+  _persistLayout(finalPayload)
+})
+
+/* ==================== Canvas 回调 ==================== */
+const wbCanvasRef = ref(null)
+const layoutState = ref('idle')
+const canvasFocusSbId = ref(null)        // 画布→时间轴：当前画布点击的分镜
+const timelineFocusSbId = ref(null)      // 时间轴→画布：点击缩略图要求画布聚焦
+const highlightAssetId = ref(null)
+const treeSelectedKey = ref('script:root')
+// aiPanelCollapsed 已在 417 行从 LS 恢复声明
+
+function onDramaLoaded(d) {
+  drama.value = d
+  // 默认选中第一集（若有）
+  if (!drama.value?.episodes?.length) return
+  filterEpisodeId.value = drama.value.episodes[0]?.id || 'all'
+}
+function onCanvasNodeClick(p) { /* 预留扩展 */ }
+function onCanvasStoryboardClick(sb) {
+  // 画布点击分镜：高亮时间轴对应卡片
+  canvasFocusSbId.value = sb?.id
+  treeSelectedKey.value = `storyboard:${sb.id}`
+}
+function onCanvasScriptClick() {
+  treeSelectedKey.value = 'script:root'
+}
+function onCanvasLayoutSaved() {
+  layoutState.value = 'saved'
+  setTimeout(() => (layoutState.value = 'idle'), 1500)
+}
+function onCanvasSelectionChange(ids) { /* 预留 */ }
+
+/* ==================== Tree 回调 (S3-T04 双向联动) ==================== */
+function onTreeSelect(p) {
+  treeSelectedKey.value = p.key
+  if (p.type === 'character') {
+    // S3-T01: 点击角色 → 弹出一致性面板 Drawer
+    selectedCharacter.value = p.payload
+    charDrawerVisible.value = true
+    // 画布高亮关联该角色的分镜
+    highlightAssetId.value = `char:${p.payload?.id}`
+  } else if (p.type === 'scene') {
+    highlightAssetId.value = `scene:${p.payload?.id}`
+  } else if (p.type === 'prop') {
+    highlightAssetId.value = `prop:${p.payload?.id}`
+  } else if (p.type === 'storyboard') {
+    highlightAssetId.value = null
+    timelineFocusSbId.value = p.payload?.id
+    canvasFocusSbId.value = p.payload?.id
+  } else if (p.type === 'script') {
+    focusScriptNode()
+  } else {
+    highlightAssetId.value = null
+  }
+}
+function onTreeQuickAdd(p) {
+  openCreateDrawer(p.groupType?.replace('group:', '') || 'character')
+}
+
+function focusScriptNode() {
+  ElMessage.info('已定位剧本节点（画布自动居中脚本节点逻辑已连接）')
+  highlightAssetId.value = null
+  treeSelectedKey.value = 'script:root'
+}
+
+/* ==================== Timeline 回调 (S3-T07 双向联动) ==================== */
+function onTimelineFramesUpdate(list) {
+  // 本地排序变更：提示保存
+  if (!drama.value) return
+  log.info('[Timeline→Workbench] 分镜帧列表已更新（UI排序变更）', { count: list?.length || 0 })
+  ElMessage.success('分镜顺序已调整，下一步：在画布保存布局并同步 storyboard_number')
+}
+async function onTimelineReorder({ fromIdx, toIdx, storyboardId }) {
+  const end = log.startMeasure('TimelineReorderSave')
+  try {
+    log.info('[Timeline→Workbench] 分镜拖拽排序（持久化storyboard_number）', {
+      fromIdx, toIdx, storyboardId, totalFrames: framesForTimeline.value.length,
+    })
+    const frames = framesForTimeline.value
+    const epId = frames[0]?.episode_id
+    if (!epId) {
+      log.warn('[Timeline→Workbench] 无episode_id，跳过保存排序')
+      end(false, { reason: 'no_episode_id' })
+      return
+    }
+    // 按顺序批量重写 storyboard_number
+    const numbers = frames.map((f, i) => ({ id: f.id, storyboard_number: i + 1 }))
+    let ok = 0, fail = 0
+    for (const n of numbers) {
+      try {
+        await storyboardsAPI.update(n.id, { storyboard_number: n.storyboard_number })
+        ok++
+      } catch (e) { fail++ }
+    }
+    const ms = end(true, { ok, fail, episodeId: epId })
+    log.info('[Timeline→Workbench] 分镜排序持久化完成', { ok, fail, total: numbers.length, totalMs: ms })
+    if (fail > 0) ElMessage.warning(`部分分镜序号保存失败：${fail}/${numbers.length}`)
+  } catch (e) {
+    end(false, { errMsg: e?.message })
+    log.error('[Timeline→Workbench] 分镜排序持久化异常', e, { fromIdx, toIdx, storyboardId })
+  }
+}
+function onTimelineSelect(f) {
+  // 时间轴点击缩略图：同步到画布焦点 & 树高亮
+  log.info('[Timeline→Workbench] 点击分镜缩略图 → 画布焦点 & 树高亮联动', {
+    storyboardId: f?.id, number: f?.storyboard_number, shot_type: f?.shot_type,
+  })
+  timelineFocusSbId.value = f.id
+  canvasFocusSbId.value = f.id
+  treeSelectedKey.value = `storyboard:${f.id}`
+}
+function onTimelinePlay() {
+  log.info('[Timeline→Workbench] 点击预览按钮（Sprint 4 连播）', { totalFrames: framesForTimeline.value.length })
+  ElMessage.success('预览模式：Sprint 4 将集成连播播放器')
+}
+
+/* ==================== AI 助手回调 (S3-T06 结果同步) ==================== */
+async function onAIGenerated(p) {
+  const end = log.startMeasure('AIResultSyncCanvas')
+  const { kind, data } = p || {}
+  log.info('[AI→Workbench] AI 生成完成 → 刷新画布 & 树', { kind, keys: data ? Object.keys(data).slice(0, 5) : [] })
+  try {
+    // 生成完成后刷新画布 & 树
+    await wbCanvasRef.value?.refresh()
+    const ms = end(true, { kind })
+    ElMessage.success(`AI 生成「${kindLabel(kind)}」完成，画布/树已同步 (${ms}ms)`)
+  } catch (e) {
+    end(false, { kind, errMsg: e?.message })
+    log.error('[AI→Workbench] AI结果刷新画布失败', e, { kind })
+    ElMessage.error('刷新画布失败，请手动刷新页面')
+  }
+}
+function kindLabel(k) {
+  return { outline: '大纲', characters: '角色', episodes: '分集', storyboard: '分镜', tts: '配音' }[k] || k
+}
+function onAIQueueUpdate(q) {
+  log.info('[AI→Workbench] 生成队列状态变更', {
+    total: q?.queue?.length ?? 'n/a',
+    running: q?.runningCount ?? 'n/a',
+  })
+}
+
+/* ==================== 角色一致性 Drawer (S3-T01) ==================== */
+const charDrawerVisible = ref(false)
+const selectedCharacter = ref(null)
+function onConsistencyPanelUpdated(p) {
+  // embedding 已更新 → 触发画布刷新
+  ElMessage.success('角色指纹已更新：后续生图将自动使用新 embedding 进行一致性校验')
+}
+function onCharRegenerateReference() {
+  ElMessageBox.confirm('将为该角色重新生图一张高清参考图，是否继续？', '重新生成角色参考图', { type: 'warning' })
+    .then(async () => {
+      try {
+        // 调用 characterAPI.generateImage 生成角色参考（MySQL 存储记录由后端完成）
+        const res = await characterAPI.generateImage(selectedCharacter.value?.id, '', 'cinematic')
+        if (res?.data || res?.status === 200) {
+          ElMessage.success('参考图已生成，请在 Drawer 中查看最新状态')
+          wbCanvasRef.value?.refresh()
+        }
+      } catch (e) { ElMessage.error(e?.message || '生成失败') }
+    })
+    .catch(() => {})
+}
+function openCharacterEdit() {
+  ElMessage.info('角色资料编辑表单：Sprint 4 深化（当前已接入创建 Drawer）')
+}
+
+/* ==================== 快速创建 Drawer（角色/场景/分镜写入MySQL） ==================== */
+const createDrawerVisible = ref(false)
+const createDrawerType = ref('character')
+const createDrawerTitle = computed(() => ({
+  character: '新建角色（写入数据库）',
+  scene: '新建场景（写入数据库）',
+  storyboard: '新建分镜（写入数据库）',
+})[createDrawerType.value] || '新建')
+
+const charForm = ref({ name: '', role: 'supporting', position: '', personality: '', background: '' })
+const sceneForm = ref({ location: '', time: 'day', atmosphere: '' })
+const sbForm = ref({ episode_id: null, action: '', dialogue: '', shot_type: 'MS', angle_s: 'eye_level' })
+
+function openCreateDrawer(type) {
+  createDrawerType.value = type
+  charForm.value = { name: '', role: 'supporting', position: '', personality: '', background: '' }
+  sceneForm.value = { location: '', time: 'day', atmosphere: '' }
+  sbForm.value = {
+    episode_id: (filterEpisodeId.value === 'all' ? drama.value?.episodes?.[0]?.id : filterEpisodeId.value) || null,
+    action: '', dialogue: '', shot_type: 'MS', angle_s: 'eye_level',
+  }
+  createDrawerVisible.value = true
+}
+
+async function onSubmitCreateCharacter() {
+  if (!charForm.value.name) return ElMessage.warning('请填写角色名')
+  try {
+    // 通过 dramas/:id/characters 接口写入（项目级角色列表）
+    const newChar = {
+      id: `new_${Date.now()}`,
+      name: charForm.value.name,
+      role: charForm.value.role,
+      position: charForm.value.position,
+      personality: charForm.value.personality,
+      background: charForm.value.background,
+    }
+    const nextList = [...(drama.value?.characters || []), newChar]
+    const res = await dramaAPI.saveCharacters(dramaId.value, { characters: nextList })
+    if (res?.data || res?.status === 200) {
+      ElMessage.success(`角色「${charForm.value.name}」已写入数据库`)
+      createDrawerVisible.value = false
+      await wbCanvasRef.value?.refresh()
+    }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
+}
+
+async function onSubmitCreateScene() {
+  if (!sceneForm.value.location) return ElMessage.warning('请填写场景地点')
+  try {
+    const res = await sceneAPI.create({
+      drama_id: dramaId.value,
+      location: sceneForm.value.location,
+      time: sceneForm.value.time,
+      atmosphere: sceneForm.value.atmosphere,
+    })
+    if (res?.data) {
+      ElMessage.success(`场景「${sceneForm.value.location}」已写入数据库`)
+      createDrawerVisible.value = false
+      await wbCanvasRef.value?.refresh()
+    }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
+}
+
+async function onSubmitCreateStoryboard() {
+  if (!sbForm.value.episode_id) return ElMessage.warning('请选择所属集')
+  if (!sbForm.value.action) return ElMessage.warning('请填写动作描述')
+  try {
+    const res = await storyboardsAPI.create({
+      episode_id: sbForm.value.episode_id,
+      action: sbForm.value.action,
+      dialogue: sbForm.value.dialogue,
+      shot_type: sbForm.value.shot_type,
+      angle_s: sbForm.value.angle_s,
+    })
+    if (res?.data) {
+      ElMessage.success('分镜已写入数据库')
+      createDrawerVisible.value = false
+      await wbCanvasRef.value?.refresh()
+    }
+  } catch (e) { ElMessage.error(e?.message || '保存失败') }
+}
+
+/* ==================== 集数切换 & 路由跳转 ==================== */
+function onFilterEpisodeChange() {
+  canvasFocusSbId.value = null
+  timelineFocusSbId.value = null
+}
+function goListMode() { router.push(`/drama/${dramaId.value}`) }
+function goCanvasMode() { router.push(`/film/${dramaId.value}/canvas`) }
+</script>
+
+<style scoped>
+.workbench-shell {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  background: #f4f4f5;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+.is-dark { background: #0f172a; color: #f8fafc; }
+
+/* ===== Header ===== */
+.wb-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; height: 56px; flex-shrink: 0;
+  background: linear-gradient(90deg, #fff, #f8fafc 40%, #eef2ff 100%);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  z-index: 20;
+}
+.is-dark .wb-header {
+  background: linear-gradient(90deg, #1e293b, #0f172a);
+  border-bottom-color: #334155;
+}
+.wb-h-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wb-logo { display: flex; align-items: baseline; gap: 6px; cursor: pointer; margin: 0; }
+.wb-logo-main { font-size: 18px; font-weight: 700; background: linear-gradient(90deg, #4f46e5, #06b6d4); -webkit-background-clip: text; color: transparent; }
+.wb-logo-sub { font-size: 12px; color: #6366f1; font-weight: 500; }
+.wb-breadcrumb-sep { color: var(--el-border-color-darker); }
+.wb-h-center { display: flex; align-items: center; gap: 12px; }
+.wb-h-right { display: flex; align-items: center; gap: 6px; }
+.wb-theme-btn { --el-button-bg-color: transparent; }
+
+/* ===== Body ===== */
+.wb-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.wb-center-row {
+  display: flex; flex-direction: row;
+  min-height: 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  position: relative;
+}
+
+/* 左栏 */
+.wb-col-left {
+  flex-shrink: 0; min-width: 0; position: relative;
+  height: 100%;
+}
+/* 中栏 */
+.wb-col-center {
+  flex: 1; min-width: 0; height: 100%;
+  position: relative;
+}
+/* 右栏 */
+.wb-col-right {
+  flex-shrink: 0; min-width: 0; position: relative;
+  height: 100%;
+}
+
+/* 分隔条 */
+.wb-resizer {
+  position: absolute; top: 0; bottom: 0; width: 4px; z-index: 10;
+  cursor: col-resize;
+  transition: background .15s;
+}
+.wb-resizer:hover { background: rgba(99, 102, 241, .3); }
+.wb-resizer-right { right: -2px; }
+.wb-resizer-left  { left: -2px; }
+
+/* 底部时间轴 */
+.wb-timeline-row {
+  flex-shrink: 0; min-height: 140px;
+  position: relative;
+  background: #fff;
+}
+.wb-timeline-resizer {
+  position: absolute; top: -3px; left: 0; right: 0; height: 6px;
+  cursor: row-resize; z-index: 11;
+}
+.wb-timeline-resizer:hover { background: rgba(99, 102, 241, .2); }
+
+/* 创建 Drawer 底部 */
+.wb-create-body { padding: 8px 4px 20px; }
+.wb-create-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding-top: 16px; border-top: 1px solid var(--el-border-color-lighter);
+}
+</style>

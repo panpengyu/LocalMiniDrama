@@ -53,6 +53,12 @@ const router = createRouter({
           meta: { title: '画布模式' }
         },
         {
+          path: 'film/:id/workbench',
+          name: 'film-workbench',
+          component: () => import('@/views/workbench/DramaWorkbench.vue'),
+          meta: { title: '一站式创作工作台' }
+        },
+        {
           path: 'ai-config',
           name: 'ai-config',
           component: () => import('@/views/AiConfig.vue'),

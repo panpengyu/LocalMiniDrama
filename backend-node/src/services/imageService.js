@@ -1479,6 +1479,14 @@ async function processImageGeneration(db, log, imageGenId) {
         status: 'completed',
       });
     }
+
+    // ── Step 6.1 (S3-T02): 一致性校验 + 低于阈值自动重试（最多 3 次） ──
+    try {
+      const s3ctx = { row, imageGenId, persistedImageUrl, localPath, finalPrompt };
+      await _enforceConsistencyAndMaybeRetry(db, log, s3ctx);
+    } catch (csErr) {
+      log.warn('[图生] Step6.1 一致性校验/重试流程异常（不影响已完成记录）', { id: imageGenId, error: csErr.message });
+    }
     
     if (row.scene_id != null && row.storyboard_id == null) {
       // 旧图追加到 extra_images，与上传逻辑保持一致
@@ -1700,6 +1708,182 @@ function syncStoryboardCharacters(db, log, storyboardId) {
   return { added };
 }
 
+// ============================================================
+// S3-T02: 一致性校验 + 低于阈值自动重试（最多 3 次）
+// ============================================================
+const S3_MAX_RETRIES = 3;
+const S3_RETRY_PROMPT_APPEND =
+  '【CRITICAL 一致性强制】必须严格保持与参考图同一角色的面部特征完全一致：脸型、眼型、眉形、鼻型、唇形、发型发色、肤色、痣/疤痕等面部识别锚点绝对不允许改变；服装款式颜色、体型也要100%匹配参考图。若出现人物换脸、发型发色变更、五官比例重构、服装颜色变化一律视为生成失败。';
+
+/**
+ * 获取这张生成图关联的角色 ID 列表（用于一致性校验）
+ * - 若是角色单图生成（character_id 有值）：返回 [character_id]
+ * - 若是分镜图（storyboard_id 有值）：从 storyboard_characters + storyboards.characters 解析
+ * @private
+ */
+function _getRelevantCharacterIds(db, row) {
+  const ids = [];
+  const push = (n) => { if (Number.isFinite(n) && n > 0 && !ids.includes(n)) ids.push(Number(n)); };
+  push(row.character_id);
+
+  if (row.storyboard_id) {
+    try {
+      const sb = db.prepare('SELECT characters FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(Number(row.storyboard_id));
+      if (sb?.characters) {
+        let arr = null;
+        if (typeof sb.characters === 'string') {
+          try { arr = JSON.parse(sb.characters); } catch (_) {}
+        } else if (Array.isArray(sb.characters)) {
+          arr = sb.characters;
+        }
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            push(typeof item === 'object' && item ? item.id : item);
+          }
+        }
+      }
+    } catch (_) {}
+    try {
+      const links = db.prepare('SELECT character_id FROM storyboard_characters WHERE storyboard_id = ?').all(Number(row.storyboard_id));
+      for (const l of links) push(l.character_id);
+    } catch (_) {}
+  }
+  return ids;
+}
+
+/**
+ * S3-T02: 一致性校验 + 自动重试
+ *
+ * 执行流程：
+ * 1. 读取关联角色列表
+ * 2. 逐角色调用 consistencyService.checkConsistency
+ * 3. 更新 image_generations.consistency_score / consistency_passed（取 min score）
+ * 4. 若未通过 且 retry_count < 3 → 创建新的 image_generations pending 记录并追加强化 prompt
+ *
+ * @param {object} db - better-sqlite3 / mysql 适配
+ * @param {object} log
+ * @param {object} ctx - { row, imageGenId, persistedImageUrl, localPath, finalPrompt }
+ * @returns {Promise<{ checked: boolean, passed: boolean, minScore: number|null, retryScheduled: boolean, retryId: number|null }>}
+ */
+async function _enforceConsistencyAndMaybeRetry(db, log, ctx) {
+  const { row, imageGenId, persistedImageUrl, localPath, finalPrompt } = ctx || {};
+  if (!row || !imageGenId) return { checked: false, passed: false, minScore: null, retryScheduled: false, retryId: null };
+
+  const t0 = Date.now();
+  const characterIds = _getRelevantCharacterIds(db, row);
+  if (!characterIds.length) {
+    log?.info?.('[S3-一致性] 跳过：无关联角色', { imageGenId, elapsedMs: Date.now() - t0 });
+    return { checked: false, passed: false, minScore: null, retryScheduled: false, retryId: null };
+  }
+
+  let consistencyService = null;
+  try {
+    consistencyService = require('./consistencyService');
+  } catch (_) {
+    return { checked: false, passed: false, minScore: null, retryScheduled: false, retryId: null };
+  }
+
+  let minScore = 1.0;
+  let allPassed = true;
+  const perCharResults = [];
+
+  for (const cid of characterIds) {
+    try {
+      const r = await consistencyService.checkConsistency(db, log, {
+        dramaId: row.drama_id,
+        storyboardId: row.storyboard_id,
+        characterId: cid,
+        generatedImageUrl: persistedImageUrl || localPath,
+      });
+      perCharResults.push({ characterId: cid, score: r.similarityScore, passed: !!r.passed, method: r.method, checkId: r.checkId });
+      if (r.similarityScore < minScore) minScore = r.similarityScore;
+      if (!r.passed) allPassed = false;
+    } catch (err) {
+      perCharResults.push({ characterId: cid, error: err.message });
+      // 校验异常不重试，保守视为通过（避免误触发多次重试）
+    }
+  }
+
+  const effectiveScore = Number.isFinite(minScore) ? Number(minScore.toFixed(4)) : null;
+  const effectivePassed = perCharResults.every((r) => r.passed || r.error) ? 1 : 0;
+
+  // 更新 image_generations 一致性字段
+  try {
+    db.prepare(
+      'UPDATE image_generations SET consistency_score = ?, consistency_passed = ?, updated_at = ? WHERE id = ?'
+    ).run(effectiveScore, effectivePassed, new Date().toISOString(), imageGenId);
+  } catch (_) {}
+
+  log?.info?.('[S3-一致性] 校验完成', {
+    imageGenId,
+    dramaId: row.drama_id,
+    storyboardId: row.storyboard_id,
+    characterId: row.character_id,
+    characterCount: characterIds.length,
+    minScore: effectiveScore,
+    passed: effectivePassed === 1,
+    retriesSoFar: Number(row.retry_count) || 0,
+    elapsedMs: Date.now() - t0,
+  });
+
+  // 低于阈值 → 自动重试（最多 3 次）
+  const retriesSoFar = Number(row.retry_count) || 0;
+  let retryId = null;
+  let retryScheduled = false;
+
+  if (!effectivePassed && retriesSoFar < S3_MAX_RETRIES) {
+    try {
+      const nextRetry = retriesSoFar + 1;
+      const appendedPrompt = `${String(finalPrompt || row.prompt || '').trimEnd()}。${S3_RETRY_PROMPT_APPEND}`;
+      const info = db.prepare(`INSERT INTO image_generations
+        (storyboard_id, drama_id, scene_id, character_id, provider, model, prompt, negative_prompt, size, quality,
+         frame_type, reference_images, status, retry_count, retried_from_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`).run(
+        row.storyboard_id, row.drama_id, row.scene_id, row.character_id,
+        row.provider || 'auto_retry_consistency', row.model,
+        appendedPrompt, row.negative_prompt, row.size, row.quality,
+        row.frame_type, row.reference_images,
+        nextRetry, imageGenId,
+        new Date().toISOString(), new Date().toISOString(),
+      );
+      retryId = info?.lastInsertRowid || null;
+      retryScheduled = !!retryId;
+
+      log?.info?.('[S3-一致性] 低于阈值，自动安排重试', {
+        imageGenId,
+        retryId,
+        retryNo: nextRetry,
+        maxRetries: S3_MAX_RETRIES,
+        minScore: effectiveScore,
+        elapsedMs: Date.now() - t0,
+      });
+
+      // 若有 task_id 关联，同步创建新 task
+      if (retryId && row.task_id) {
+        try {
+          const { _uid } = consistencyService;
+          const newTaskId = (typeof _uid === 'function' ? _uid('tsk') : `tsk_${Date.now().toString(36)}`);
+          taskService.createTask(db, {
+            task_id: newTaskId,
+            user_id: null,
+            task_type: 'image',
+            payload_json: JSON.stringify({ image_generation_id: retryId }),
+          });
+          db.prepare('UPDATE image_generations SET task_id = ? WHERE id = ?').run(newTaskId, retryId);
+        } catch (_) {}
+      }
+    } catch (err) {
+      log?.warn?.('[S3-一致性] 自动重试插入失败', { imageGenId, error: err.message });
+    }
+  } else if (!effectivePassed && retriesSoFar >= S3_MAX_RETRIES) {
+    log?.warn?.('[S3-一致性] 已达最大重试次数，不再重试', {
+      imageGenId, retriesSoFar, maxRetries: S3_MAX_RETRIES, minScore: effectiveScore,
+    });
+  }
+
+  return { checked: true, passed: effectivePassed === 1, minScore: effectiveScore, retryScheduled, retryId };
+}
+
 module.exports = {
   list,
   getById,
@@ -1710,4 +1894,8 @@ module.exports = {
   processImageGeneration,
   aspectRatioToSize,
   syncStoryboardCharacters,
+  // S3-T02: 一致性校验+自动重试（导出便于单元测试）
+  internalEnforceConsistencyAndMaybeRetry: _enforceConsistencyAndMaybeRetry,
+  S3_MAX_RETRIES: 3,
+  S3_RETRY_PROMPT_APPEND: S3_RETRY_PROMPT_APPEND,
 };

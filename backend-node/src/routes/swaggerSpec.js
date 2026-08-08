@@ -195,6 +195,87 @@ module.exports = {
       },
     },
 
+    // ================= Sprint 2/3: 角色一致性 =================
+    '/ai/consistency/check': {
+      post: {
+        tags: ['角色一致性'],
+        summary: '一致性校验（S2-T08 / S3-T01）',
+        description: '比对生成图与角色参考图的余弦相似度 + 视觉模型兜底，返回相似度分数和是否通过阈值',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { example: { dramaId: 1, storyboardId: 24, characterId: 5, generatedImageUrl: '/static/projects/1/images/ig_xxx.jpg', referenceImageUrl: null, threshold: 0.85 } } },
+        },
+        responses: {
+          200: {
+            description: '校验完成',
+            content: { 'application/json': { example: { checkId: 'cchk_xxx', similarityScore: 0.9123, threshold: 0.85, passed: true, method: 'cosine_embedding' } } },
+          },
+        },
+      },
+    },
+    '/ai/consistency/embeddings': {
+      post: {
+        tags: ['角色一致性'],
+        summary: '为角色生成面部 embedding（S2-T07 角色指纹）',
+        description: '调用视觉模型提取角色图片的面部特征向量，存储到 character_embeddings 表并同步回 characters 主表',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { example: { characterId: 5, characterType: 'project', imageUrl: null, viewAngle: 'front', model: 'vision-embedding' } } },
+        },
+        responses: { 200: { description: '生成完成' } },
+      },
+    },
+    '/ai/consistency/embeddings/batch': {
+      post: {
+        tags: ['角色一致性'],
+        summary: '批量为剧中角色生成 embedding（S2-T07）',
+        description: '遍历某 drama 下所有角色，逐个调用 generateCharacterEmbedding',
+        requestBody: { required: true, content: { 'application/json': { example: { dramaId: 1, model: 'vision-embedding' } } } },
+        responses: { 200: { description: '批量完成' } },
+      },
+    },
+    '/ai/consistency/embeddings/{characterId}': {
+      get: {
+        tags: ['角色一致性'],
+        summary: '获取角色 embedding 元数据（S3-T01 前端展示）',
+        description: '不返回原始向量数组，仅返回维度/模型/生成时间/阈值，供前端一致性面板概览',
+        parameters: [
+          { name: 'characterId', in: 'path', required: true, schema: { type: 'integer' } },
+          { name: 'characterType', in: 'query', schema: { type: 'string', default: 'project' } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/consistency/logs': {
+      get: {
+        tags: ['角色一致性'],
+        summary: '一致性校验历史（S3-T01 前端面板）',
+        description: '支持按 drama/storyboard/character 过滤，展示分数和通过状态，默认返回最近 20 条',
+        parameters: [
+          { name: 'dramaId', in: 'query', schema: { type: 'integer' } },
+          { name: 'characterId', in: 'query', schema: { type: 'integer' } },
+          { name: 'storyboardId', in: 'query', schema: { type: 'integer' } },
+          { name: 'passed', in: 'query', schema: { type: 'boolean' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/consistency/stats/{characterId}': {
+      get: {
+        tags: ['角色一致性'],
+        summary: '角色一致性统计（S3-T01 分数面板）',
+        description: '返回某角色的校验总数、平均分、通过率、最近一次分数和通过状态，用于角色详情页一致性概览',
+        parameters: [{ name: 'characterId', in: 'path', required: true, schema: { type: 'integer' } }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { example: { totalChecks: 24, avgScore: 0.8872, passRate: 0.875, recentScore: 0.9012, recentPassed: true } } },
+          },
+        },
+      },
+    },
+
     // ================= 查询 =================
     '/ai/screenwriter/outlines': {
       get: { tags: ['查询'], summary: '大纲列表', parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } }], responses: { 200: { description: 'OK' } } },
