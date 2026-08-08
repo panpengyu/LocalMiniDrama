@@ -1,0 +1,1222 @@
+openapi: 3.0.3
+info:
+  title: LocalMiniDrama AI创作平台 — 核心API接口草案
+  description: |
+    基于开发计划0808-01的Sprint 1-4核心接口定义。
+
+    ## 接口清单
+    | 编号 | 接口 | Sprint | 说明 |
+    |------|------|--------|------|
+    | 1 | POST /api/v1/ai/screenwriter/outline | S1 | 剧本大纲生成 |
+    | 2 | POST /api/v1/ai/screenwriter/characters | S1 | 角色档案自动生成 |
+    | 3 | POST /api/v1/ai/screenwriter/episodes | S1 | 分集剧情拆分 |
+    | 4 | POST /api/v1/ai/screenwriter/storyboard | S1 | 分镜脚本生成 |
+    | 5 | POST /api/v1/ai/screenwriter/dialogue | S1 | 对话台词生成 |
+    | 6 | POST /api/v1/ai/consistency/check | S2 | 一致性校验 |
+    | 7 | GET /api/v1/ai/consistency/score/{characterId} | S2 | 获取角色一致性分数 |
+    | 8 | POST /api/v1/ai/consistency/retry | S2 | 一致性自动重试 |
+    | 9 | POST /api/v1/ai/storyboard/generate | S4 | 智能分镜生成 |
+    | 10 | POST /api/v1/ai/tts/generate | S4 | 智能配音生成 |
+
+  version: 1.0.0
+  contact:
+    name: LocalMiniDrama开发团队
+    url: https://github.com/localminidrama
+
+servers:
+  - url: http://localhost:5679
+    description: 本地开发环境
+  - url: https://api.localminidrama.com
+    description: 生产环境
+
+# ============================================================================
+# 全局安全认证
+# ============================================================================
+security:
+  - BearerAuth: []
+
+components:
+  # ==========================================================================
+  # 安全方案
+  # ==========================================================================
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 用户端使用 user_token，管理端使用 admin_token
+
+  # ==========================================================================
+  # 通用响应模型
+  # ==========================================================================
+  schemas:
+    # 标准成功响应
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+        message:
+          type: string
+          example: "操作成功"
+
+    # 标准错误响应
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "BAD_REQUEST"
+            message:
+              type: string
+              example: "请求参数错误"
+
+    # 分页响应
+    PaginatedResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            list:
+              type: array
+              items: {}
+            total:
+              type: integer
+            page:
+              type: integer
+            pageSize:
+              type: integer
+
+    # ==========================================================================
+    # AI编剧 模型
+    # ==========================================================================
+
+    # 剧本大纲
+    ScreenwriterOutlineRequest:
+      type: object
+      required:
+        - idea
+      properties:
+        idea:
+          type: string
+          description: 一句话创意描述
+          example: "一个普通快递员意外获得超能力的故事"
+        genre:
+          type: string
+          description: 漫剧类型
+          enum: [urban_romance, ancient_fantasy, mystery, scifi, campus, other]
+          example: "urban_romance"
+        structure:
+          type: string
+          description: 故事结构模板
+          enum: [three_act, heros_journey, qi_cheng_zhuan_he]
+          default: three_act
+          example: "three_act"
+        episode_count:
+          type: integer
+          description: 预期集数
+          minimum: 1
+          maximum: 50
+          default: 10
+          example: 10
+        style:
+          type: string
+          description: 风格基调
+          enum: [hot, sweet, abusive, suspense, comedy]
+          default: hot
+          example: "hot"
+
+    ScreenwriterOutlineResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            outline_id:
+              type: string
+              description: 大纲唯一ID
+              example: "outline_20260808_001"
+            title:
+              type: string
+              description: 剧本标题
+              example: "快递超人"
+            logline:
+              type: string
+              description: 一句话简介
+              example: "普通快递员李明在一次送货途中意外获得超能力..."
+            structure:
+              type: string
+              example: "three_act"
+            acts:
+              type: array
+              description: 三幕式结构
+              items:
+                type: object
+                properties:
+                  act_number:
+                    type: integer
+                    example: 1
+                  title:
+                    type: string
+                    example: "第一幕：建置"
+                  summary:
+                    type: string
+                    example: "介绍主角李明的日常生活..."
+                  key_events:
+                    type: array
+                    items:
+                      type: string
+                    example: ["李明送快递", "意外事件", "获得超能力"]
+            themes:
+              type: array
+              items:
+                type: string
+              example: ["成长", "责任", "爱情"]
+            target_audience:
+              type: string
+              example: "18-35岁都市青年"
+
+    # 角色档案
+    ScreenwriterCharactersRequest:
+      type: object
+      required:
+        - outline_id
+      properties:
+        outline_id:
+          type: string
+          description: 剧本大纲ID
+          example: "outline_20260808_001"
+        character_count:
+          type: integer
+          description: 需要生成的角色数量
+          minimum: 1
+          maximum: 10
+          default: 5
+          example: 5
+        include_antagonist:
+          type: boolean
+          default: true
+          description: 是否包含反派角色
+
+    ScreenwriterCharactersResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            outline_id:
+              type: string
+            characters:
+              type: array
+              items:
+                type: object
+                properties:
+                  character_id:
+                    type: string
+                    example: "char_001"
+                  name:
+                    type: string
+                    example: "李明"
+                  role:
+                    type: string
+                    enum: [protagonist, antagonist, supporting, minor]
+                    example: "protagonist"
+                  age:
+                    type: integer
+                    example: 25
+                  gender:
+                    type: string
+                    enum: [male, female, other]
+                    example: "male"
+                  personality:
+                    type: string
+                    example: "善良、有责任心、有些腼腆"
+                  appearance:
+                    type: string
+                    example: "中等身材，短发，常穿快递制服"
+                  background:
+                    type: string
+                    example: "从小在城市长大，父母是普通工人..."
+                  motivation:
+                    type: string
+                    example: "想通过自己的努力让家人过上好日子"
+                  arc:
+                    type: string
+                    description: 角色成长弧线
+                    example: "从普通人到超级英雄的成长蜕变"
+
+    # 分集剧情
+    ScreenwriterEpisodesRequest:
+      type: object
+      required:
+        - outline_id
+      properties:
+        outline_id:
+          type: string
+          example: "outline_20260808_001"
+        episode_count:
+          type: integer
+          minimum: 1
+          maximum: 50
+          example: 10
+        duration_per_episode:
+          type: string
+          description: 每集时长
+          enum: [short, medium, long]
+          default: short
+          example: "short"
+        characters:
+          type: array
+          description: 角色ID列表（用于剧情关联）
+          items:
+            type: string
+          example: ["char_001", "char_002"]
+
+    ScreenwriterEpisodesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            outline_id:
+              type: string
+            episodes:
+              type: array
+              items:
+                type: object
+                properties:
+                  episode_number:
+                    type: integer
+                    example: 1
+                  title:
+                    type: string
+                    example: "第一集：意外降临"
+                  summary:
+                    type: string
+                    example: "快递员李明在一次送货途中..."
+                  duration_estimate:
+                    type: string
+                    example: "3-5分钟"
+                  key_scenes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scene_number:
+                          type: integer
+                        location:
+                          type: string
+                        characters:
+                          type: array
+                          items:
+                            type: string
+                        description:
+                          type: string
+                  cliffhanger:
+                    type: string
+                    description: 结尾悬念
+                    example: "李明发现自己能控制物体..."
+
+    # 分镜脚本
+    ScreenwriterStoryboardRequest:
+      type: object
+      required:
+        - episode_id
+      properties:
+        episode_id:
+          type: string
+          description: 分集ID
+          example: "ep_001"
+        scene_number:
+          type: integer
+          description: 场景编号（可选，不传则生成整集）
+          example: 1
+        shot_style:
+          type: string
+          description: 镜头风格偏好
+          enum: [cinematic, anime, realistic, dynamic]
+          default: cinematic
+          example: "cinematic"
+
+    ScreenwriterStoryboardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            episode_id:
+              type: string
+            storyboards:
+              type: array
+              items:
+                type: object
+                properties:
+                  frame_id:
+                    type: string
+                    example: "frame_001"
+                  frame_number:
+                    type: integer
+                    example: 1
+                  shot_type:
+                    type: string
+                    enum: [close_up, medium, wide, long, extreme_wide]
+                    example: "medium"
+                  camera_movement:
+                    type: string
+                    enum: [static, pan, tilt, dolly, track, crane, handheld]
+                    example: "static"
+                  composition:
+                    type: string
+                    enum: [rule_of_thirds, symmetric, leading_lines, center]
+                    example: "rule_of_thirds"
+                  emotion:
+                    type: string
+                    enum: [tense, warm, shocking, sad, happy, neutral]
+                    example: "warm"
+                  duration:
+                    type: string
+                    example: "3-5秒"
+                  transition:
+                    type: string
+                    enum: [cut, fade_in, fade_out, dissolve, wipe]
+                    example: "cut"
+                  visual_description:
+                    type: string
+                    example: "李明站在快递站门口，阳光照在他身上..."
+                  prompt:
+                    type: string
+                    description: AI生图提示词
+                    example: "anime style, young man in delivery uniform standing at doorway, warm sunlight, medium shot, rule of thirds composition"
+                  characters:
+                    type: array
+                    items:
+                      type: string
+                    example: ["char_001"]
+
+    # 对话台词
+    ScreenwriterDialogueRequest:
+      type: object
+      required:
+        - frame_id
+      properties:
+        frame_id:
+          type: string
+          description: 分镜帧ID
+          example: "frame_001"
+        characters:
+          type: array
+          items:
+            type: object
+            properties:
+              character_id:
+                type: string
+              tone:
+                type: string
+                enum: [happy, sad, angry, surprised, calm, nervous]
+                example: "calm"
+        context:
+          type: string
+          description: 额外上下文描述
+          example: "李明第一次发现自己的超能力"
+
+    ScreenwriterDialogueResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            frame_id:
+              type: string
+            dialogues:
+              type: array
+              items:
+                type: object
+                properties:
+                  dialogue_id:
+                    type: string
+                    example: "dlg_001"
+                  character_id:
+                    type: string
+                    example: "char_001"
+                  character_name:
+                    type: string
+                    example: "李明"
+                  line:
+                    type: string
+                    example: "这...这是怎么回事？我的手..."
+                  emotion:
+                    type: string
+                    example: "surprised"
+                  duration_estimate:
+                    type: string
+                    example: "2秒"
+                  action:
+                    type: string
+                    description: 伴随动作描述
+                    example: "看着自己的双手，惊讶"
+
+    # ==========================================================================
+    # 角色一致性 模型
+    # ==========================================================================
+
+    ConsistencyCheckRequest:
+      type: object
+      required:
+        - character_id
+        - generated_image_url
+      properties:
+        character_id:
+          type: string
+          description: 角色ID
+          example: "char_001"
+        generated_image_url:
+          type: string
+          description: 生成的图片URL
+          example: "/static/projects/p001/gen/img_001.png"
+        reference_image_urls:
+          type: array
+          description: 参考图URL列表（如不传则使用角色默认参考图）
+          items:
+            type: string
+          example: ["/static/library/characters/char_001/front.png"]
+        threshold:
+          type: number
+          format: float
+          description: 一致性阈值(0-1)，低于此值标记为不一致
+          minimum: 0
+          maximum: 1
+          default: 0.85
+          example: 0.85
+
+    ConsistencyCheckResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            character_id:
+              type: string
+            image_url:
+              type: string
+            consistency_score:
+              type: number
+              format: float
+              minimum: 0
+              maximum: 1
+              description: 一致性分数(0-1)
+              example: 0.92
+            is_consistent:
+              type: boolean
+              description: 是否通过一致性检查
+              example: true
+            face_similarity:
+              type: number
+              format: float
+              description: 面部相似度
+              example: 0.95
+            clothing_similarity:
+              type: number
+              format: float
+              description: 服装相似度
+              example: 0.88
+            hair_similarity:
+              type: number
+              format: float
+              description: 发型相似度
+              example: 0.93
+            threshold:
+              type: number
+              format: float
+              example: 0.85
+            checked_at:
+              type: string
+              format: date-time
+              example: "2026-08-08T12:00:00Z"
+
+    ConsistencyRetryRequest:
+      type: object
+      required:
+        - character_id
+        - original_image_url
+        - frame_id
+      properties:
+        character_id:
+          type: string
+          example: "char_001"
+        original_image_url:
+          type: string
+          description: 原始生成失败的图片URL
+          example: "/static/projects/p001/gen/img_001.png"
+        frame_id:
+          type: string
+          description: 关联的分镜帧ID
+          example: "frame_001"
+        max_retries:
+          type: integer
+          description: 最大重试次数
+          minimum: 1
+          maximum: 5
+          default: 3
+          example: 3
+        threshold:
+          type: number
+          format: float
+          default: 0.85
+          example: 0.85
+
+    ConsistencyRetryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            character_id:
+              type: string
+            frame_id:
+              type: string
+            task_id:
+              type: string
+              description: 异步重试任务ID
+              example: "task_retry_001"
+            status:
+              type: string
+              enum: [pending, processing, success, failed]
+              example: "pending"
+            estimated_time:
+              type: integer
+              description: 预计完成时间(秒)
+              example: 30
+
+    # ==========================================================================
+    # 智能分镜 模型
+    # ==========================================================================
+
+    StoryboardGenerateRequest:
+      type: object
+      required:
+        - script_content
+      properties:
+        script_content:
+          type: string
+          description: 剧本段落内容
+          example: "李明站在快递站门口，阳光照在他身上。他看了看手中的包裹..."
+        drama_id:
+          type: string
+          description: 关联的项目ID
+          example: "drama_001"
+        episode_id:
+          type: string
+          description: 关联的分集ID
+          example: "ep_001"
+        shot_style:
+          type: string
+          enum: [cinematic, anime, realistic, dynamic]
+          default: cinematic
+          example: "cinematic"
+        auto_assign_characters:
+          type: boolean
+          default: true
+          description: 是否自动关联角色
+        max_frames:
+          type: integer
+          description: 最大分镜帧数
+          minimum: 1
+          maximum: 50
+          default: 20
+          example: 20
+
+    StoryboardGenerateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            drama_id:
+              type: string
+            episode_id:
+              type: string
+            task_id:
+              type: string
+              description: 异步生成任务ID
+              example: "task_sb_001"
+            status:
+              type: string
+              enum: [pending, processing, success, failed]
+              example: "pending"
+            estimated_frames:
+              type: integer
+              example: 15
+            estimated_time:
+              type: integer
+              example: 60
+
+    # ==========================================================================
+    # 智能配音 模型
+    # ==========================================================================
+
+    TTSGenerateRequest:
+      type: object
+      required:
+        - dialogues
+      properties:
+        drama_id:
+          type: string
+          example: "drama_001"
+        episode_id:
+          type: string
+          example: "ep_001"
+        dialogues:
+          type: array
+          items:
+            type: object
+            required:
+              - character_id
+              - text
+            properties:
+              frame_id:
+                type: string
+                example: "frame_001"
+              character_id:
+                type: string
+                example: "char_001"
+              text:
+                type: string
+                description: 台词文本
+                example: "这...这是怎么回事？"
+              emotion:
+                type: string
+                enum: [happy, sad, angry, surprised, calm, nervous, neutral]
+                default: neutral
+                example: "surprised"
+              speed:
+                type: number
+                format: float
+                description: 语速(0.5-2.0)
+                minimum: 0.5
+                maximum: 2.0
+                default: 1.0
+                example: 1.0
+        voice_provider:
+          type: string
+          description: TTS服务提供商
+          enum: [volcano, azure, elevenlabs, system]
+          default: system
+          example: "system"
+        output_format:
+          type: string
+          enum: [mp3, wav, ogg]
+          default: mp3
+          example: "mp3"
+
+    TTSGenerateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            drama_id:
+              type: string
+            episode_id:
+              type: string
+            task_id:
+              type: string
+              description: 异步配音任务ID
+              example: "task_tts_001"
+            status:
+              type: string
+              enum: [pending, processing, success, failed]
+              example: "pending"
+            total_dialogues:
+              type: integer
+              example: 5
+            estimated_time:
+              type: integer
+              description: 预计完成时间(秒)
+              example: 30
+
+# ============================================================================
+# API 路径定义
+# ============================================================================
+paths:
+  # ==========================================================================
+  # 1. 剧本大纲生成
+  # ==========================================================================
+  /api/v1/ai/screenwriter/outline:
+    post:
+      tags: [AI编剧助手]
+      summary: 剧本大纲生成
+      description: |
+        输入一句话创意，AI自动生成完整剧本大纲。
+        - 支持三幕式、英雄之旅、起承转合等故事结构
+        - 生成标题、简介、主题、目标受众等信息
+        - 生成结果可后续用于角色创建和分集拆分
+      operationId: generateScreenwriterOutline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenwriterOutlineRequest'
+      responses:
+        '200':
+          description: 大纲生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenwriterOutlineResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: 请求频率超限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: AI服务异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 2. 角色档案自动生成
+  # ==========================================================================
+  /api/v1/ai/screenwriter/characters:
+    post:
+      tags: [AI编剧助手]
+      summary: 角色档案自动生成
+      description: |
+        根据剧本大纲自动生成角色档案。
+        - 生成主角、配角、反派等角色
+        - 包含人设、外貌、性格、背景、动机、成长弧线
+        - 生成结果可直接用于创建角色节点和后续图片生成
+      operationId: generateScreenwriterCharacters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenwriterCharactersRequest'
+      responses:
+        '200':
+          description: 角色档案生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenwriterCharactersResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 大纲ID不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 3. 分集剧情拆分
+  # ==========================================================================
+  /api/v1/ai/screenwriter/episodes:
+    post:
+      tags: [AI编剧助手]
+      summary: 分集剧情拆分
+      description: |
+        将剧本大纲拆分为多集剧情。
+        - 每集3-5分钟时长
+        - 包含场景列表、关键事件、结尾悬念
+        - 自动关联已生成的角色
+      operationId: generateScreenwriterEpisodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenwriterEpisodesRequest'
+      responses:
+        '200':
+          description: 分集剧情生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenwriterEpisodesResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 4. 分镜脚本生成
+  # ==========================================================================
+  /api/v1/ai/screenwriter/storyboard:
+    post:
+      tags: [AI编剧助手]
+      summary: 分镜脚本生成
+      description: |
+        根据分集剧情自动生成专业分镜脚本。
+        - 包含镜头类型、运镜方式、构图建议、情绪标注
+        - 包含时长建议、转场建议
+        - 自动生成AI生图提示词
+        - 自动关联场景中的角色
+      operationId: generateScreenwriterStoryboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenwriterStoryboardRequest'
+      responses:
+        '200':
+          description: 分镜脚本生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenwriterStoryboardResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 分集ID不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 5. 对话台词生成
+  # ==========================================================================
+  /api/v1/ai/screenwriter/dialogue:
+    post:
+      tags: [AI编剧助手]
+      summary: 对话台词生成
+      description: |
+        根据分镜帧和角色设定自动生成对话台词。
+        - 支持多角色对话
+        - 包含情感标注和伴随动作描述
+        - 估算台词时长用于后续配音时间轴对齐
+      operationId: generateScreenwriterDialogue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenwriterDialogueRequest'
+      responses:
+        '200':
+          description: 台词生成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenwriterDialogueResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 6. 一致性校验
+  # ==========================================================================
+  /api/v1/ai/consistency/check:
+    post:
+      tags: [角色一致性]
+      summary: 一致性校验
+      description: |
+        校验生成的图片与角色参考图的一致性。
+        - 面部相似度检测
+        - 服装相似度检测
+        - 发型相似度检测
+        - 返回综合一致性分数(0-1)
+        - 支持自定义阈值
+      operationId: checkConsistency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsistencyCheckRequest'
+      responses:
+        '200':
+          description: 一致性校验完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsistencyCheckResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 角色ID不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 7. 获取角色一致性分数
+  # ==========================================================================
+  /api/v1/ai/consistency/score/{characterId}:
+    get:
+      tags: [角色一致性]
+      summary: 获取角色一致性分数
+      description: |
+        获取指定角色的历史一致性分数记录。
+        - 支持按时间范围筛选
+        - 返回一致性分数趋势
+        - 包含每次生成的一致性详情
+      operationId: getConsistencyScore
+      parameters:
+        - name: characterId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 角色ID
+          example: "char_001"
+        - name: start_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: 开始日期
+          example: "2026-08-01"
+        - name: end_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: 结束日期
+          example: "2026-08-08"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+          description: 页码
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          description: 每页数量
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      character_id:
+                        type: string
+                      average_score:
+                        type: number
+                        format: float
+                        description: 平均一致性分数
+                        example: 0.89
+                      total_checks:
+                        type: integer
+                        example: 45
+                      passed_checks:
+                        type: integer
+                        example: 42
+                      failed_checks:
+                        type: integer
+                        example: 3
+                      records:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ConsistencyCheckResponse/properties/data'
+        '404':
+          description: 角色不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 8. 一致性自动重试
+  # ==========================================================================
+  /api/v1/ai/consistency/retry:
+    post:
+      tags: [角色一致性]
+      summary: 一致性自动重试
+      description: |
+        当生成图片的一致性分数低于阈值时，自动重新生成。
+        - 注入角色参考图重新生成
+        - 最多重试 max_retries 次
+        - 每次重试后重新校验一致性
+        - 所有重试均未通过则标记为失败
+        - 异步执行，返回任务ID供前端轮询
+      operationId: retryConsistency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsistencyRetryRequest'
+      responses:
+        '200':
+          description: 重试任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsistencyRetryResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: 重试次数已用完
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 9. 智能分镜生成
+  # ==========================================================================
+  /api/v1/ai/storyboard/generate:
+    post:
+      tags: [智能分镜]
+      summary: 智能分镜生成
+      description: |
+        根据剧本内容自动生成专业分镜。
+        - 分析剧本段落，拆分为多个分镜帧
+        - 为每帧生成镜头语言（类型/运镜/构图/情绪/时长/转场）
+        - 自动生成AI生图提示词
+        - 自动关联场景中的角色
+        - 异步执行，返回任务ID
+      operationId: generateStoryboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoryboardGenerateRequest'
+      responses:
+        '200':
+          description: 分镜生成任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryboardGenerateResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: 积分不足
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 10. 智能配音生成
+  # ==========================================================================
+  /api/v1/ai/tts/generate:
+    post:
+      tags: [智能配音]
+      summary: 智能配音生成
+      description: |
+        根据台词文本自动生成配音音频。
+        - 支持多角色批量配音
+        - 每个角色绑定独立音色
+        - 支持情感语调控制（开心/悲伤/愤怒/惊讶/平静/紧张）
+        - 支持语速调整(0.5-2.0)
+        - 支持多TTS服务商切换
+        - 异步执行，返回任务ID
+      operationId: generateTTS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TTSGenerateRequest'
+      responses:
+        '200':
+          description: 配音任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TTSGenerateResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: 积分不足
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
