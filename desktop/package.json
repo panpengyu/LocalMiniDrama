@@ -8,7 +8,7 @@
   "scripts": {
     "prestart": "node scripts/copy-backend.js",
     "start": "electron .",
-    "build:front": "cd ../frontweb && npm run build",
+    "build:front": "cd ../front-user && npm run build",
     "copy-front": "node scripts/copy-front.js",
     "clean:unpacked": "node scripts/clean-win-unpacked.js",
     "pack": "npm run prepare-backend && npm run build:front && npm run copy-front && npm run clean:unpacked && electron-builder --dir",
@@ -54,8 +54,8 @@
     ],
     "extraResources": [
       {
-        "from": "frontweb-dist",
-        "to": "frontweb/dist",
+        "from": "front-user-dist",
+        "to": "front-user/dist",
         "filter": ["**/*"]
       },
       {

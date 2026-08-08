@@ -17,8 +17,8 @@
   ],
   "extraResources": [
     {
-      "from": "frontweb-dist",
-      "to": "frontweb/dist",
+      "from": "front-user-dist",
+      "to": "front-user/dist",
       "filter": ["**/*"]
     },
     {

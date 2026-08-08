@@ -148,9 +148,9 @@ function ensureFfmpeg(backendCwd) {
 
 function getWebDistPath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'frontweb', 'dist');
+    return path.join(process.resourcesPath, 'front-user', 'dist');
   }
-  return path.join(__dirname, '..', 'frontweb', 'dist');
+  return path.join(__dirname, '..', 'front-user', 'dist');
 }
 
 /**

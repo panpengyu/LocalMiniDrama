@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 与 frontweb/src/constants/styleOptions.js 的 value 选项一致。
+ * 与 front-user/src/constants/styleOptions.js 的 value 选项一致。
  * 当 DB 仅有 dramas.style（下拉 value）而无 metadata.style_prompt_* 时，后端据此展开为完整提示词。
  * 若修改前端选项，请同步更新本文件。
  */

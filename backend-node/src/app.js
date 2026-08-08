@@ -366,7 +366,7 @@ function createApp() {
 
   // 前端静态资源服务（生产环境）
   // Electron 打包时可通过 WEB_DIST_PATH 环境变量指定
-  const webDist = process.env.WEB_DIST_PATH || path.join(process.cwd(), '..', 'frontweb', 'dist');
+  const webDist = process.env.WEB_DIST_PATH || path.join(process.cwd(), '..', 'front-user', 'dist');
   console.log('webDist', webDist);
   
   // 如果前端构建目录存在，提供静态资源服务

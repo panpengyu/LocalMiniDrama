@@ -4,7 +4,7 @@ const { resolveStylePreset } = require('../constants/generationStylePresets');
 
 /**
  * 从剧集行解析画风：优先使用 metadata 里由前端写入的完整提示词（与 styleOptions 一致），
- * 否则退回 dramas.style（选项 value 时会展开为完整中英文提示词，与 frontweb styleOptions 一致）。
+ * 否则退回 dramas.style（选项 value 时会展开为完整中英文提示词，与 front-user styleOptions 一致）。
  */
 
 function parseDramaMetadata(dramaRow) {
