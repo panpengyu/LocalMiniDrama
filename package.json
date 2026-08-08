@@ -1,0 +1,20 @@
+{
+  "name": "localminidrama-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "front-user",
+    "front-admin"
+  ],
+  "scripts": {
+    "dev:user": "npm run dev --workspace front-user",
+    "dev:admin": "npm run dev --workspace front-admin",
+    "dev:all": "concurrently \"npm run dev:user\" \"npm run dev:admin\"",
+    "build:user": "npm run build --workspace front-user",
+    "build:admin": "npm run build --workspace front-admin",
+    "build:all": "npm run build:user && npm run build:admin"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

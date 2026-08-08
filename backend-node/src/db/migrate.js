@@ -274,6 +274,10 @@ function ensureAllColumns(database) {
     { name: 'is_default', type: 'TINYINT DEFAULT 0' },
     { name: 'is_active', type: 'TINYINT DEFAULT 1' },
     { name: 'settings', type: 'TEXT' },
+    { name: 'icon_char', type: 'VARCHAR(10) DEFAULT \'\'' },
+    { name: 'description', type: 'VARCHAR(500) DEFAULT \'\'' },
+    { name: 'tags', type: 'TEXT' },
+    { name: 'is_builtin', type: 'TINYINT DEFAULT 0' },
     { name: 'created_at', type: 'DATETIME' },
     { name: 'updated_at', type: 'DATETIME' },
     { name: 'deleted_at', type: 'DATETIME' },
@@ -291,6 +295,34 @@ function ensureAllColumns(database) {
     { name: 'created_at', type: 'DATETIME' },
     { name: 'updated_at', type: 'DATETIME' },
     { name: 'deleted_at', type: 'DATETIME' },
+  ]);
+
+  ensure('anomaly_alert_channels', [
+    { name: 'name',              type: 'VARCHAR(100) NOT NULL DEFAULT \'\'' },
+    { name: 'channel_type',      type: 'VARCHAR(20) NOT NULL DEFAULT \'dingtalk\'' },
+    { name: 'webhook_url',       type: 'VARCHAR(500) NOT NULL DEFAULT \'\'' },
+    { name: 'secret',            type: 'VARCHAR(255) NOT NULL DEFAULT \'\'' },
+    { name: 'mention_mobiles',   type: 'TEXT' },
+    { name: 'mention_all',       type: 'TINYINT DEFAULT 0' },
+    { name: 'severity_mask',     type: 'TINYINT NOT NULL DEFAULT 7' },
+    { name: 'type_mask',         type: 'VARCHAR(200) NOT NULL DEFAULT \'*\'' },
+    { name: 'rate_limit_minutes', type: 'INTEGER NOT NULL DEFAULT 5' },
+    { name: 'enabled',           type: 'TINYINT DEFAULT 1' },
+    { name: 'remark',            type: 'VARCHAR(500)' },
+    { name: 'created_at',        type: 'DATETIME' },
+    { name: 'updated_at',        type: 'DATETIME' }
+  ]);
+  ensure('anomaly_alert_events', [
+    { name: 'channel_id',  type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'fingerprint', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'anomaly_type',type: 'VARCHAR(40) NOT NULL DEFAULT \'\'' },
+    { name: 'severity',    type: 'VARCHAR(20) NOT NULL DEFAULT \'info\'' },
+    { name: 'summary',     type: 'VARCHAR(500) NOT NULL DEFAULT \'\'' },
+    { name: 'payload',     type: 'TEXT' },
+    { name: 'status',      type: 'VARCHAR(20) NOT NULL DEFAULT \'pending\'' },
+    { name: 'error_msg',   type: 'TEXT' },
+    { name: 'sent_at',     type: 'DATETIME' },
+    { name: 'created_at',  type: 'DATETIME' }
   ]);
 
   ensure('image_generations', [
@@ -469,11 +501,89 @@ function ensureAllColumns(database) {
     { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
     { name: 'deleted_at', type: 'DATETIME' },
   ]);
+
+  ensure('channels', [
+    { name: 'code', type: 'VARCHAR(50) NOT NULL' },
+    { name: 'name', type: 'VARCHAR(100) NOT NULL' },
+    { name: 'type', type: 'VARCHAR(20) DEFAULT \'organic\'' },
+    { name: 'status', type: 'TINYINT DEFAULT 1' },
+    { name: 'remark', type: 'VARCHAR(500)' },
+    { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+    { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+  ]);
+
+  ensure('point_logs', [
+    { name: 'user_id', type: 'INTEGER' },
+    { name: 'change_type', type: 'VARCHAR(20) NOT NULL' },
+    { name: 'business_type', type: 'VARCHAR(30) DEFAULT \'other\'' },
+    { name: 'amount', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'balance_after', type: 'INTEGER DEFAULT 0' },
+    { name: 'related_id', type: 'VARCHAR(100)' },
+    { name: 'remark', type: 'VARCHAR(500)' },
+    { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+  ]);
+
+  ensure('recharges', [
+    { name: 'order_no', type: 'VARCHAR(64) NOT NULL' },
+    { name: 'user_id', type: 'INTEGER' },
+    { name: 'amount', type: 'DECIMAL(10,2) NOT NULL DEFAULT 0.00' },
+    { name: 'points', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'pay_method', type: 'VARCHAR(20)' },
+    { name: 'pay_status', type: 'VARCHAR(20) DEFAULT \'paid\'' },
+    { name: 'paid_at', type: 'DATETIME' },
+    { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+    { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+  ]);
+}
+
+/**
+ * 升级关键数值列为 BIGINT（避免 MySQL INT 4 字节 = 21 亿上界导致溢出）。
+ * - 对 MySQL：执行 ALTER TABLE ... MODIFY COLUMN ... BIGINT，若已是 BIGINT 则自动 skip
+ * - 对 SQLite：INTEGER 天然变长度 (1/2/3/4/6/8 字节，能存到 2^63-1)，不需要变更；但会检查列存在
+ */
+function ensureBigIntColumns(database) {
+  const targets = [
+    { table: 'point_logs', column: 'amount',        def: 'BIGINT NOT NULL DEFAULT 0' },
+    { table: 'point_logs', column: 'balance_after', def: 'BIGINT DEFAULT 0' }
+  ];
+
+  for (const t of targets) {
+    try {
+      let currentType = null;
+      if (database.type === 'mysql') {
+        const row = database.prepare(`SHOW COLUMNS FROM ${t.table} LIKE ?`).get(t.column);
+        currentType = row ? String(row.Type || '').toLowerCase() : null;
+      } else {
+        const rows = database.prepare(`PRAGMA table_info(${t.table})`).all();
+        const hit = rows.find((r) => (r.name || '').toLowerCase() === String(t.column).toLowerCase());
+        currentType = hit ? String(hit.type || '').toLowerCase() : null;
+      }
+      if (currentType === null) {
+        console.log(`[ensureBigInt] column not found: ${t.table}.${t.column} -> add by ensureAllColumns automatically`);
+        continue;
+      }
+      if (currentType.startsWith('bigint')) {
+        console.log(`[ensureBigInt] ${t.table}.${t.column} already BIGINT, skip`);
+        continue;
+      }
+
+      if (database.type === 'mysql') {
+        database.exec(`ALTER TABLE ${t.table} MODIFY COLUMN \`${t.column}\` ${t.def}`);
+        console.log(`[ensureBigInt] ${t.table}.${t.column} upgraded to BIGINT (${currentType} -> BIGINT)`);
+      } else {
+        // SQLite INTEGER 能自然容纳到 2^63-1，不再做表重建（风险高），只打印提示
+        console.log(`[ensureBigInt] ${t.table}.${t.column} type=${currentType} (SQLite INTEGER auto-variable-width, safe up to 2^63-1)`);
+      }
+    } catch (err) {
+      console.warn(`[ensureBigInt] ${t.table}.${t.column} upgrade skipped:`, err.message);
+    }
+  }
 }
 
 function runMigrationsAndEnsure(database) {
   runMigrations(database);
   ensureAllColumns(database);
+  ensureBigIntColumns(database);
 }
 
 function main() {

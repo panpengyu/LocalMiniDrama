@@ -76,7 +76,9 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 管理员模块（超级管理员权限）----------
   r.get('/admin/stats', requireAuth, requireRole(['super_admin']), admin.getStats);
-  
+  r.get('/admin/stats/trend', requireAuth, requireRole(['super_admin']), admin.getStatsTrend);
+  r.get('/admin/stats/consumption', requireAuth, requireRole(['super_admin']), admin.getConsumptionBreakdown);
+
   r.get('/admin/users', requireAuth, requireRole(['super_admin']), admin.getUsers);
   r.post('/admin/users', requireAuth, requireRole(['super_admin']), admin.createUser);
   r.put('/admin/users/:id', requireAuth, requireRole(['super_admin']), admin.updateUser);
@@ -91,6 +93,20 @@ function setupRouter(cfg, db, log) {
   r.post('/admin/teams', requireAuth, requireRole(['super_admin']), admin.createTeam);
   r.put('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.updateTeam);
   r.delete('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.deleteTeam);
+
+  // ---------- 数据异常检测 ----------
+  r.get('/admin/data-anomalies',          requireAuth, requireRole(['super_admin']), admin.getDataAnomalies);
+  r.get('/admin/data-anomalies/config',   requireAuth, requireRole(['super_admin']), admin.getAnomalyConfig);
+  r.post('/admin/data-anomalies/fix/:id', requireAuth, requireRole(['super_admin']), admin.fixDataAnomaly);
+
+  // ---------- 数据异常：告警通知（渠道/历史/手动触发/全量扫描） ----------
+  r.get('/admin/alert-channels',                 requireAuth, requireRole(['super_admin']), admin.listAlertChannels);
+  r.post('/admin/alert-channels',                requireAuth, requireRole(['super_admin']), admin.createAlertChannel);
+  r.put('/admin/alert-channels/:id',             requireAuth, requireRole(['super_admin']), admin.updateAlertChannel);
+  r.delete('/admin/alert-channels/:id',          requireAuth, requireRole(['super_admin']), admin.deleteAlertChannel);
+  r.get('/admin/alert-events',                   requireAuth, requireRole(['super_admin']), admin.listAlertEvents);
+  r.post('/admin/data-anomalies/alert/:id',      requireAuth, requireRole(['super_admin']), admin.dispatchAlertForAnomaly);
+  r.post('/admin/data-anomalies/alert-scan',     requireAuth, requireRole(['super_admin']), admin.runAlertScan);
   
   // ---------- 剧本模块 ----------
   r.get('/dramas', drama.listDramas);

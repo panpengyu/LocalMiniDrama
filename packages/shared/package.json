@@ -1,0 +1,21 @@
+{
+  "name": "@localmini/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./request": "./src/request.js",
+    "./stores/user": "./src/stores/user.js",
+    "./styles/theme.css": "./src/styles/theme.css",
+    "./composables/useTheme": "./src/composables/useTheme.js",
+    "./utils/mediaUrl": "./src/utils/mediaUrl.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "element-plus": "^2.5.0",
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0"
+  }
+}

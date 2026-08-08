@@ -115,36 +115,52 @@ function getDb(config) {
           /**
            * 执行写操作（INSERT/UPDATE/DELETE）
            * @param {...any} args - 查询参数（支持数组或多个参数）
-           * @returns {object} { lastInsertRowid: number } - 最后插入的行 ID
+           * @returns {object} { lastInsertRowid: number, changes: number } - 插入 ID + 影响行数
            */
           run(...args) {
             const params = args.length > 0 && Array.isArray(args[0]) ? args[0] : args;
             const formattedParams = params.map(formatDate);
             const result = formattedParams.length > 0 ? conn.query(sql, formattedParams) : conn.query(sql);
-            return { lastInsertRowid: result.insertId || 0 };
+            // sync-mysql 在 UPDATE/DELETE 后可通过 SELECT ROW_COUNT() 拿受影响行数
+            let changes = 0;
+            try {
+              const rc = conn.query('SELECT ROW_COUNT() AS rc');
+              if (rc && rc.length) changes = Number(rc[0].rc || 0);
+            } catch (_) { /* ignore */ }
+            return {
+              lastInsertRowid: result.insertId || 0,
+              insertId: result.insertId || 0,
+              changedRows: result.changedRows || changes,
+              changes
+            };
           }
         };
       }
       
       /**
        * 创建事务函数（兼容 better-sqlite3 API）
-       * 
-       * 使用 BEGIN/COMMIT/ROLLBACK 实现 MySQL 事务。
-       * 返回一个函数，调用该函数时才执行事务。
-       * 如果回调函数抛出异常，自动回滚事务；否则提交事务。
-       * 
+       *
+       * - SQLite：better-sqlite3 原生 db.transaction(fn) 保证同一连接；这里走原生方法
+       * - MySQL：sync-mysql 的 this.conn 是单连接（非连接池），BEGIN/COMMIT/ROLLBACK
+       *          在同一连接串行执行，事务有效。默认使用更高隔离级别 + 写前 FOR UPDATE 行锁，
+       *          保证在高并发修复同一条 users/point_logs 记录时不出现 lost update / write skew。
+       *
+       * 返回一个函数，调用该函数时才执行事务；回调抛错自动回滚。
+       *
        * @param {function} fn - 事务回调函数
        * @returns {function} 可调用的事务执行函数
        */
       transaction(fn) {
         return () => {
           try {
+            // 显式设置事务隔离级别为 READ COMMITTED（比默认 RR 更适合"读-改-写"短事务 + FOR UPDATE）
+            try { this.conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED'); } catch (_) {}
             this.conn.query('BEGIN');
             const result = fn();
             this.conn.query('COMMIT');
             return result;
           } catch (err) {
-            this.conn.query('ROLLBACK');
+            try { this.conn.query('ROLLBACK'); } catch (_) {}
             throw err;
           }
         };

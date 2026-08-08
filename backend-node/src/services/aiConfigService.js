@@ -9,6 +9,12 @@ function normalizeApiKeyForService(serviceType, apiKey) {
   }
   return apiKey;
 }
+
+function nonEmptyStr(val, fallback) {
+  if (val == null) return fallback;
+  const s = String(val);
+  return s.length === 0 ? fallback : s;
+}
 const { applyDeepSeekConnectivityOptions } = require('./deepseekConfig');
 function modelToDb(model) {
   if (model == null) return null;
@@ -18,6 +24,31 @@ function modelToDb(model) {
 }
 
 function modelFromDb(val) {
+  if (val == null || val === '') return [];
+  try {
+    const arr = JSON.parse(val);
+    return Array.isArray(arr) ? arr : [String(arr)];
+  } catch {
+    return [String(val)];
+  }
+}
+
+function tagsToDb(tags) {
+  if (tags == null) return null;
+  if (Array.isArray(tags)) return JSON.stringify(tags);
+  if (typeof tags === 'string') {
+    if (tags === '') return null;
+    try {
+      const arr = JSON.parse(tags);
+      return Array.isArray(arr) ? JSON.stringify(arr) : JSON.stringify([tags]);
+    } catch {
+      return JSON.stringify([tags]);
+    }
+  }
+  return null;
+}
+
+function tagsFromDb(val) {
   if (val == null || val === '') return [];
   try {
     const arr = JSON.parse(val);
@@ -117,16 +148,26 @@ function createConfig(db, log, req) {
         endpoint = '/videos';
         queryEndpoint = '/videos/{taskId}';
       }
+    } else if (p === 'kling' || p === 'kl' || p === 'kuaishou') {
+      if (st === 'image' || st === 'storyboard_image') endpoint = '/images/generations';
+      else if (st === 'video') {
+        endpoint = '/videos/generations';
+        queryEndpoint = '/videos/generations/{taskId}';
+      }
+    } else if (p === 'midjourney' || p === 'mj') {
+      if (st === 'image' || st === 'storyboard_image') endpoint = '/images/generations';
+    } else if (p === 'seedream') {
+      if (st === 'image' || st === 'storyboard_image') endpoint = '/images/generations';
     }
   }
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
   const info = db.prepare(
-    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, user_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
+    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, icon_char, description, tags, is_builtin, user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     req.service_type || 'text',
     req.provider || '',
-    req.api_protocol || '',
+    nonEmptyStr(req.api_protocol, 'https'),
     req.name || '',
     req.base_url || '',
     normalizeApiKeyForService(req.service_type, req.api_key || ''),
@@ -136,7 +177,12 @@ function createConfig(db, log, req) {
     queryEndpoint,
     req.priority ?? 0,
     req.is_default ? 1 : 0,
+    1,
     req.settings || null,
+    req.icon_char || '',
+    req.description || '',
+    tagsToDb(req.tags),
+    req.is_builtin ? 1 : 0,
     req.user_id || null,
     now,
     now
@@ -205,6 +251,22 @@ function updateConfig(db, log, id, req) {
     updates.push('is_active = ?');
     params.push(req.is_active ? 1 : 0);
   }
+  if (req.icon_char != null) {
+    updates.push('icon_char = ?');
+    params.push(req.icon_char || '');
+  }
+  if (req.description != null) {
+    updates.push('description = ?');
+    params.push(req.description || '');
+  }
+  if (req.tags !== undefined) {
+    updates.push('tags = ?');
+    params.push(tagsToDb(req.tags));
+  }
+  if (req.is_builtin != null) {
+    updates.push('is_builtin = ?');
+    params.push(req.is_builtin ? 1 : 0);
+  }
   if (updates.length === 0) return existing;
   params.push(new Date().toISOString(), id);
   db.prepare('UPDATE ai_service_configs SET ' + updates.join(', ') + ', updated_at = ? WHERE id = ?').run(...params);
@@ -248,6 +310,10 @@ function rowToConfig(r) {
     is_default: !!r.is_default,
     is_active: r.is_active == null ? true : !!r.is_active,
     settings: r.settings,
+    icon_char: r.icon_char || '',
+    description: r.description || '',
+    tags: tagsFromDb(r.tags),
+    is_builtin: !!r.is_builtin,
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -550,12 +616,12 @@ function applyVendorLock(db, log, cfg) {
       : item.model ? JSON.stringify([item.model]) : '[]';
     db.prepare(
       `INSERT INTO ai_service_configs
-        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, icon_char, description, tags, is_builtin, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       item.service_type || 'text',
       item.provider || '',
-      item.api_protocol || '',
+      nonEmptyStr(item.api_protocol, 'https'),
       item.name || '',
       item.base_url || '',
       apiKey,
@@ -565,7 +631,12 @@ function applyVendorLock(db, log, cfg) {
       item.query_endpoint || '',
       item.priority ?? 0,
       item.is_default ? 1 : 0,
+      1,
       item.settings || null,
+      item.icon_char || '',
+      item.description || '',
+      tagsToDb(item.tags),
+      item.is_builtin ? 1 : 0,
       now,
       now
     );
