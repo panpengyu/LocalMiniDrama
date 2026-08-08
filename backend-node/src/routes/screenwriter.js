@@ -25,14 +25,19 @@
  *  POST   /screenwriter/storyboard/sync
  *  POST   /screenwriter/dialogue/sync
  *
- *  ========== 查询接口 ==========
- *  GET    /screenwriter/outlines                   大纲列表
- *  GET    /screenwriter/outlines/:outlineId        大纲详情
+ *  ========== 查询 ==========
+ *  GET    /screenwriter/outlines                      大纲列表
+ *  GET    /screenwriter/outlines/:outlineId          大纲详情
  *  GET    /screenwriter/outlines/:outlineId/characters 角色列表
- *  GET    /screenwriter/outlines/:outlineId/episodes   分集列表
- *  GET    /screenwriter/episodes/:episodeId        分集详情（含场景）
- *  GET    /screenwriter/episodes/:episodeId/frames     分镜列表
- *  GET    /screenwriter/episodes/:episodeId/dialogues  台词列表
+ *  GET    /screenwriter/outlines/:outlineId/episodes 分集列表
+ *  GET    /screenwriter/episodes/:episodeId          分集详情
+ *  GET    /screenwriter/episodes/:episodeId/frames   分镜列表
+ *  GET    /screenwriter/episodes/:episodeId/dialogues 台词列表
+ *
+ *  ========== 修改/重生成（平台文档 3.1 逐段修改 + 场景描述） ==========
+ *  PATCH  /screenwriter/outlines/:outlineId           修改大纲（逐段）
+ *  POST   /screenwriter/episodes/:episodeId/regenerate 重新生成单集
+ *  POST   /screenwriter/scene-description             场景描述生成（含美术风格建议）
  *
  *  ========== 任务查询 ==========
  *  GET    /screenwriter/jobs/:jobId                查询任务状态
@@ -264,6 +269,54 @@ module.exports = function routes(db, cfg, log) {
   router.get('/episodes/:episodeId/dialogues', async (req, res) => {
     const items = await swService.listDialogues(db, req.params.episodeId);
     ok(res, { items, total: items.length });
+  });
+
+  // ========== 修改/重生成（平台文档 3.1：逐段修改/重生成 + 场景描述） ==========
+  // PATCH /ai/screenwriter/outlines/:outlineId — 修改大纲
+  router.patch('/outlines/:outlineId', async (req, res) => {
+    try {
+      const patch = req.body || {};
+      const o = swService.updateOutline(db, req.params.outlineId, patch);
+      if (!o) return fail(res, 'outline not found', 404, 404);
+      ok(res, o);
+    } catch (e) { log.error('PATCH /screenwriter/outlines/:id', e.message); fail(res, e.message); }
+  });
+
+  // POST /ai/screenwriter/episodes/:episodeId/regenerate — 重新生成单集
+  router.post('/episodes/:episodeId/regenerate', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = await swService.regenerateEpisode(db, log, req.params.episodeId, body);
+      ok(res, result);
+    } catch (e) { log.error('POST /screenwriter/episodes/:id/regenerate', e.message); fail(res, e.message); }
+  });
+
+  // POST /ai/screenwriter/scene-description — 场景描述生成（含美术风格建议）
+  router.post('/scene-description', async (req, res) => {
+    try {
+      const body = req.body || {};
+      if (!body.sceneId && !body.location) return fail(res, '缺少 sceneId 或 location');
+      const result = await swService.generateSceneDescription(db, log, body);
+      ok(res, result);
+    } catch (e) { log.error('POST /screenwriter/scene-description', e.message); fail(res, e.message); }
+  });
+
+  // ========== S2-T04: 一键创建项目 ==========
+  // POST /ai/screenwriter/create-project — AI生成结果一键创建完整项目(剧本+角色+场景+分镜)
+  router.post('/create-project', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const outlineId = body.outline_id || body.outlineId;
+      if (!outlineId) return fail(res, '缺少 outline_id');
+      const userId = currentUserId(req);
+      const result = await swService.createProject(db, log, {
+        outlineId,
+        name: body.name || body.title || undefined,
+        userId,
+        user: req.user || null,
+      });
+      ok(res, result);
+    } catch (e) { log.error('POST /screenwriter/create-project', e.message); fail(res, e.message); }
   });
 
   // ========== 多轮对话（S1-T02） ==========

@@ -55,6 +55,34 @@ function parseJsonField(v, fallback) {
   try { return JSON.parse(v); } catch (_) { return fallback != null ? fallback : null; }
 }
 
+// 尝试解析任意文本为 JSON：去除 markdown ```json 包裹，失败返回 fallback(默认 null)
+function tryParse(raw, fallback = null) {
+  if (raw == null) return fallback;
+  if (typeof raw !== 'string') return raw;
+  let s = raw.trim();
+  // 去除 ```json / ``` 代码块
+  if (s.startsWith('```')) {
+    s = s.replace(/^```(json)?\s*\n?/i, '');
+    const lastTicks = s.lastIndexOf('```');
+    if (lastTicks >= 0) s = s.slice(0, lastTicks);
+    s = s.trim();
+  }
+  if (s === '') return fallback;
+  try { return JSON.parse(s); } catch (_) {
+    // 兜底：提取第一个 {…} / […] 尝试再解析一次
+    const open1 = s.indexOf('{'); const open2 = s.indexOf('[');
+    let i = -1; let closer = null;
+    if (open1 < 0 && open2 < 0) return fallback;
+    if (open1 < 0) { i = open2; closer = ']'; }
+    else if (open2 < 0) { i = open1; closer = '}'; }
+    else if (open1 < open2) { i = open1; closer = '}'; }
+    else { i = open2; closer = ']'; }
+    const j = s.lastIndexOf(closer);
+    if (j < 0 || j <= i) return fallback;
+    try { return JSON.parse(s.slice(i, j + 1)); } catch (_2) { return fallback; }
+  }
+}
+
 // ---------- Prompt 构建 ----------
 
 function buildSystemPrompt(structure, genre, style) {
@@ -1146,6 +1174,227 @@ function updateJobRecord(db, jobId, patch) {
   return _runInsert(db, `UPDATE sw_jobs SET ${sets.join(', ')} WHERE job_id = ?`, vals);
 }
 
+// ---------- PATCH /outlines/:id  修改大纲（逐段修改，保留未变更字段） ----------
+function updateOutline(db, outlineId, patch = {}) {
+  const existing = _queryOne(db, 'SELECT * FROM sw_outlines WHERE outline_id = ?', [outlineId]);
+  if (!existing) return null;
+
+  const themes = parseJsonField(existing.themes_json, []);
+  const acts   = parseJsonField(existing.acts_json,   []);
+
+  // 可改字段：title / logline / structure / style / genre / targetAudience
+  // + 主题新增/移除 + 指定幕次修改 + 完整acts覆盖
+  const nextTitle  = typeof patch.title === 'string'          ? patch.title          : existing.title;
+  const nextLog    = typeof patch.logline === 'string'        ? patch.logline        : existing.logline;
+  const nextStruc  = typeof patch.structure === 'string'      ? patch.structure      : existing.structure;
+  const nextStyle  = typeof patch.style === 'string'          ? patch.style          : existing.style;
+  const nextGenre  = typeof patch.genre === 'string'          ? patch.genre          : existing.genre;
+  const nextAud    = typeof patch.targetAudience === 'string' ? patch.targetAudience : existing.target_audience;
+  let nextEpCount  = existing.episode_count;
+  if (typeof patch.episodeCount === 'number') nextEpCount = patch.episodeCount;
+
+  let nextThemes = themes.slice();
+  if (Array.isArray(patch.themeAdd))    nextThemes = nextThemes.concat(patch.themeAdd.filter(t => !nextThemes.includes(t)));
+  if (Array.isArray(patch.themeRemove)) nextThemes = nextThemes.filter(t => !patch.themeRemove.includes(t));
+  if (Array.isArray(patch.themes))      nextThemes = patch.themes;           // 全量覆盖
+
+  let nextActs = acts.map(a => ({ ...a }));
+  if (Array.isArray(patch.acts)) {
+    nextActs = patch.acts;                                              // 全量覆盖
+  } else if (typeof patch.replaceActNumber === 'number' && patch.replaceAct) {
+    const idx = nextActs.findIndex(a => Number(a.act_number) === Number(patch.replaceActNumber));
+    if (idx >= 0) nextActs[idx] = { ...nextActs[idx], ...patch.replaceAct };
+  } else if (Number.isInteger(Number(patch.removeActNumber)) && Number(patch.removeActNumber) > 0) {
+    nextActs = nextActs.filter(a => Number(a.act_number) !== Number(patch.removeActNumber));
+  }
+
+  const now = nowStr();
+  _runInsert(db, `UPDATE sw_outlines SET title=?, logline=?, structure=?, style=?, genre=?, target_audience=?, episode_count=?, themes_json=?, acts_json=?, updated_at=? WHERE outline_id=?`, [
+    nextTitle, nextLog, nextStruc, nextStyle, nextGenre, nextAud,
+    Number(nextEpCount), jsonField(nextThemes), jsonField(nextActs), now, outlineId,
+  ]);
+
+  return {
+    outlineId,
+    title: nextTitle, logline: nextLog, structure: nextStruc, style: nextStyle, genre: nextGenre,
+    targetAudience: nextAud, episodeCount: Number(nextEpCount),
+    themes: nextThemes, acts: nextActs,
+    updatedAt: now,
+  };
+}
+
+// ---------- POST /episodes/:id/regenerate  重新生成单集剧情（不影响其他集） ----------
+async function regenerateEpisode(db, log, episodeId, patch = {}) {
+  log = logWrap(log);
+  if (!episodeId) throw new Error('缺少episodeId');
+
+  const epRow = _queryOne(db, 'SELECT * FROM sw_episodes WHERE episode_id = ?', [episodeId]);
+  if (!epRow) throw new Error('episode not found');
+  const outlineId = epRow.outline_id;
+  const outline = _queryOne(db, 'SELECT * FROM sw_outlines WHERE outline_id = ?', [outlineId]);
+  if (!outline) throw new Error('关联的outline不存在');
+
+  // 构建 system prompt：包含 大纲上下文 + 现有人物档案 + 用户指定的额外要求(promptAppend)
+  const characters = _listCharacters(db, outlineId);
+  const eps = _queryAll(db, 'SELECT * FROM sw_episodes WHERE outline_id = ?', [outlineId]);
+  const allEpisodes = eps.map(r => ({
+    episodeId: r.episode_id, episodeNumber: r.episode_number,
+    title: r.title, summary: r.summary,
+  })).sort((a,b) => a.episodeNumber - b.episodeNumber);
+
+  let systemPrompt = `你是专业漫剧编剧。现在需要重新改写第 ${epRow.episode_number} 集剧本，**只重写这一集**，不要变动其他分集的既有剧情线。\n`;
+  systemPrompt += `\n【整体大纲】\n标题: ${outline.title}\n梗概: ${outline.logline}\n结构: ${outline.structure} 风格: ${outline.style}\n`;
+  if (characters.length) {
+    systemPrompt += `\n【已有角色】\n`;
+    for (const c of characters) systemPrompt += `  - ${c.name} (${c.role}): ${c.personality || ''}\n`;
+  }
+  systemPrompt += `\n【所有分集速览（必须尊重其他集既有剧情走向！）】\n`;
+  for (const e of allEpisodes) {
+    systemPrompt += `  第${e.episodeNumber}集 ${e.title}: ${e.summary}\n`;
+  }
+  systemPrompt += `\n【当前集原始信息】\n标题: ${epRow.title}\n摘要: ${epRow.summary}\n悬念: ${epRow.cliffhanger || '(无)'}\n`;
+  if (String(patch.promptAppend || '').trim()) systemPrompt += `\n【用户本次改写要求】\n${patch.promptAppend}\n`;
+  systemPrompt += `\n要求输出纯 JSON: {"episodeNumber":${epRow.episode_number},"title":"...","summary":"...","cliffhanger":"...","durationEstimate":"...","scenes":[{"sceneNumber":1,"location":"...","description":"...","timeOfDay":"day","atmosphere":"...","characters":["角色A"]}]}`;
+
+  const userPrompt = `请重写第${epRow.episode_number}集：`;
+
+  const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+    scene_key: 'screenwriter_episode_regen',
+    model: patch.model || undefined, temperature: 0.85,
+    min_max_tokens: 2500,
+    json_mode: true,
+  });
+  const parsed = tryParse(raw);
+  const single = parsed && Array.isArray(parsed.episodes) ? parsed.episodes[0] : parsed;
+
+  const title    = String(single?.title    || epRow.title    || '').slice(0, 255);
+  const summary  = String(single?.summary  || epRow.summary  || '').slice(0, 1000);
+  const cliff    = String(single?.cliffhanger || single?.cliff || epRow.cliffhanger || '').slice(0, 500);
+  const durEst   = String(single?.durationEstimate || single?.duration_estimate || epRow.duration_estimate || '').slice(0, 32);
+  const scenes   = Array.isArray(single?.scenes) ? single.scenes : [];
+
+  const now = nowStr();
+
+  // 更新分集本身
+  _runInsert(db, `UPDATE sw_episodes SET title=?, summary=?, cliffhanger=?, duration_estimate=?, updated_at=? WHERE episode_id=?`, [
+    title, summary, cliff, durEst, now, episodeId
+  ]);
+
+  // 先删除该集原有 scenes（只删这一集的）
+  _runInsert(db, `DELETE FROM sw_scenes WHERE episode_id = ?`, [episodeId]);
+
+  // 插入新 scenes
+  for (let i = 0; i < scenes.length; i++) {
+    const s = scenes[i] || {};
+    const sceneId = uid('sc');
+    _runInsert(db, `INSERT INTO sw_scenes (scene_id, episode_id, outline_id, scene_number, location, description, time_of_day, atmosphere, characters_json, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      sceneId, episodeId, outlineId,
+      Number(s.sceneNumber ?? s.scene_number ?? i + 1),
+      s.location || s.Location || null,
+      s.description || s.Description || null,
+      s.timeOfDay || s.time_of_day || 'day',
+      s.atmosphere || s.Atmosphere || '',
+      jsonField(Array.isArray(s.characters) ? s.characters : []),
+      Number(s.sort_order ?? i + 1),
+      now, now,
+    ]);
+  }
+
+  return {
+    episodeId,
+    outlineId,
+    episodeNumber: Number(epRow.episode_number),
+    title, summary, cliffhanger: cliff, durationEstimate: durEst,
+    scenesCount: scenes.length,
+    regenerated: true,
+  };
+}
+
+// ---------- POST /scene-description  场景描述生成（含美术风格建议） ----------
+async function generateSceneDescription(db, log, params) {
+  log = logWrap(log);
+  if (!params || (!params.sceneId && !params.location)) {
+    throw new Error('缺少 sceneId 或 location');
+  }
+
+  // 如果给了sceneId，先补全其他信息
+  let { location, timeOfDay, characters, style, atmosphere, outlineId, episodeId, sceneId } = params;
+  if (sceneId) {
+    const sc = _queryOne(db, 'SELECT * FROM sw_scenes WHERE scene_id = ?', [sceneId]);
+    if (sc) {
+      location    = location    || sc.location;
+      timeOfDay   = timeOfDay   || sc.time_of_day || 'day';
+      atmosphere  = atmosphere  || sc.atmosphere  || '';
+      characters  = characters  || parseJsonField(sc.characters_json, []);
+      outlineId   = outlineId   || sc.outline_id;
+      episodeId   = episodeId   || sc.episode_id;
+    }
+  }
+  if (!characters) characters = [];
+
+  const styleToneMap = {
+    sweet:   '甜宠唯美，柔光，粉色/暖色，空气通透，人物柔光',
+    abuse:   '虐恋阴郁，冷色调，雾/雨，高对比',
+    hot:     '爽文高光，饱满色彩，动态构图，速度线',
+    suspense:'悬疑压迫，低光，深色，阴影大面积，冷蓝',
+    comedy:  '轻松欢快，色彩明快，明亮，人物夸张',
+  };
+  const tone = styleToneMap[String(style || '').toLowerCase()] ||
+               (['ancient_fantasy','historical'].includes(String(style)) ? '古风工笔，敦煌色系，建筑细节，长袍细节' : '现代都市，写实，细节丰富，电影感');
+
+  const userPrompt = `场景: ${location} / 时间: ${timeOfDay} / 人物: ${characters.join('、') || '(无)'} / 氛围: ${atmosphere || '(未指定)'}\n请输出该场景的美术描述和生图提示词。`;
+  const systemPrompt = `你是专业的漫剧美术指导。请根据场景信息，输出该场景的详细美术描述 + 生图 prompt。\n
+全局风格基调：${tone}。
+输出纯 JSON：
+{
+  "visualDescription": "中文详细视觉描述，包括构图/色调/光影/道具/建筑/植被等",
+  "artStyleSuggestion": "美术风格建议，如'新海诚风格+中式水墨融合'",
+  "colorPalette": ["颜色1HEX","颜色2HEX","颜色3HEX"],
+  "prompt": "英文 Stable Diffusion Prompt（逗号分隔，符合最佳实践，200词以内）",
+  "negativePrompt": "英文 Negative Prompt，100词以内",
+  "compositionAdvice": "构图建议（三分法/引导线/框架构图…）",
+  "lightingAdvice": "光影建议（黄昏逆光/顶光/体积光…）",
+  "props": ["道具1","道具2"]
+}`;
+
+  const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+    scene_key: 'screenwriter_scene_desc',
+    temperature: 0.8, min_max_tokens: 2000, json_mode: true,
+  });
+  const parsed = tryParse(raw);
+  if (!parsed || typeof parsed !== 'object') {
+    // 兜底
+    return {
+      sceneId: sceneId || null,
+      location, timeOfDay,
+      visualDescription: `${location}，${timeOfDay}，人物 ${characters.join('、') || '无'}，${atmosphere || '按默认风格渲染'}`,
+      artStyleSuggestion: '漫剧写实风格',
+      colorPalette: ['#FFFFFF','#000000','#808080'],
+      prompt: `${location}, ${timeOfDay}, cinematic lighting, highly detailed, 8k`,
+      negativePrompt: `blurry, low quality, deformed, ugly, text, watermark`,
+      compositionAdvice: '三分法构图',
+      lightingAdvice: '自然光主光 + 辅光补阴影',
+      props: [],
+    };
+  }
+  return {
+    sceneId: sceneId || null,
+    outlineId: outlineId || null,
+    episodeId: episodeId || null,
+    location,
+    timeOfDay,
+    characters,
+    visualDescription: parsed.visualDescription,
+    artStyleSuggestion: parsed.artStyleSuggestion,
+    colorPalette: parsed.colorPalette || [],
+    prompt: parsed.prompt,
+    negativePrompt: parsed.negativePrompt || '',
+    compositionAdvice: parsed.compositionAdvice || '',
+    lightingAdvice: parsed.lightingAdvice || '',
+    props: Array.isArray(parsed.props) ? parsed.props : [],
+  };
+}
+
 function getJobRecord(db, jobId) {
   const row = _queryOne(db, 'SELECT * FROM sw_jobs WHERE job_id = ?', [jobId]);
   if (!row) return null;
@@ -1186,6 +1435,165 @@ function listJobs(db, { userId, jobType, status, limit = 50, offset = 0 }) {
     jobId: r.job_id, jobType: r.job_type, status: r.status, progress: r.progress,
     outlineId: r.outline_id, episodeId: r.episode_id, createdAt: r.created_at,
   }));
+}
+
+// ============================================================
+// S2-T04: 一键创建项目
+// 将 AI 编剧生成的大纲/角色/分集/场景/分镜 转换为正式项目数据
+// ============================================================
+
+/**
+ * 一键创建完整项目
+ * 将 sw_outlines / sw_characters / sw_episodes / sw_scenes / sw_storyboards
+ * 映射到 dramas / characters / episodes / scenes / storyboards 表
+ *
+ * @param {object} db - 数据库连接
+ * @param {object} log - 日志对象
+ * @param {object} params - { outlineId, name, userId, user }
+ * @returns {object} { projectId, dramaId, characterCount, episodeCount, sceneCount, storyboardCount }
+ */
+async function createProject(db, log, params = {}) {
+  log = logWrap(log);
+  const { outlineId, name, user } = params;
+  if (!outlineId) throw new Error('缺少 outlineId');
+
+  // 1. 加载大纲
+  const outline = await _getOutline(db, outlineId);
+  if (!outline) throw new Error(`大纲不存在: ${outlineId}`);
+
+  // 2. 加载编剧生成的数据
+  const swChars = _queryAll(db, 'SELECT * FROM sw_characters WHERE outline_id = ? ORDER BY sort_order, id', [outlineId]);
+  const swEps = _queryAll(db, 'SELECT * FROM sw_episodes WHERE outline_id = ? ORDER BY episode_number, id', [outlineId]);
+  const swEpIds = swEps.map((e) => e.episode_id);
+  const swScenes = swEpIds.length
+    ? _queryAll(db, `SELECT * FROM sw_scenes WHERE episode_id IN (${swEpIds.map(() => '?').join(',')}) ORDER BY sort_order, id`, swEpIds)
+    : [];
+  const swFrames = swEpIds.length
+    ? _queryAll(db, `SELECT * FROM sw_storyboards WHERE episode_id IN (${swEpIds.map(() => '?').join(',')}) ORDER BY sort_order, frame_number, id`, swEpIds)
+    : [];
+
+  // 3. 创建 drama 记录
+  const now = nowStr();
+  const userId = user?.id || params.userId || outline.userId || null;
+  const enterpriseId = user?.enterprise_id || null;
+  const teamId = user?.team_id || null;
+  const dramaTitle = (name && String(name).trim()) || outline.title || '未命名剧本';
+
+  // 构建元数据（含存储目录标签 + 关联大纲ID，便于溯源）
+  let storageLayout;
+  try { storageLayout = require('./storageLayout'); } catch (_) { storageLayout = null; }
+  const folderLabel = storageLayout
+    ? storageLayout.sanitizeFolderLabel(dramaTitle)
+    : dramaTitle.replace(/[^\w\u4e00-\u9fa5]/g, '_').slice(0, 64);
+  const metadata = {
+    storage_folder_label: folderLabel,
+    source_outline_id: outlineId,
+    source: 'ai_screenwriter',
+    structure: outline.structure,
+    themes: outline.themes,
+  };
+
+  const dramaIns = _runInsert(db,
+    `INSERT INTO dramas (title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, total_episodes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+    [dramaTitle, outline.logline || outline.idea || null, outline.genre || null, outline.style || 'realistic',
+     JSON.stringify(metadata), userId, enterpriseId, teamId, swEps.length || 1, now, now]
+  );
+  const dramaId = dramaIns?.lastInsertRowid || dramaIns?.insertId;
+  if (!dramaId) throw new Error('创建项目失败：无法获取 dramaId');
+
+  // 4. 映射角色 sw_characters -> characters
+  const charIdMap = {}; // sw character_id -> characters.id
+  let characterCount = 0;
+  for (const c of swChars) {
+    const ins = _runInsert(db,
+      `INSERT INTO characters (drama_id, name, role, description, personality, appearance, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [dramaId, c.name || '未命名', c.role || 'supporting', c.background || null, c.personality || null,
+       c.appearance || null, c.sort_order || 0, now, now]
+    );
+    const newId = ins?.lastInsertRowid || ins?.insertId;
+    if (newId && c.character_id) charIdMap[c.character_id] = newId;
+    characterCount++;
+  }
+
+  // 5. 映射分集 sw_episodes -> episodes，并记录 id 映射
+  const epIdMap = {}; // sw episode_id -> episodes.id
+  let episodeCount = 0;
+  for (const ep of swEps) {
+    const ins = _runInsert(db,
+      `INSERT INTO episodes (drama_id, episode_number, title, script_content, description, duration, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      [dramaId, ep.episode_number || (episodeCount + 1), ep.title || `第${ep.episode_number || episodeCount + 1}集`,
+       ep.summary || null, ep.cliffhanger || null, 0, now, now]
+    );
+    const newId = ins?.lastInsertRowid || ins?.insertId;
+    if (newId && ep.episode_id) epIdMap[ep.episode_id] = newId;
+    episodeCount++;
+  }
+
+  // 6. 映射场景 sw_scenes -> scenes
+  const sceneIdMap = {}; // sw scene_id -> scenes.id
+  let sceneCount = 0;
+  for (const sc of swScenes) {
+    const mappedEpId = sc.episode_id ? (epIdMap[sc.episode_id] || null) : null;
+    const ins = _runInsert(db,
+      `INSERT INTO scenes (drama_id, episode_id, location, time, prompt, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      [dramaId, mappedEpId, sc.location || null, sc.time_of_day || null, sc.description || null, now, now]
+    );
+    const newId = ins?.lastInsertRowid || ins?.insertId;
+    if (newId && sc.scene_id) sceneIdMap[sc.scene_id] = newId;
+    sceneCount++;
+  }
+
+  // 7. 映射分镜 sw_storyboards -> storyboards
+  let storyboardCount = 0;
+  for (const fr of swFrames) {
+    const mappedEpId = fr.episode_id ? (epIdMap[fr.episode_id] || null) : null;
+    const mappedSceneId = fr.scene_id ? (sceneIdMap[fr.scene_id] || null) : null;
+    // 解析角色 JSON，将 sw character_id 转为 characters.id
+    let charNames = [];
+    try {
+      const raw = typeof fr.characters_json === 'string' ? JSON.parse(fr.characters_json) : fr.characters_json;
+      if (Array.isArray(raw)) {
+        charNames = raw.map((cid) => {
+          if (charIdMap[cid]) return charIdMap[cid];
+          // 如果不是 ID 而是名字，直接保留
+          return cid;
+        });
+      }
+    } catch (_) {}
+    _runInsert(db,
+      `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, description, dialogue, image_prompt, characters, shot_type, duration, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      [mappedEpId, mappedSceneId, fr.frame_number || (storyboardCount + 1),
+       fr.visual_description || null, null, fr.prompt || null,
+       charNames.length ? JSON.stringify(charNames) : null,
+       fr.shot_type || null, fr.duration || null, now, now]
+    );
+    storyboardCount++;
+  }
+
+  // 8. 回写 sw_outlines.drama_id 建立关联
+  try {
+    _runInsert(db, 'UPDATE sw_outlines SET drama_id = ?, updated_at = ? WHERE outline_id = ?', [dramaId, now, outlineId]);
+  } catch (_) {}
+
+  log.info('[screenwriter] 一键创建项目完成', {
+    outlineId, dramaId, characterCount, episodeCount, sceneCount, storyboardCount,
+  });
+
+  return {
+    projectId: dramaId,
+    dramaId,
+    title: dramaTitle,
+    characterCount,
+    episodeCount,
+    sceneCount,
+    storyboardCount,
+    outlineId,
+  };
 }
 
 // ---------- exports ----------
@@ -1230,6 +1638,12 @@ module.exports = {
   chatWithScreenwriter,
   getChatHistory,
   listChatSessions,
+  // 增量修改 / 重生成（平台文档 3.1：逐段修改和重新生成）
+  updateOutline,
+  regenerateEpisode,
+  generateSceneDescription,
+  // S2-T04: 一键创建项目
+  createProject,
   // jobs
   createJobRecord,
   updateJobRecord,

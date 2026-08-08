@@ -32,9 +32,12 @@ const assetRoutes = require('./assets');
 const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swaggerSpec');
 const authRoutes = require('./auth');
 const adminRoutes = require('./admin');
 const screenwriterRoutes = require('./screenwriter');
+const consistencyRoutes = require('./consistency');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -377,8 +380,20 @@ function setupRouter(cfg, db, log) {
   r.put('/scene-model-map/:key', sceneModelMap.update);
   r.delete('/scene-model-map/:key', sceneModelMap.delete);
 
+  // ---------- Swagger API 文档（Sprint 1：API接口文档更新要求） ----------
+  // 文档地址（生产/开发）：http://localhost:5679/api/v1/docs
+  r.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'LocalMiniDrama API Docs (Sprint 1)',
+    explorer: false,
+  }));
+  // 纯 JSON spec（供代码生成）: /api/v1/docs/openapi.json
+  r.get('/docs/openapi.json', (req, res) => { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.json(swaggerSpec); });
+
   // ---------- AI编剧助手模块（Sprint 1） ----------
   r.use('/ai/screenwriter', screenwriter);
+
+  // ---------- 角色一致性模块（Sprint 2: S2-T05~T08） ----------
+  r.use('/ai/consistency', consistencyRoutes(db, log));
 
   // 启动时将已有的覆盖加载到 promptI18n 内存缓存
   try {

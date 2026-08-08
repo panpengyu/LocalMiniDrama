@@ -857,6 +857,19 @@ async function processImageGeneration(db, log, imageGenId) {
               refs.push(charRef);
               refLabels.push(`Image ${refs.length}: character appearance reference for "${c.name || 'character'}"${isPanel ? ' (front full-body view from history panel)' : ' (current character image)'}`);
             }
+            // S2-T06: 从 character_embeddings 表注入项目角色的多角度参考图
+            try {
+              const projEmbRows = db.prepare(
+                'SELECT view_angle, image_url FROM character_embeddings WHERE character_id = ? AND character_type = \'project\' AND image_url IS NOT NULL ORDER BY view_angle'
+              ).all(Number(cid));
+              for (const er of projEmbRows) {
+                if (!imageClient.canAddStoryboardCharacterRef(refLabels, refLimits)) break;
+                if (!er.image_url || imageClient.refListHasCanonical(refs, er.image_url)) continue;
+                const angleLabel = { front: '正面', side: '侧面', back: '背面', three_quarter: '四分之三视图' }[er.view_angle] || er.view_angle;
+                refs.push(er.image_url);
+                refLabels.push(`Image ${refs.length}: character ${angleLabel} reference for "${c.name || 'character'}" (from embedding system)`);
+              }
+            } catch (_) {}
           }
         }
         // ── 分镜关联道具（storyboard_props）→ 参考图（前端「物品」与 DB 一致，此前未参与 Step2）──
@@ -927,6 +940,19 @@ async function processImageGeneration(db, log, imageGenId) {
               refLabels.push(`Image ${refs.length}: character appearance reference for "${lib.name || 'character'}"${isPanel ? ' (front full-body view from history panel)' : isFourView ? ' (four-view reference sheet)' : ' (character image)'}`);
               coveredNames.add(lib.name);
             }
+            // S2-T06: 从 character_embeddings 表注入多角度参考图（正面/侧面/四分之三视图）
+            try {
+              const embRows = db.prepare(
+                'SELECT view_angle, image_url FROM character_embeddings WHERE character_id = ? AND character_type = \'library\' AND image_url IS NOT NULL ORDER BY view_angle'
+              ).all(lib.id);
+              for (const er of embRows) {
+                if (!imageClient.canAddStoryboardCharacterRef(refLabels, refLimits)) break;
+                if (!er.image_url || imageClient.refListHasCanonical(refs, er.image_url)) continue;
+                const angleLabel = { front: '正面', side: '侧面', back: '背面', three_quarter: '四分之三视图' }[er.view_angle] || er.view_angle;
+                refs.push(er.image_url);
+                refLabels.push(`Image ${refs.length}: character ${angleLabel} reference for "${lib.name || 'character'}" (from embedding system)`);
+              }
+            } catch (_) {}
           }
         } catch (_) {}
 

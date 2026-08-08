@@ -12,7 +12,10 @@
     "alert:scan:verbose": "ANOMALY_LOG_LEVEL=debug node scripts/alert-scan.js",
     "alert:cron:install": "bash scripts/crontab-alert-scan.sh install",
     "alert:cron:uninstall": "bash scripts/crontab-alert-scan.sh uninstall",
-    "alert:cron:status": "bash scripts/crontab-alert-scan.sh status"
+    "alert:cron:status": "bash scripts/crontab-alert-scan.sh status",
+    "test": "node --test test/*.test.js",
+    "test:coverage": "c8 --reporter=text --reporter=text-summary --exclude=test --exclude=migrations --exclude='scripts/*' --exclude='src/routes/*.test.js' node --test test/*.test.js",
+    "test:coverage:html": "c8 --reporter=html --reporter=text-summary --exclude=test --exclude=migrations node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -23,6 +26,7 @@
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.6.0",
     "bull": "^4.16.5",
+    "c8": "^12.0.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "js-yaml": "^4.1.0",
@@ -31,6 +35,7 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.22.6",
     "sharp": "^0.34.5",
+    "swagger-ui-express": "^5.0.1",
     "sync-mysql": "^3.0.1",
     "sync-sql": "^1.0.2",
     "uuid": "^10.0.0"

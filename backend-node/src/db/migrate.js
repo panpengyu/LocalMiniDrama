@@ -764,6 +764,47 @@ function ensureAllColumns(database) {
     { name: 'message_order', type: 'INTEGER DEFAULT 0' },
     { name: 'created_at', type: 'DATETIME' },
   ]);
+
+  // ====== Sprint 2: 角色一致性 — character_embeddings + consistency_check_logs ======
+  ensure('character_libraries', [
+    { name: 'face_embedding', type: 'TEXT' },
+    { name: 'embedding_model', type: 'VARCHAR(100)' },
+    { name: 'embedding_generated_at', type: 'DATETIME' },
+    { name: 'consistency_threshold', type: 'FLOAT DEFAULT 0.85' },
+  ]);
+  ensure('characters', [
+    { name: 'face_embedding', type: 'TEXT' },
+    { name: 'embedding_model', type: 'VARCHAR(100)' },
+    { name: 'embedding_generated_at', type: 'DATETIME' },
+    { name: 'consistency_threshold', type: 'FLOAT DEFAULT 0.85' },
+  ]);
+  ensure('character_embeddings', [
+    { name: 'character_id', type: 'INTEGER NOT NULL' },
+    { name: 'character_type', type: "VARCHAR(20) DEFAULT 'project'" },
+    { name: 'drama_id', type: 'INTEGER' },
+    { name: 'view_angle', type: "VARCHAR(50) DEFAULT 'front'" },
+    { name: 'image_url', type: 'VARCHAR(500)' },
+    { name: 'embedding', type: 'TEXT NOT NULL' },
+    { name: 'embedding_model', type: 'VARCHAR(100)' },
+    { name: 'embedding_dim', type: 'INTEGER' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+  ensure('consistency_check_logs', [
+    { name: 'check_id', type: 'VARCHAR(64) NOT NULL' },
+    { name: 'drama_id', type: 'INTEGER' },
+    { name: 'storyboard_id', type: 'INTEGER' },
+    { name: 'character_id', type: 'INTEGER' },
+    { name: 'generated_image_url', type: 'VARCHAR(500)' },
+    { name: 'reference_image_url', type: 'VARCHAR(500)' },
+    { name: 'similarity_score', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'threshold', type: 'FLOAT DEFAULT 0.85' },
+    { name: 'passed', type: 'INTEGER DEFAULT 0' },
+    { name: 'check_method', type: "VARCHAR(50) DEFAULT 'cosine_embedding'" },
+    { name: 'detail_json', type: 'TEXT' },
+    { name: 'retry_count', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
 }
 
 /**

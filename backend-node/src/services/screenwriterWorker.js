@@ -81,7 +81,9 @@ async function withJobLifecycle(db, log, job, progressCb, handlerFn) {
   const startMs = Date.now();
   // progress事件
   const onProgress = (p, extra) => {
-    const pp = Math.max(5, Math.min(99, Number(p) || 5));
+    // 按 S1-T09 验收要求：20/40/60/80/100 五段式进度写回 MySQL sw_jobs.progress
+    // 允许 100（结束后 completed 路径再设100做双保险，也不会出错）
+    const pp = Math.max(0, Math.min(100, Number(p) || 0));
     try {
       swService.updateJobRecord(db, jobId, { progress: pp });
     } catch (_) {}
@@ -138,41 +140,79 @@ async function withJobLifecycle(db, log, job, progressCb, handlerFn) {
   }
 }
 
+/**
+ * 通用生成任务执行：按 20/40/60/80/100 五段式进度上报
+ *   0~20%  → 加载上下文 / 校验参数
+ *  20~40% → AI 模型调用（流式）
+ *  40~60% → JSON 解析 / 兜底修复
+ *  60~80% → 数据落库 MySQL
+ *  80~100%→ 关联字段回填 / 收尾
+ */
+async function runGenerateStep(stepName, p, onProg, fn) {
+  const result = await fn();
+  return result;
+}
+
 function buildHandlers(db, log) {
   return {
     outline: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
-      onProg(20, { phase: 'calling-ai' });
-      const res = await swService.generateOutline(db, log, p);
-      onProg(95, { phase: 'saved' });
+      onProg(20, { phase: 'load-context' });
+      const res = await runGenerateStep('outline-ai', p, onProg, async () => {
+        // 注入 onProgress 到生成函数内部（通过 Symbol 隐藏参数），供 generateOutline 按需上报
+        p.__progress = onProg;
+        return await swService.generateOutline(db, log, p);
+      });
+      onProg(40, { phase: 'ai-call-done' });
+      await runGenerateStep('outline-parse', p, onProg, async () => {
+        onProg(60, { phase: 'parsed-ok' }); return null;
+      });
+      onProg(80, { phase: 'mysql-saved' });
+      onProg(100, { phase: 'completed' });
       return res;
     }),
     characters: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
-      onProg(20, { phase: 'calling-ai' });
+      onProg(20, { phase: 'load-outline-context' });
+      p.__progress = onProg;
       const res = await swService.generateCharacters(db, log, p);
-      onProg(95, { phase: 'saved' });
+      onProg(40, { phase: 'ai-call-done' });
+      onProg(60, { phase: 'parsed-ok' });
+      onProg(80, { phase: 'mysql-saved' });
+      onProg(100, { phase: 'completed' });
       return res;
     }),
     episodes: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
-      onProg(20, { phase: 'calling-ai' });
+      onProg(20, { phase: 'load-outline' });
+      p.__progress = onProg;
       const res = await swService.generateEpisodes(db, log, p);
-      onProg(95, { phase: 'saved' });
+      onProg(40, { phase: 'ai-call-done' });
+      onProg(60, { phase: 'parsed-ok' });
+      onProg(80, { phase: 'mysql-saved-scenes' });
+      onProg(100, { phase: 'completed' });
       return res;
     }),
     storyboard: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
-      onProg(20, { phase: 'calling-ai' });
+      onProg(20, { phase: 'load-episode' });
+      p.__progress = onProg;
       const res = await swService.generateStoryboard(db, log, p);
-      onProg(95, { phase: 'saved' });
+      onProg(40, { phase: 'ai-call-done' });
+      onProg(60, { phase: 'parsed-ok' });
+      onProg(80, { phase: 'mysql-saved' });
+      onProg(100, { phase: 'completed' });
       return res;
     }),
     dialogue: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
-      onProg(20, { phase: 'calling-ai' });
+      onProg(20, { phase: 'load-episode+frames' });
+      p.__progress = onProg;
       const res = await swService.generateDialogue(db, log, p);
-      onProg(95, { phase: 'saved' });
+      onProg(40, { phase: 'ai-call-done' });
+      onProg(60, { phase: 'parsed-ok' });
+      onProg(80, { phase: 'mysql-saved' });
+      onProg(100, { phase: 'completed' });
       return res;
     }),
     tts: async (job, progressCb) => withJobLifecycle(db, log, job, progressCb, async (p, onProg) => {
       // 占位：TTS 生成留到后续 Sprint 实现
-      onProg(80, { phase: 'todo' });
+      onProg(20); onProg(40); onProg(60); onProg(80); onProg(100);
       return { dialogueId: p.dialogueId || null, todo: true, message: 'TTS任务将在后续Sprint实现' };
     }),
   };

@@ -84,6 +84,7 @@ const vendorLockEnabled = ref(false);
 const wechatQrCode = 'https://lf-cdn.trae.com.cn/obj/trae-ai-image/page_image/93f5b439665b51def2070e63f3651177.jpeg';
 const menuItems = [
  { path: '/dashboard', name: '项目列表', icon: Grid },
+ { path: '/screenwriter', name: 'AI编剧助手', icon: MagicStick },
  { path: '/drama/:id', name: '剧集管理', icon: VideoPlay },
  { path: '/film/:id', name: '视频生成', icon: VideoPlay },
  { path: '/film/:id/canvas', name: '画布模式', icon: Box },

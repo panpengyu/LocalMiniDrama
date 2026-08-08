@@ -65,6 +65,12 @@ const router = createRouter({
           meta: { title: '自由创作' }
         },
         {
+          path: 'screenwriter',
+          name: 'screenwriter-studio',
+          component: () => import('@/views/ScreenwriterStudio.vue'),
+          meta: { title: 'AI 编剧助手' }
+        },
+        {
           path: 'media-library',
           name: 'media-library',
           component: () => import('@/views/MediaLibrary.vue'),
