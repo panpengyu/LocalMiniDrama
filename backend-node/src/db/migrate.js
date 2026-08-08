@@ -42,6 +42,8 @@ function runOne(database, sql, file, index) {
       console.log('Skip (truncated wrong value):', file + (index >= 0 ? ' #' + (index + 1) : ''));
     } else if (err.code === 'ER_PARSE_ERROR') {
       console.log('Skip (parse error):', file + (index >= 0 ? ' #' + (index + 1) : ''));
+    } else if (err.code === 'ER_TABLE_EXISTS_ERROR' || err.code === 'ER_CANT_RENAME_TABLE') {
+      console.log('Skip (table exists/rename conflict):', file + (index >= 0 ? ' #' + (index + 1) : ''));
     } else {
       throw err;
     }
@@ -739,6 +741,27 @@ function ensureAllColumns(database) {
     { name: 'prompt_bias', type: 'TEXT' },
     { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
     { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  // S1-T02: 多轮对话表
+  ensure('sw_chat_sessions', [
+    { name: 'session_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'episode_id', type: 'VARCHAR(64)' },
+    { name: 'title', type: 'VARCHAR(255)' },
+    { name: 'context_type', type: 'VARCHAR(32) DEFAULT \'general\'' },
+    { name: 'messages_count', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_chat_messages', [
+    { name: 'session_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'role', type: 'VARCHAR(16) NOT NULL DEFAULT \'user\'' },
+    { name: 'content', type: 'TEXT' },
+    { name: 'message_order', type: 'INTEGER DEFAULT 0' },
     { name: 'created_at', type: 'DATETIME' },
   ]);
 }

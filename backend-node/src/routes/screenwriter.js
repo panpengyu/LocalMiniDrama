@@ -38,6 +38,11 @@
  *  GET    /screenwriter/jobs/:jobId                查询任务状态
  *  GET    /screenwriter/jobs                       任务列表
  *  DELETE /screenwriter/jobs/:jobId                取消任务
+ *
+ *  ========== 多轮对话（S1-T02） ==========
+ *  POST   /screenwriter/chat                       发送消息（多轮对话式编剧）
+ *  GET    /screenwriter/chat                       列出会话
+ *  GET    /screenwriter/chat/:sessionId            获取对话历史
  */
 
 const express = require('express');
@@ -258,6 +263,45 @@ module.exports = function routes(db, cfg, log) {
   });
   router.get('/episodes/:episodeId/dialogues', async (req, res) => {
     const items = await swService.listDialogues(db, req.params.episodeId);
+    ok(res, { items, total: items.length });
+  });
+
+  // ========== 多轮对话（S1-T02） ==========
+  // POST /ai/screenwriter/chat — 发送消息（支持多轮，自动维护会话上下文）
+  router.post('/chat', async (req, res) => {
+    try {
+      const b = req.body || {};
+      if (!b.message) return fail(res, '缺少message');
+      const userId = currentUserId(req);
+      const result = await swService.chatWithScreenwriter(db, log, {
+        sessionId: b.sessionId || undefined,
+        message: b.message,
+        userId,
+        outlineId: b.outlineId || undefined,
+        episodeId: b.episodeId || undefined,
+        contextType: b.contextType || 'general',
+        title: b.title,
+        model: b.model,
+      });
+      return ok(res, result);
+    } catch (e) { log.error('POST /screenwriter/chat', e.message); fail(res, e.message); }
+  });
+
+  // GET /ai/screenwriter/chat/:sessionId — 获取对话历史
+  router.get('/chat/:sessionId', async (req, res) => {
+    const items = swService.getChatHistory(db, req.params.sessionId, req.query.limit || 50);
+    ok(res, { items, total: items.length });
+  });
+
+  // GET /ai/screenwriter/chat — 列出会话
+  router.get('/chat', async (req, res) => {
+    const userId = currentUserId(req);
+    const items = swService.listChatSessions(db, {
+      userId: userId || undefined,
+      outlineId: req.query.outlineId || undefined,
+      limit: req.query.limit || 50,
+      offset: req.query.offset || 0,
+    });
     ok(res, { items, total: items.length });
   });
 

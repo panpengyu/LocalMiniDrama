@@ -899,8 +899,8 @@ async function _listDialogues(db, episodeId) {
 // ---------- 字典/模板查询 ----------
 function _listTemplates(db, category) {
   const sql = category
-    ? 'SELECT * FROM sw_templates WHERE category = ? AND is_active = 1 ORDER BY sort_order'
-    : 'SELECT * FROM sw_templates WHERE is_active = 1 ORDER BY category, sort_order';
+    ? 'SELECT * FROM drama_templates WHERE category = ? AND is_active = 1 ORDER BY sort_order'
+    : 'SELECT * FROM drama_templates WHERE is_active = 1 ORDER BY category, sort_order';
   const params = category ? [category] : [];
   const rows = _queryAll(db, sql, params);
   return rows.map((r) => ({
@@ -928,6 +928,173 @@ function _listDict(db, table, keyField, zhField) {
     }
     return o;
   });
+}
+
+// ---------- S1-T02 多轮对话式编剧 ----------
+
+/**
+ * 构建多轮对话上下文：把已有的大纲/角色/分集信息注入 system prompt
+ */
+function _buildChatContext(db, params) {
+  const parts = ['你是专业漫剧编剧AI助手。用户正在与你进行多轮对话式创作，请根据上下文历史给出专业建议或修改方案。回复使用自然中文，可以是建议、修改后的文本或提问澄清。'];
+
+  if (params.outlineId) {
+    const outline = _getOutline(db, params.outlineId);
+    if (outline) {
+      parts.push(`\n【当前大纲上下文】\n标题: ${outline.title}\n梗概: ${outline.logline}\n题材: ${outline.genre || '未指定'}\n结构: ${outline.structure || 'three_act'}\n风格: ${outline.style || 'hot'}`);
+      if (outline.acts && outline.acts.length) {
+        parts.push('幕结构:\n' + outline.acts.map(a => `  第${a.actNumber}幕 ${a.title}: ${a.summary}`).join('\n'));
+      }
+    }
+  }
+
+  if (params.episodeId) {
+    const ep = _getEpisode(db, params.episodeId);
+    if (ep) {
+      parts.push(`\n【当前分集上下文】\n第${ep.episodeNumber}集 ${ep.title}\n摘要: ${ep.summary}`);
+      if (ep.cliffhanger) parts.push(`悬念: ${ep.cliffhanger}`);
+    }
+  }
+
+  if (params.outlineId) {
+    const chars = _listCharacters(db, params.outlineId);
+    if (chars && chars.length) {
+      parts.push('\n【已有角色】\n' + chars.map(c => `  ${c.name}(${c.role}): ${c.personality || ''}`).join('\n'));
+    }
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * 多轮对话：用户发送消息，AI 结合上下文历史回复
+ * @param {object} db - 数据库连接
+ * @param {object} log - 日志
+ * @param {object} params - { sessionId, message, userId, outlineId, episodeId, contextType }
+ * @returns {object} { sessionId, reply, messageOrder }
+ */
+async function chatWithScreenwriter(db, log, params) {
+  log = logWrap(log);
+  if (!params || !params.message || !String(params.message).trim()) {
+    throw new Error('消息内容(message)不能为空');
+  }
+
+  const sessionId = params.sessionId || uid('swchat');
+  const now = nowStr();
+
+  // 1. 确保 session 存在
+  const existing = _queryOne(db, 'SELECT * FROM sw_chat_sessions WHERE session_id = ?', [sessionId]);
+  if (!existing) {
+    _runInsert(db, `INSERT INTO sw_chat_sessions
+      (session_id, user_id, outline_id, episode_id, title, context_type, messages_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      sessionId, params.userId || null, params.outlineId || null, params.episodeId || null,
+      params.title || '编剧对话 ' + now, params.contextType || 'general', 0, now, now,
+    ]);
+  } else {
+    // 如果传了新的 outlineId/episodeId，更新 session 关联
+    if (params.outlineId && params.outlineId !== existing.outline_id) {
+      _runInsert(db, 'UPDATE sw_chat_sessions SET outline_id = ?, updated_at = ? WHERE session_id = ?',
+        [params.outlineId, now, sessionId]);
+    }
+    if (params.episodeId && params.episodeId !== existing.episode_id) {
+      _runInsert(db, 'UPDATE sw_chat_sessions SET episode_id = ?, updated_at = ? WHERE session_id = ?',
+        [params.episodeId, now, sessionId]);
+    }
+  }
+
+  // 2. 加载历史消息（最近 20 条，防止 token 超限）
+  const historyRows = _queryAll(db,
+    'SELECT role, content, message_order FROM sw_chat_messages WHERE session_id = ? ORDER BY message_order DESC LIMIT 20',
+    [sessionId]
+  ).reverse();
+
+  const currentOrder = historyRows.length > 0
+    ? (historyRows[historyRows.length - 1].message_order || 0) + 1
+    : 1;
+
+  // 3. 存储用户消息
+  _runInsert(db, `INSERT INTO sw_chat_messages (session_id, role, content, message_order, created_at) VALUES (?, ?, ?, ?, ?)`,
+    [sessionId, 'user', params.message, currentOrder, now]);
+
+  // 4. 构建 system prompt + 上下文
+  const systemPrompt = _buildChatContext(db, {
+    outlineId: params.outlineId || (existing && existing.outline_id) || null,
+    episodeId: params.episodeId || (existing && existing.episode_id) || null,
+  });
+
+  // 5. 构建多轮对话 prompt：把历史消息作为上下文拼接
+  let conversationPrompt = '';
+  for (const msg of historyRows) {
+    const prefix = msg.role === 'user' ? '用户' : 'AI';
+    conversationPrompt += `${prefix}: ${msg.content}\n`;
+  }
+  conversationPrompt += `用户: ${params.message}\n\n请以AI编剧身份回复：`;
+
+  // 6. 调用 AI
+  const rawText = await aiClient.generateText(db, log, 'text', conversationPrompt, systemPrompt, {
+    scene_key: 'screenwriter_chat',
+    model: params.model || undefined,
+    temperature: 0.8,
+    min_max_tokens: 2000,
+    json_mode: false,
+  });
+
+  const reply = String(rawText || '').trim() || '抱歉，我暂时无法生成回复，请重试。';
+
+  // 7. 存储 AI 回复
+  _runInsert(db, `INSERT INTO sw_chat_messages (session_id, role, content, message_order, created_at) VALUES (?, ?, ?, ?, ?)`,
+    [sessionId, 'assistant', reply, currentOrder + 1, now]);
+
+  // 8. 更新 session 消息计数
+  _runInsert(db, 'UPDATE sw_chat_sessions SET messages_count = ?, updated_at = ? WHERE session_id = ?',
+    [currentOrder + 1, now, sessionId]);
+
+  return {
+    sessionId,
+    reply,
+    messageOrder: currentOrder + 1,
+  };
+}
+
+/**
+ * 获取对话历史
+ */
+function getChatHistory(db, sessionId, limit = 50) {
+  const rows = _queryAll(db,
+    'SELECT role, content, message_order, created_at FROM sw_chat_messages WHERE session_id = ? ORDER BY message_order ASC LIMIT ?',
+    [sessionId, Number(limit)]
+  );
+  return rows.map(r => ({
+    role: r.role,
+    content: r.content,
+    messageOrder: r.message_order,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * 列出用户的所有对话会话
+ */
+function listChatSessions(db, { userId, outlineId, limit = 50, offset = 0 } = {}) {
+  const w = []; const p = [];
+  if (userId) { w.push('user_id = ?'); p.push(userId); }
+  if (outlineId) { w.push('outline_id = ?'); p.push(outlineId); }
+  const rows = _queryAll(db,
+    `SELECT * FROM sw_chat_sessions ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY updated_at DESC LIMIT ${Number(limit)} OFFSET ${Number(offset)}`,
+    p
+  );
+  return rows.map(r => ({
+    sessionId: r.session_id,
+    userId: r.user_id,
+    outlineId: r.outline_id,
+    episodeId: r.episode_id,
+    title: r.title,
+    contextType: r.context_type,
+    messagesCount: r.messages_count,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
 }
 
 // ---------- sw_jobs 双写 ----------
@@ -1059,6 +1226,10 @@ module.exports = {
   listStyles(db) { return _listDict(db, 'sw_styles', 'style_key', 'label_zh'); },
   listShotTypes(db) { return _listDict(db, 'sw_shot_types', 'shot_key', 'label_zh'); },
   listEmotions(db) { return _listDict(db, 'sw_dialogue_emotions', 'emotion_key', 'label_zh'); },
+  // 多轮对话
+  chatWithScreenwriter,
+  getChatHistory,
+  listChatSessions,
   // jobs
   createJobRecord,
   updateJobRecord,

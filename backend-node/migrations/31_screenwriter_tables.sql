@@ -292,6 +292,39 @@ CREATE TABLE IF NOT EXISTS sw_styles (
   created_at DATETIME NULL
 );
 
+-- ------------------------------------------------------------
+-- 13. sw_chat_sessions — 多轮对话会话表（S1-T02 多轮对话能力）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sw_chat_sessions (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id VARCHAR(64) NOT NULL UNIQUE,
+  user_id BIGINT NULL,
+  outline_id VARCHAR(64) NULL COMMENT '关联的大纲ID',
+  episode_id VARCHAR(64) NULL COMMENT '关联的分集ID',
+  title VARCHAR(255) NULL COMMENT '会话标题',
+  context_type VARCHAR(32) NULL DEFAULT 'general' COMMENT 'general/outline/characters/episodes/storyboard/dialogue',
+  messages_count INT DEFAULT 0,
+  created_at DATETIME NULL,
+  updated_at DATETIME NULL,
+  INDEX idx_session_id (session_id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_outline_id (outline_id)
+);
+
+-- ------------------------------------------------------------
+-- 14. sw_chat_messages — 多轮对话消息表
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sw_chat_messages (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id VARCHAR(64) NOT NULL,
+  role VARCHAR(16) NOT NULL COMMENT 'user/assistant/system',
+  content TEXT NOT NULL,
+  message_order INT DEFAULT 0,
+  created_at DATETIME NULL,
+  INDEX idx_session_id (session_id),
+  INDEX idx_role (role)
+);
+
 -- ============================================================
 -- 种子数据
 -- ============================================================
