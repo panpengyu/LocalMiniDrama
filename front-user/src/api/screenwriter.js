@@ -84,6 +84,16 @@ export const screenwriterAPI = {
   generateSceneDescription(body) {
     return request.post('/ai/screenwriter/scene-description', body)
   },
+  // Sprint 2 新增：角色保存 / 单角色重生成 / 单幕重生成
+  updateCharacter(characterId, patch) {
+    return request.patch(`/ai/screenwriter/characters/${characterId}`, patch)
+  },
+  regenerateCharacter(characterId, body) {
+    return request.post(`/ai/screenwriter/characters/${characterId}/regenerate`, body)
+  },
+  regenerateAct(outlineId, body) {
+    return request.post(`/ai/screenwriter/outlines/${outlineId}/regenerate-act`, body)
+  },
   // 多轮对话
   chat(body) {
     return request.post('/ai/screenwriter/chat', body)

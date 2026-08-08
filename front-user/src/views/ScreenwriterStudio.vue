@@ -128,31 +128,70 @@
             <p>该结构暂无可视化分幕数据，可手动编辑后保存</p>
           </div>
 
-          <div v-else class="acts-flow">
-            <div v-for="(act, idx) in outlineActs" :key="idx" class="act-card">
+          <div v-else class="acts-flow" :class="{ 'dragging-global': isDraggingActive }">
+            <div
+              v-for="(act, idx) in outlineActs"
+              :key="act._key || idx"
+              class="act-card"
+              :class="{
+                'dragging': draggingActIndex === idx,
+                'drag-over': dragOverActIndex === idx && draggingActIndex !== idx,
+                'act-busy': busyActSet.has(idx),
+                'pointer-disabled': isDraggingActive,
+              }"
+              draggable="true"
+              @dragstart="onActDragStart($event, idx)"
+              @dragover.prevent="onActDragOver($event, idx)"
+              @dragleave="onActDragLeave(idx)"
+              @drop="onActDrop($event, idx)"
+              @dragend="onActDragEnd"
+            >
               <div class="act-header">
+                <span class="act-drag-handle" :class="{ disabled: busyActSet.size > 0 || regeneratingActIndex >= 0 }" title="拖拽调整顺序">
+                  <el-icon><Rank /></el-icon>
+                </span>
                 <el-tag type="success" effect="dark" round>第 {{ act.act_number || idx + 1 }} 幕</el-tag>
-                <el-icon v-if="idx < outlineActs.length - 1" class="act-arrow"><Right /></el-icon>
+                <div class="act-header-right">
+                  <el-button
+                    size="small"
+                    text
+                    type="warning"
+                    :loading="regeneratingActIndex === idx"
+                    :disabled="isDraggingActive || busyActSet.has(idx) || saving.value"
+                    @click.stop="onRegenerateAct(idx)"
+                    title="AI 重写这一幕"
+                  >
+                    <el-icon><Refresh /></el-icon>
+                    重写
+                  </el-button>
+                  <el-icon v-if="idx < outlineActs.length - 1" class="act-arrow"><Right /></el-icon>
+                </div>
               </div>
-              <el-input v-model="act.title" placeholder="本幕标题" class="act-title-input" />
+              <el-input
+                v-model="act.title"
+                placeholder="本幕标题"
+                class="act-title-input"
+                :disabled="isDraggingActive"
+              />
               <el-input
                 v-model="act.summary"
                 type="textarea"
                 :rows="3"
                 placeholder="本幕摘要"
+                :disabled="isDraggingActive"
               />
-              <div class="key-events">
+              <div class="key-events" :class="{ 'pointer-disabled': isDraggingActive }">
                 <div class="events-label">
                   <span>关键事件</span>
-                  <el-button size="small" text type="primary" @click="addEvent(act)">+ 添加</el-button>
+                  <el-button size="small" text type="primary" :disabled="isDraggingActive" @click="addEvent(act)">+ 添加</el-button>
                 </div>
                 <div
                   v-for="(_, ei) in act.key_events || []"
                   :key="ei"
                   class="event-item"
                 >
-                  <el-input v-model="act.key_events[ei]" size="small" placeholder="事件描述" />
-                  <el-button size="small" text type="danger" @click="removeEvent(act, ei)">
+                  <el-input v-model="act.key_events[ei]" size="small" placeholder="事件描述" :disabled="isDraggingActive" />
+                  <el-button size="small" text type="danger" :disabled="isDraggingActive" @click="removeEvent(act, ei)">
                     <el-icon><Delete /></el-icon>
                   </el-button>
                 </div>
@@ -161,6 +200,10 @@
                 </div>
               </div>
             </div>
+          </div>
+          <div v-if="outlineActs.length >= 2" class="drag-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>提示：点击左侧 ⠿ 图标拖拽幕卡，可调整剧情推进顺序</span>
           </div>
         </div>
       </div>
@@ -174,18 +217,51 @@
               <p>点击「生成角色」后显示</p>
             </div>
             <div v-else class="char-list">
-              <el-card v-for="(c, i) in characters" :key="i" class="char-card" shadow="never">
+              <el-card v-for="(c, i) in characters" :key="c.characterId || i" class="char-card" shadow="never" :class="{ 'pointer-disabled': isDraggingActive }">
                 <div class="char-head">
-                  <el-input v-model="c.name" class="char-name-input" placeholder="姓名" />
-                  <el-tag v-if="c.role" size="small">{{ c.role }}</el-tag>
+                  <el-input v-model="c.name" class="char-name-input" placeholder="姓名" :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)" />
+                  <el-select v-model="c.role" size="small" class="char-role-select" placeholder="定位" :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)">
+                    <el-option label="主角" value="protagonist" />
+                    <el-option label="配角" value="supporting" />
+                    <el-option label="反派" value="antagonist" />
+                    <el-option label="BOSS" value="villain" />
+                    <el-option label="龙套" value="extra" />
+                  </el-select>
                 </div>
                 <div class="char-field">
                   <span class="field-label">外貌</span>
-                  <el-input v-model="c.appearance" type="textarea" :rows="2" />
+                  <el-input v-model="c.appearance" type="textarea" :rows="2" placeholder="发型/服装/身高体型/配饰 等" :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)" />
                 </div>
                 <div class="char-field">
                   <span class="field-label">性格</span>
-                  <el-input v-model="c.personality" type="textarea" :rows="2" />
+                  <el-input v-model="c.personality" type="textarea" :rows="2" placeholder="优势/缺点/习惯/动机 等" :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)" />
+                </div>
+                <div class="char-field">
+                  <span class="field-label">背景 / 动机</span>
+                  <el-input v-model="c.background" type="textarea" :rows="2" placeholder="成长背景/关键经历/人物弧线" :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)" />
+                </div>
+                <div class="char-actions">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    plain
+                    :loading="savingCharId === (c.characterId || i)"
+                    :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)"
+                    @click="onSaveCharacter(c)"
+                  >
+                    保存修改
+                  </el-button>
+                  <el-button
+                    size="small"
+                    type="warning"
+                    plain
+                    :loading="regenCharId === (c.characterId || i)"
+                    :disabled="isDraggingActive || busyCharSet.has(c.characterId || i)"
+                    @click="onRegenerateCharacter(c, i)"
+                  >
+                    <el-icon><Refresh /></el-icon>
+                    AI 重写
+                  </el-button>
                 </div>
               </el-card>
             </div>
@@ -283,7 +359,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Document, Right, Delete, User, Film, Picture } from '@element-plus/icons-vue'
+import { ArrowLeft, Document, Right, Delete, User, Film, Picture, Rank, Refresh, InfoFilled } from '@element-plus/icons-vue'
 import { screenwriterAPI } from '@/api/screenwriter'
 
 const router = useRouter()
@@ -308,6 +384,16 @@ const generatingCharacters = ref(false)
 const generatingEpisodes = ref(false)
 const generatingFrames = ref(false)
 const regeneratingId = ref(null)
+// Sprint 2 新增：单幕重写、角色保存/重写、拖拽排序
+const regeneratingActIndex = ref(-1)
+const savingCharId = ref(null)
+const regenCharId = ref(null)
+const draggingActIndex = ref(-1)
+const dragOverActIndex = ref(-1)
+// 边界防护：快速连续操作时禁止并发/错序
+const busyActSet = ref(new Set())     // 正在处理中的幕 idx（重写中、拖拽 splice 中）
+const busyCharSet = ref(new Set())    // 正在处理中的角色 key（保存 / 重写中）
+const isDraggingActive = ref(false)   // 是否处于拖拽进行时（用于禁选文字 + 禁用按钮）
 
 // 数据
 const outline = ref(null)
@@ -534,6 +620,211 @@ function addEvent(act) {
 function removeEvent(act, idx) {
   act.key_events.splice(idx, 1)
 }
+
+// ============== Sprint 2 新增：逐段修改 / 重生成 / 拖拽排序 ==============
+
+/** S2-T01: 单幕重写 */
+async function onRegenerateAct(idx) {
+  if (!outline.value?.outlineId) return
+  // 边界防护：拖拽中 / 有其他操作在途 / 该幕已在重写 → 直接 return
+  if (isDraggingActive.value) {
+    ElMessage.warning('正在拖拽调整中，请先完成拖拽')
+    return
+  }
+  if (busyActSet.value.has(idx) || regeneratingActIndex.value >= 0) {
+    ElMessage.warning('该幕或其他幕正在处理中，请稍候...')
+    return
+  }
+  const act = outlineActs.value[idx]
+  if (!act) return
+  // 先把幕号加入 busy 集合，避免重复点击并发
+  busyActSet.value.add(idx)
+  regeneratingActIndex.value = idx
+  try {
+    const res = await screenwriterAPI.regenerateAct(outline.value.outlineId, {
+      act_index: idx,
+      prompt_append: act.prompt_append || undefined,
+      outline_id: outline.value.outlineId,
+      idea: idea.value,
+    })
+    const newAct = res?.act || res?.result?.act || res
+    if (newAct) {
+      if (Array.isArray(outline.value.acts)) outline.value.acts.splice(idx, 1, newAct)
+      else if (Array.isArray(outline.value.act_list)) outline.value.act_list.splice(idx, 1, newAct)
+      else if (Array.isArray(outline.value.structure)) outline.value.structure.splice(idx, 1, newAct)
+    }
+    ElMessage.success(`第 ${idx + 1} 幕已重新生成`)
+  } finally {
+    regeneratingActIndex.value = -1
+    busyActSet.value.delete(idx)
+  }
+}
+
+/** S2-T02: 大纲幕卡拖拽（HTML5 原生） — 加严格边界保护 */
+function onActDragStart(e, idx) {
+  if (busyActSet.value.has(idx) || busyActSet.value.size > 0) {
+    ElMessage.warning('当前有幕卡正在处理中，无法拖拽')
+    // 取消本次拖拽
+    if (e && e.dataTransfer && typeof e.dataTransfer.setDragImage === 'function') {
+      // 用最小 1x1 透明图替代，同时后续 dragstart 设 cancelEffect
+    }
+    try { e.preventDefault() } catch (_) { /* some browsers */ }
+    return
+  }
+  draggingActIndex.value = idx
+  isDraggingActive.value = true
+  // 全局禁用文字选中（根据经验 257297）
+  if (typeof document !== 'undefined') {
+    document.body.classList.add('screenwriter-drag-active')
+  }
+  try {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(idx))
+  } catch (_) { /* IE/Edge 兼容 */ }
+}
+function onActDragOver(e, idx) {
+  if (!isDraggingActive.value || draggingActIndex.value === idx) return
+  dragOverActIndex.value = idx
+  try { e.dataTransfer.dropEffect = 'move' } catch (_) {}
+}
+function onActDragLeave(idx) {
+  if (dragOverActIndex.value === idx) dragOverActIndex.value = -1
+}
+function onActDrop(e, idx) {
+  const from = draggingActIndex.value
+  const to = idx
+  if (!isDraggingActive.value || from < 0 || to < 0 || from === to) {
+    // 无效 drop，直接结束清理
+    onActDragEnd()
+    return
+  }
+  // 将 from/to 临时加入 busy，避免在 splice 的同步微任务中又触发拖拽重入
+  busyActSet.value.add(from)
+  busyActSet.value.add(to)
+  try {
+    const acts = getActsMutable()
+    if (acts) {
+      const [removed] = acts.splice(from, 1)
+      acts.splice(to, 0, removed)
+      renumberActs()
+    }
+  } finally {
+    // 无论成功失败，清理
+    busyActSet.value.delete(from)
+    busyActSet.value.delete(to)
+    dragOverActIndex.value = -1
+    draggingActIndex.value = -1
+    isDraggingActive.value = false
+    if (typeof document !== 'undefined') {
+      document.body.classList.remove('screenwriter-drag-active')
+    }
+  }
+}
+function onActDragEnd() {
+  // 兜底：任何原因（取消拖拽、拖拽到窗口外等）均清理状态
+  draggingActIndex.value = -1
+  dragOverActIndex.value = -1
+  isDraggingActive.value = false
+  if (typeof document !== 'undefined') {
+    document.body.classList.remove('screenwriter-drag-active')
+  }
+}
+function getActsMutable() {
+  const o = outline.value
+  if (!o) return null
+  if (Array.isArray(o.acts)) return o.acts
+  if (Array.isArray(o.act_list)) return o.act_list
+  if (Array.isArray(o.structure)) return o.structure
+  return null
+}
+function renumberActs() {
+  const acts = getActsMutable()
+  if (!acts) return
+  acts.forEach((a, i) => {
+    if (!a) return
+    a.act_number = i + 1
+  })
+}
+
+/** S2-T03: 角色保存修改 */
+async function onSaveCharacter(c) {
+  const ckey = c.characterId != null ? c.characterId : c._idx
+  if (ckey == null) {
+    // 用 c 在数组中的下标作兜底 key
+    const idx = characters.value.indexOf(c)
+    if (idx < 0) return
+    c._idx = idx
+  }
+  const finalKey = c.characterId != null ? c.characterId : c._idx
+  if (isDraggingActive.value) {
+    ElMessage.warning('拖拽处理中，暂不能修改角色')
+    return
+  }
+  if (busyCharSet.value.has(finalKey) || savingCharId.value === finalKey || regenCharId.value === finalKey) {
+    ElMessage.warning('该角色正在处理中，请稍候...')
+    return
+  }
+  if (!c.characterId) {
+    ElMessage.warning('该角色还没有入库，请先保存大纲或重生成')
+    return
+  }
+  busyCharSet.value.add(finalKey)
+  savingCharId.value = finalKey
+  try {
+    const patch = {
+      name: c.name,
+      role: c.role,
+      appearance: c.appearance,
+      personality: c.personality,
+      background: c.background,
+      reference_images: c.reference_images,
+    }
+    const res = await screenwriterAPI.updateCharacter(c.characterId, patch)
+    const updated = res?.character || res?.result || res
+    if (updated) {
+      const idx = characters.value.findIndex((x) => x.characterId === c.characterId)
+      if (idx >= 0) characters.value[idx] = { ...characters.value[idx], ...updated }
+    }
+    ElMessage.success('角色已保存')
+  } finally {
+    busyCharSet.value.delete(finalKey)
+    savingCharId.value = null
+  }
+}
+
+/** S2-T03: 单角色重生成（AI 重写人设/外貌/性格细节） */
+async function onRegenerateCharacter(c, i) {
+  const finalKey = c.characterId != null ? c.characterId : i
+  if (isDraggingActive.value) {
+    ElMessage.warning('拖拽处理中，暂不能重写角色')
+    return
+  }
+  if (busyCharSet.value.has(finalKey) || regenCharId.value === finalKey || savingCharId.value === finalKey) {
+    ElMessage.warning('该角色正在处理中，请稍候...')
+    return
+  }
+  if (!c.characterId) {
+    ElMessage.warning('该角色还没有入库，无法调用单角色重生成')
+    return
+  }
+  busyCharSet.value.add(finalKey)
+  regenCharId.value = finalKey
+  try {
+    const res = await screenwriterAPI.regenerateCharacter(c.characterId, {
+      outline_id: outline.value?.outlineId,
+      idea: idea.value,
+    })
+    const newC = res?.character || res?.result || res
+    if (newC) {
+      const idx = characters.value.findIndex((x) => x.characterId === c.characterId)
+      if (idx >= 0) characters.value[idx] = { ...characters.value[idx], ...newC }
+    }
+    ElMessage.success(`角色 ${c.name || (i + 1)} 已重新生成`)
+  } finally {
+    busyCharSet.value.delete(finalKey)
+    regenCharId.value = null
+  }
+}
 </script>
 
 <style scoped>
@@ -670,7 +961,43 @@ function removeEvent(act, idx) {
   align-items: center;
   gap: 6px;
 }
-.act-arrow { color: var(--text-subtle); margin-left: auto; }
+.act-drag-handle {
+  color: var(--text-muted);
+  cursor: grab;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 4px;
+}
+.act-drag-handle:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.act-drag-handle:active { cursor: grabbing; }
+.act-drag-handle.disabled { opacity: 0.4; cursor: not-allowed; }
+.act-header-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.act-card.dragging { opacity: 0.45; transform: scale(0.98); }
+.act-card.drag-over {
+  border: 2px dashed var(--el-color-primary);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.12);
+}
+.act-card.act-busy {
+  position: relative;
+}
+.act-card.act-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+  border-radius: inherit;
+}
+.pointer-disabled {
+  pointer-events: none;
+  opacity: 0.85;
+}
+.acts-flow.dragging-global {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.act-arrow { color: var(--text-subtle); }
 .act-title-input :deep(.el-input__inner) { font-weight: 600; }
 
 .key-events { display: flex; flex-direction: column; gap: 6px; }
@@ -683,6 +1010,19 @@ function removeEvent(act, idx) {
 }
 .event-item { display: flex; gap: 4px; align-items: center; }
 .events-empty { font-size: 12px; color: var(--text-faint); }
+
+.drag-hint {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--bg-inner);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* 结果面板 */
 .result-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
@@ -703,8 +1043,15 @@ function removeEvent(act, idx) {
   margin-bottom: 8px;
 }
 .char-name-input { flex: 1; }
+.char-role-select { width: 110px; flex-shrink: 0; }
 .char-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .field-label { font-size: 12px; color: var(--text-muted); }
+.char-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
 
 .ep-title { display: flex; align-items: center; gap: 8px; }
 .ep-name { color: var(--text-bright); font-weight: 500; }
@@ -725,5 +1072,21 @@ function removeEvent(act, idx) {
   font-size: 13px;
   color: var(--text-muted);
   font-style: italic;
+}
+</style>
+
+<!-- 拖拽时全局禁选（挂在 body 上，scoped 无法覆盖，所以单独开一个 unscoped style） -->
+<style>
+body.screenwriter-drag-active,
+body.screenwriter-drag-active * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  cursor: grabbing !important;
+}
+body.screenwriter-drag-active input,
+body.screenwriter-drag-active textarea,
+body.screenwriter-drag-active select {
+  pointer-events: none !important;
 }
 </style>

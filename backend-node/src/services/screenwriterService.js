@@ -1395,6 +1395,351 @@ async function generateSceneDescription(db, log, params) {
   };
 }
 
+// ============================================================
+// Sprint 2 增量：角色/分幕 修改与单段重生成
+// ============================================================
+
+/**
+ * S2-T03 / S2-T01: 修改角色信息（保存编辑后的人设/外貌/性格）
+ * @param {object} db
+ * @param {object} log
+ * @param {string} characterId
+ * @param {object} patch
+ * @returns {object|null} 更新后的角色对象
+ */
+function updateCharacter(db, log, characterId, patch = {}) {
+  const t0 = Date.now();
+  log = logWrap(log);
+  log.info('[screenwriter.updateCharacter] 开始', { characterId, patchKeys: Object.keys(patch) });
+
+  if (!characterId) {
+    log.warn('[screenwriter.updateCharacter] 参数非法：characterId 为空', { elapsedMs: Date.now() - t0 });
+    return null;
+  }
+  const existing = _queryOne(db, 'SELECT * FROM sw_characters WHERE character_id = ?', [characterId]);
+  if (!existing) {
+    log.warn('[screenwriter.updateCharacter] 角色不存在', { characterId, elapsedMs: Date.now() - t0 });
+    return null;
+  }
+  const now = nowStr();
+  const allowed = ['name', 'role', 'personality', 'appearance', 'background', 'description', 'gender', 'age', 'motivation', 'arc', 'voice_profile', 'status', 'sort_order'];
+  const changes = [];
+  const params = [];
+  for (const k of allowed) {
+    if (k in patch) {
+      // 过长字段只记录前 80 字符，避免日志膨胀
+      const v = patch[k];
+      const truncated = typeof v === 'string' && v.length > 80 ? v.slice(0, 80) + `...(${v.length})` : v;
+      log.debug('[screenwriter.updateCharacter] 字段变更', { characterId, field: k, to: truncated });
+      changes.push(`${k} = ?`);
+      params.push(patch[k]);
+    }
+  }
+  if (changes.length === 0) {
+    log.info('[screenwriter.updateCharacter] 无变更字段，直接返回原角色', { characterId, elapsedMs: Date.now() - t0 });
+    return {
+      characterId: existing.character_id,
+      outlineId: existing.outline_id,
+      name: existing.name,
+      role: existing.role,
+      personality: existing.personality,
+      appearance: existing.appearance,
+      background: existing.background,
+      age: existing.age,
+      gender: existing.gender,
+      status: existing.status,
+      sortOrder: existing.sort_order,
+    };
+  }
+  changes.push('updated_at = ?');
+  params.push(now, characterId);
+  const runT0 = Date.now();
+  _runInsert(db, `UPDATE sw_characters SET ${changes.join(', ')} WHERE character_id = ?`, params);
+  const dbElapsed = Date.now() - runT0;
+  const updated = _queryOne(db, 'SELECT * FROM sw_characters WHERE character_id = ?', [characterId]);
+  const result = {
+    characterId: updated.character_id,
+    outlineId: updated.outline_id,
+    name: updated.name,
+    role: updated.role,
+    personality: updated.personality,
+    appearance: updated.appearance,
+    background: updated.background,
+    age: updated.age,
+    gender: updated.gender,
+    voiceProfile: updated.voice_profile,
+    status: updated.status,
+    sortOrder: updated.sort_order,
+  };
+  log.info('[screenwriter.updateCharacter] 完成', {
+    characterId,
+    changedFields: changes.length - 1, // exclude updated_at
+    name: result.name,
+    role: result.role,
+    dbUpdateMs: dbElapsed,
+    elapsedMs: Date.now() - t0,
+  });
+  return result;
+}
+
+/**
+ * S2-T01: 单幕重生成 — 重新生成大纲的某一幕（建置/对抗/结局中的某一段）
+ * 基于当前大纲其他幕信息 + 用户提示追加，确保上下文连贯
+ *
+ * @param {object} db
+ * @param {object} log
+ * @param {string} outlineId
+ * @param {number|string} actIndex - 0-based 幕序号
+ * @param {object} options - { promptAppend, idea, genre, style }
+ * @returns {object} 更新后的单幕对象 {act_number, title, summary, key_events}
+ */
+async function regenerateAct(db, log, outlineId, actIndex, options = {}) {
+  const t0 = Date.now();
+  log = logWrap(log);
+  log.info('[screenwriter.regenerateAct] 开始', { outlineId, actIndex, optionsKeys: Object.keys(options) });
+
+  if (!outlineId) {
+    log.warn('[screenwriter.regenerateAct] 参数非法：outlineId 为空', { elapsedMs: Date.now() - t0 });
+    throw new Error('缺少 outlineId');
+  }
+  if (actIndex == null) {
+    log.warn('[screenwriter.regenerateAct] 参数非法：actIndex 为空', { outlineId, elapsedMs: Date.now() - t0 });
+    throw new Error('缺少 actIndex');
+  }
+  const idx = Number(actIndex);
+
+  const outlineT0 = Date.now();
+  const outline = await _getOutline(db, outlineId);
+  const outlineElapsed = Date.now() - outlineT0;
+  if (!outline) {
+    log.warn('[screenwriter.regenerateAct] 大纲不存在', { outlineId, elapsedMs: Date.now() - t0 });
+    throw new Error(`大纲不存在: ${outlineId}`);
+  }
+  const acts = Array.isArray(outline.acts) ? outline.acts : [];
+  if (idx < 0 || idx >= acts.length) {
+    log.warn('[screenwriter.regenerateAct] actIndex 越界', { outlineId, actIndex: idx, totalActs: acts.length, elapsedMs: Date.now() - t0 });
+    throw new Error(`actIndex 越界: ${actIndex}，总幕数 ${acts.length}`);
+  }
+  log.info('[screenwriter.regenerateAct] 大纲读取完成', { outlineId, totalActs: acts.length, targetAct: idx, dbOutlineMs: outlineElapsed });
+
+  // 其他幕摘要作为上下文，确保剧情连贯
+  const others = acts
+    .map((a, i) => (i === idx ? null : `【第${a.act_number || (i + 1)}幕 · ${a.title || ''}】${(a.summary || '').slice(0, 120)}`))
+    .filter(Boolean)
+    .join('\n');
+
+  const contextAct = acts[idx];
+  const actNum = contextAct.act_number || (idx + 1);
+  const promptAppend = options.prompt_append || options.promptAppend || '保持原主题但让剧情更有张力和悬念';
+  const userPrompt = `请重写该剧本大纲中的【第 ${actNum} 幕】。\n
+创意主题：${outline.logline || outline.premise || options.idea || ''}
+题材：${outline.genre || options.genre || ''}；风格：${outline.style || options.style || ''}
+其余各幕上下文（保持逻辑衔接）：
+${others}
+当前这一幕初稿（可作为参考，需重写）：
+  标题：${contextAct.title || ''}
+  摘要：${contextAct.summary || ''}
+  关键事件：${(contextAct.key_events || []).join(' / ')}
+用户追加要求：${promptAppend}
+`;
+
+  const systemPrompt = `你是职业漫剧编剧。请针对用户指定的单幕重写该幕内容。\n
+输出纯 JSON：
+{
+  "act_number": ${actNum},
+  "title": "本幕标题（简短，有吸引力）",
+  "summary": "本幕剧情摘要，150字左右，包含人物冲突与剧情转折",
+  "key_events": ["关键事件1", "关键事件2", "关键事件3", "关键事件4"]
+}
+要求：
+1. 摘要要有戏剧冲突，不平淡
+2. key_events 3~6 条，顺序与摘要一致
+3. 与其他幕保持逻辑一致
+4. 只输出 JSON，不要多余文字`;
+
+  log.info('[screenwriter.regenerateAct] 调用 AI', { outlineId, actIndex: idx, actNumber: actNum, promptAppend, userPromptLen: userPrompt.length, sysPromptLen: systemPrompt.length });
+  const aiT0 = Date.now();
+  const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+    scene_key: 'screenwriter_regen_act',
+    temperature: 0.9, min_max_tokens: 2500, json_mode: true,
+  });
+  const aiElapsed = Date.now() - aiT0;
+  log.info('[screenwriter.regenerateAct] AI 返回', { outlineId, actIndex: idx, rawLen: (raw || '').length, aiMs: aiElapsed });
+
+  const parsed = tryParse(raw);
+  let newAct;
+  let usedFallback = false;
+  if (parsed && typeof parsed === 'object' && parsed.title && Array.isArray(parsed.key_events)) {
+    newAct = {
+      act_number: parsed.act_number || actNum,
+      title: parsed.title,
+      summary: parsed.summary || contextAct.summary,
+      key_events: parsed.key_events,
+    };
+  } else {
+    usedFallback = true;
+    log.warn('[screenwriter.regenerateAct] AI 返回解析失败，使用兜底（原幕内容）', { outlineId, actIndex: idx, parsedType: typeof parsed, hasTitle: !!(parsed && parsed.title), hasKeyEvents: !!(parsed && Array.isArray(parsed.key_events)) });
+    newAct = {
+      act_number: actNum,
+      title: contextAct.title || `第${actNum}幕`,
+      summary: contextAct.summary,
+      key_events: contextAct.key_events || [],
+    };
+  }
+
+  // 替换数组中这一幕并落库
+  acts[idx] = newAct;
+  const actsJson = JSON.stringify(acts);
+  const now = nowStr();
+  const saveT0 = Date.now();
+  _runInsert(db, 'UPDATE sw_outlines SET acts_json = ?, updated_at = ? WHERE outline_id = ?', [actsJson, now, outlineId]);
+  const saveElapsed = Date.now() - saveT0;
+
+  const totalElapsed = Date.now() - t0;
+  log.info('[screenwriter.regenerateAct] 完成', {
+    outlineId,
+    actIndex: idx,
+    actNumber: newAct.act_number,
+    newTitle: newAct.title,
+    keyEventCount: newAct.key_events.length,
+    usedFallback,
+    aiMs: aiElapsed,
+    dbSaveMs: saveElapsed,
+    elapsedMs: totalElapsed,
+  });
+  return newAct;
+}
+
+/**
+ * S2-T01 / S2-T03: 单角色重生成 — 基于大纲 + 其他角色上下文，重写单个角色
+ *
+ * @param {object} db
+ * @param {object} log
+ * @param {string} characterId - sw_characters.character_id
+ * @param {object} options - { promptAppend, idea, genre }
+ * @returns {object} 重写后的角色
+ */
+async function regenerateCharacter(db, log, characterId, options = {}) {
+  const t0 = Date.now();
+  log = logWrap(log);
+  log.info('[screenwriter.regenerateCharacter] 开始', { characterId, optionsKeys: Object.keys(options) });
+
+  if (!characterId) {
+    log.warn('[screenwriter.regenerateCharacter] 参数非法：characterId 为空', { elapsedMs: Date.now() - t0 });
+    throw new Error('缺少 characterId');
+  }
+  const existT0 = Date.now();
+  const existing = _queryOne(db, 'SELECT * FROM sw_characters WHERE character_id = ?', [characterId]);
+  const existElapsed = Date.now() - existT0;
+  if (!existing) {
+    log.warn('[screenwriter.regenerateCharacter] 角色不存在', { characterId, elapsedMs: Date.now() - t0 });
+    throw new Error(`角色不存在: ${characterId}`);
+  }
+  log.info('[screenwriter.regenerateCharacter] 读取原角色', { characterId, name: existing.name, role: existing.role, dbMs: existElapsed });
+
+  const outlineId = existing.outline_id;
+  let outline = null;
+  let otherChars = [];
+  if (outlineId) {
+    const ctxT0 = Date.now();
+    outline = await _getOutline(db, outlineId);
+    otherChars = _queryAll(db, 'SELECT name, role, personality, appearance FROM sw_characters WHERE outline_id = ? AND character_id != ? ORDER BY sort_order', [outlineId, characterId]);
+    log.info('[screenwriter.regenerateCharacter] 上下文读取完成', { characterId, outlineId, otherCharCount: otherChars.length, ctxMs: Date.now() - ctxT0 });
+  }
+
+  const othersStr = otherChars.map((c) => `- ${c.name}（${c.role || '配角'}）外貌：${(c.appearance || '未设').slice(0, 60)}；性格：${(c.personality || '未设').slice(0, 60)}`).join('\n') || '(无其他角色)';
+
+  const promptAppend = options.prompt_append || options.promptAppend || '保留原定位，让外貌描述更具体，性格更鲜明有辨识度';
+  const userPrompt = `请重写这个剧本的角色设定：
+剧本主题：${outline?.logline || outline?.premise || options.idea || ''}
+题材：${outline?.genre || options.genre || ''}
+其他角色（避免设定冲突）：
+${othersStr}
+要重写的角色 原设定：
+  姓名：${existing.name || ''}
+  角色定位：${existing.role || ''}
+  外貌：${existing.appearance || ''}
+  性格：${existing.personality || ''}
+  背景：${existing.background || ''}
+用户追加要求：${promptAppend}
+`;
+
+  const systemPrompt = `你是职业漫剧编剧/角色设计师。请针对指定角色重写其档案。\n
+输出纯 JSON：
+{
+  "name": "姓名（中文，好记有辨识度）",
+  "role": "protagonist/antagonist/supporting/villain 之一",
+  "appearance": "详细外貌描述，包括发型/五官/服装/身高体型/配饰，100字左右",
+  "personality": "性格描述（优势、缺点、做事动机、口头禅或习惯），80字左右",
+  "background": "成长背景/经历/家庭/关键事件，80字左右",
+  "motivation": "核心动机（驱动该角色在故事中的一切行为）",
+  "arc": "角色弧线（从怎样的人转变为怎样的人）"
+}
+要求：
+1. 名字和定位尽量与用户设定一致
+2. 避免与其他角色外貌、性格撞型
+3. 只输出 JSON，不要多余文字`;
+
+  log.info('[screenwriter.regenerateCharacter] 调用 AI', { characterId, name: existing.name, promptAppend, userPromptLen: userPrompt.length, sysPromptLen: systemPrompt.length, otherCharCount: otherChars.length });
+  const aiT0 = Date.now();
+  const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+    scene_key: 'screenwriter_regen_character',
+    temperature: 0.9, min_max_tokens: 2500, json_mode: true,
+  });
+  const aiElapsed = Date.now() - aiT0;
+  log.info('[screenwriter.regenerateCharacter] AI 返回', { characterId, rawLen: (raw || '').length, aiMs: aiElapsed });
+
+  const parsed = tryParse(raw);
+  const now = nowStr();
+  let usedFallback = false;
+  if (parsed && typeof parsed === 'object') {
+    const patch = {
+      name: parsed.name || existing.name,
+      role: parsed.role || existing.role,
+      appearance: parsed.appearance || existing.appearance,
+      personality: parsed.personality || existing.personality,
+      background: parsed.background || existing.background,
+      motivation: parsed.motivation || existing.motivation,
+      arc: parsed.arc || existing.arc,
+    };
+    log.debug('[screenwriter.regenerateCharacter] 应用变更字段', { characterId, changedNameTo: patch.name, changedRoleTo: patch.role });
+    const saveT0 = Date.now();
+    _runInsert(db, `UPDATE sw_characters SET name=?, role=?, appearance=?, personality=?, background=?, motivation=?, arc=?, updated_at=? WHERE character_id=?`,
+      [patch.name, patch.role, patch.appearance, patch.personality, patch.background, patch.motivation, patch.arc, now, characterId]);
+    log.info('[screenwriter.regenerateCharacter] DB 更新完成', { characterId, dbSaveMs: Date.now() - saveT0 });
+  } else {
+    usedFallback = true;
+    log.warn('[screenwriter.regenerateCharacter] AI 返回解析失败，保留原角色', { characterId, parsedType: typeof parsed });
+  }
+
+  const updated = _queryOne(db, 'SELECT * FROM sw_characters WHERE character_id = ?', [characterId]);
+  const result = {
+    characterId: updated.character_id,
+    outlineId: updated.outline_id,
+    name: updated.name,
+    role: updated.role,
+    personality: updated.personality,
+    appearance: updated.appearance,
+    background: updated.background,
+    motivation: updated.motivation,
+    arc: updated.arc,
+    gender: updated.gender,
+    age: updated.age,
+    sortOrder: updated.sort_order,
+    status: updated.status,
+  };
+  log.info('[screenwriter.regenerateCharacter] 完成', {
+    characterId,
+    oldName: existing.name,
+    newName: result.name,
+    role: result.role,
+    usedFallback,
+    aiMs: aiElapsed,
+    elapsedMs: Date.now() - t0,
+  });
+  return result;
+}
+
 function getJobRecord(db, jobId) {
   const row = _queryOne(db, 'SELECT * FROM sw_jobs WHERE job_id = ?', [jobId]);
   if (!row) return null;
@@ -1642,6 +1987,10 @@ module.exports = {
   updateOutline,
   regenerateEpisode,
   generateSceneDescription,
+  // Sprint 2 新增：角色保存 / 单幕重生成 / 单角色重生成
+  updateCharacter,
+  regenerateAct,
+  regenerateCharacter,
   // S2-T04: 一键创建项目
   createProject,
   // jobs

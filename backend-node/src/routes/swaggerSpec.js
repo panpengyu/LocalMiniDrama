@@ -138,6 +138,44 @@ module.exports = {
       },
     },
 
+    // ================= Sprint 2 增量：逐段修改 / 重生成 =================
+    '/ai/screenwriter/characters/{characterId}': {
+      patch: {
+        tags: ['修改/重生成'],
+        summary: '保存角色编辑结果（S2-T03）',
+        description: '用户在角色档案卡片修改姓名/角色定位/外貌/性格/背景后持久化',
+        parameters: [{ name: 'characterId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { example: { name: '苏暖', role: 'protagonist', appearance: '长直发、白衬衫', personality: '倔强善良', background: '普通家庭，有个弟弟' } } },
+        },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/screenwriter/characters/{characterId}/regenerate': {
+      post: {
+        tags: ['修改/重生成'],
+        summary: '单角色 AI 重写（S2-T03）',
+        description: 'Sprint 2 逐段修改和重新生成：保留角色定位（主角/反派）不变，AI 重新丰富外貌/性格/背景细节',
+        parameters: [{ name: 'characterId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, content: { 'application/json': { example: { prompt_append: '强化女主外表冷静但内心柔软的反差' } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/screenwriter/outlines/{outlineId}/regenerate-act': {
+      post: {
+        tags: ['修改/重生成'],
+        summary: '大纲单幕重写（S2-T01）',
+        description: 'Sprint 2 逐段修改：三幕式/起承转合中某一幕的 AI 重写，保持其他幕不变',
+        parameters: [{ name: 'outlineId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { example: { act_index: 1, prompt_append: '在这一幕加入关键证据的伏笔' } } },
+        },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+
     // ================= Sprint 2: 一键创建项目 =================
     '/ai/screenwriter/create-project': {
       post: {

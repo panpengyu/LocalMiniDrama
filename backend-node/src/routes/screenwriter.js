@@ -301,6 +301,74 @@ module.exports = function routes(db, cfg, log) {
     } catch (e) { log.error('POST /screenwriter/scene-description', e.message); fail(res, e.message); }
   });
 
+  // ========== Sprint 2 增量：逐段修改/重生成（单幕 / 单角色 / 角色保存） ==========
+
+  // PATCH /ai/screenwriter/characters/:characterId — 保存修改后的角色（人设/外貌/性格等）
+  router.patch('/characters/:characterId', async (req, res) => {
+    const t0 = Date.now();
+    const characterId = req.params.characterId;
+    const patch = req.body || {};
+    log.info('[router] PATCH /screenwriter/characters/:id 进入', { characterId, patchKeys: Object.keys(patch), patchKeysCount: Object.keys(patch).length, userAgent: req.get('user-agent')?.slice(0, 80) });
+    try {
+      if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) {
+        log.warn('[router] PATCH /screenwriter/characters/:id 参数非法：patch 为空', { characterId, elapsedMs: Date.now() - t0 });
+        return fail(res, '缺少修改字段');
+      }
+      const updated = swService.updateCharacter(db, log, characterId, patch);
+      if (!updated) {
+        log.warn('[router] PATCH /screenwriter/characters/:id 角色不存在或更新失败', { characterId, elapsedMs: Date.now() - t0 });
+        return fail(res, 'character not found', 404, 404);
+      }
+      log.info('[router] PATCH /screenwriter/characters/:id 成功', { characterId, name: updated.name, role: updated.role, elapsedMs: Date.now() - t0 });
+      ok(res, updated);
+    } catch (e) {
+      log.error('[router] PATCH /screenwriter/characters/:id 异常', { characterId, errMsg: e.message, stack: e.stack?.slice(0, 400), elapsedMs: Date.now() - t0 });
+      fail(res, e.message);
+    }
+  });
+
+  // POST /ai/screenwriter/characters/:characterId/regenerate — 单角色重生成（保留定位但丰富细节）
+  router.post('/characters/:characterId/regenerate', async (req, res) => {
+    const t0 = Date.now();
+    const characterId = req.params.characterId;
+    const body = req.body || {};
+    log.info('[router] POST /screenwriter/characters/:id/regenerate 进入', { characterId, bodyKeys: Object.keys(body), promptAppend: (body.prompt_append || body.promptAppend || '').slice(0, 80) });
+    try {
+      const result = await swService.regenerateCharacter(db, log, characterId, body);
+      log.info('[router] POST /screenwriter/characters/:id/regenerate 成功', { characterId, name: result?.name, role: result?.role, elapsedMs: Date.now() - t0 });
+      ok(res, result);
+    } catch (e) {
+      log.error('[router] POST /screenwriter/characters/:id/regenerate 异常', { characterId, errMsg: e.message, stack: e.stack?.slice(0, 400), elapsedMs: Date.now() - t0 });
+      fail(res, e.message);
+    }
+  });
+
+  // POST /ai/screenwriter/outlines/:outlineId/regenerate-act — 大纲单幕重生成
+  // body: { act_index: 0, prompt_append?: "增强冲突感" }
+  router.post('/outlines/:outlineId/regenerate-act', async (req, res) => {
+    const t0 = Date.now();
+    const outlineId = req.params.outlineId;
+    const body = req.body || {};
+    const actIndex = body.act_index != null ? body.act_index : body.actIndex;
+    log.info('[router] POST /screenwriter/outlines/:id/regenerate-act 进入', { outlineId, actIndex, promptAppend: (body.prompt_append || body.promptAppend || '').slice(0, 80), bodyKeys: Object.keys(body) });
+    try {
+      if (actIndex == null) {
+        log.warn('[router] POST /screenwriter/outlines/:id/regenerate-act 参数非法：缺少 act_index', { outlineId, elapsedMs: Date.now() - t0 });
+        return fail(res, '缺少 act_index');
+      }
+      if (Number.isNaN(Number(actIndex))) {
+        log.warn('[router] POST /screenwriter/outlines/:id/regenerate-act 参数非法：act_index 不是数字', { outlineId, actIndex, elapsedMs: Date.now() - t0 });
+        return fail(res, 'act_index 必须是数字');
+      }
+      const result = await swService.regenerateAct(db, log, outlineId, actIndex, body);
+      log.info('[router] POST /screenwriter/outlines/:id/regenerate-act 成功', { outlineId, actIndex: Number(actIndex), actNumber: result?.act_number, title: result?.title, keyEventCount: (result?.key_events || []).length, elapsedMs: Date.now() - t0 });
+      ok(res, { act: result, act_index: actIndex });
+    } catch (e) {
+      log.error('[router] POST /screenwriter/outlines/:id/regenerate-act 异常', { outlineId, actIndex, errMsg: e.message, stack: e.stack?.slice(0, 400), elapsedMs: Date.now() - t0 });
+      fail(res, e.message);
+    }
+  });
+
   // ========== S2-T04: 一键创建项目 ==========
   // POST /ai/screenwriter/create-project — AI生成结果一键创建完整项目(剧本+角色+场景+分镜)
   router.post('/create-project', async (req, res) => {
