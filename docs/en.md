@@ -125,9 +125,7 @@ npm run dev
 
 Open `http://localhost:3013` in your browser.
 
-You can also double-click `run_dev.bat` at the project root to **start both servers at once**.
-
-📖 Full developer guide, packaging, and FAQ → **[Quickstart Guide](quickstart.md)**
+📖 Full developer guide → **[Quickstart Guide](quickstart.md)**
 
 ---
 
@@ -165,7 +163,6 @@ LocalMiniDrama/
 │       ├── api/                  # Backend API wrappers
 │       ├── stores/               # Pinia state management
 │       └── styles/               # Global styles & theme variables
-├── desktop/               # Electron shell (builds the exe)
 ├── docs/                  # Documentation
 └── README.md
 ```
@@ -175,8 +172,7 @@ LocalMiniDrama/
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Vue 3 + Vite + Element Plus + Pinia + Axios |
-| Backend | Node.js + Express + SQLite (better-sqlite3) |
-| Desktop | Electron 28 + electron-builder |
+| Backend | Node.js + Express + MySQL |
 | Language | Plain JavaScript (no TypeScript) |
 
 ---

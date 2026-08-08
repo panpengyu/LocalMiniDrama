@@ -100,55 +100,9 @@ npm run dev
 
 ---
 
-### 3. 一键启动脚本
-
-在项目根目录提供了一键启动脚本，**同时启动后端和前端**：
-
-**Windows（双击运行）：**
-```
-run_dev.bat
-```
-
-**PowerShell：**
-```powershell
-.\run_dev.ps1
-```
-
-脚本会分别在两个窗口中启动后端（端口 5679）和前端（端口 3013），并自动打开浏览器。
-
----
-
-## 打包为 Windows exe
-
-> 打包前请先确保已完成后端和前端的 `npm install`。
-
-```bash
-cd desktop
-
-# 安装 Electron 相关依赖
-npm install
-
-# 打包（生成 NSIS 安装包 + 便携版 exe）
-npm run dist
-
-# 国内网络 Electron 下载慢时，使用镜像加速：
-npm run dist:cn
-```
-
-打包产物位于 `desktop/release/` 目录：
-- `本地短剧助手 Setup x.x.x.exe` — NSIS 安装包
-- `本地短剧助手 x.x.x.exe` — 便携版
-
-**打包原理：**
-1. 构建前端静态文件
-2. 复制后端代码与前端产物到 `desktop/` 
-3. electron-builder 打包为 Windows exe
-
----
-
 ## 配置文件说明
 
-配置文件位于 `backend-node/configs/config.yaml`（开发模式）或 `%APPDATA%\LocalMiniDrama\backend\configs\config.yaml`（exe 模式）。
+配置文件位于 `backend-node/configs/config.yaml`。
 
 主要配置项：
 

@@ -150,12 +150,6 @@ npm run dev:user
 npm run dev:admin
 ```
 
-或使用一键启动脚本：
-
-```bash
-./run_dev.bat   # Windows
-```
-
 #### 4.3.2 生产模式
 
 ```bash

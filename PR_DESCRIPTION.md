@@ -48,10 +48,8 @@ cors_origins:
 ### 2. 旧 frontweb 目录清理
 
 - 删除 `frontweb/`（158MB，153 文件）
-- 更新 10 个文件中的 `frontweb` → `front-user` 引用：
+- 更新 8 个文件中的 `frontweb` → `front-user` 引用：
   - `backend-node/src/app.js`（静态资源服务路径）
-  - `desktop/main.js`、`desktop/scripts/copy-front.js`
-  - `desktop/package.json`、3 份 electron-builder 配置
   - `backend-node/src/utils/dramaStyleMerge.js`、`constants/generationStylePresets.js`（注释）
   - `AGENTS.md`（项目结构说明）
 

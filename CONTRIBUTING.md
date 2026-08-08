@@ -98,21 +98,6 @@ npm run dev       # 默认端口 3013
 
 浏览器访问 `http://localhost:3013`
 
-### 一键启动（Windows）
-
-双击根目录的 `run_dev.bat` 可同时启动前端和后端。
-
-### 桌面端开发（Electron）
-
-```bash
-cd desktop
-npm install
-npm start
-```
-
-> Electron 开发需要安装 Python 3 和 Visual Studio C++ 生成工具（用于编译 better-sqlite3）。  
-> 详见 [快速开始文档](docs/quickstart.md)。
-
 ---
 
 ## 代码风格 / Code Style

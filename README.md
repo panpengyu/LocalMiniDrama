@@ -173,39 +173,34 @@
 
 ## 🚀 快速开始
 
-### 方式一：下载 exe（推荐）
+### 源码开发
 
-前往 **[Releases 下载页](https://github.com/xuanyustudio/LocalMiniDrama/releases)**：
-
-| 版本 | 说明 | 适合 |
-|------|------|------|
-| `本地短剧助手 x.x.x.exe` | 标准版，**含示例项目** | 新手入门 |
-| `本地短剧助手-Lite-x.x.x.exe` | Lite 版，体积更小 | 熟悉流程后 |
-
-双击运行 → 「AI 配置」填入 API Key → 开始创作。
-
-> 首次运行配置：`%APPDATA%\LocalMiniDrama\backend\configs\config.yaml`
-
-### 方式二：源码开发
-
-> Node.js ≥ 18
+> Node.js ≥ 18 · 使用 npm workspaces 统一管理依赖
 
 ```bash
 git clone https://github.com/xuanyustudio/LocalMiniDrama.git
 cd LocalMiniDrama
 
-# 后端（端口 5679）
-cd backend-node && npm install
-cp configs/config.example.yaml configs/config.yaml   # 填入 API Key
-npm run migrate && npm start
+# 一键安装全部依赖（后端 + 用户端 + 管理端 + 共享包）
+npm install
 
-# 前端（端口 3013，新终端）
-cd frontweb && npm install && npm run dev
+# 后端（端口 5679）
+cd backend-node
+# 首次部署或新增迁移时跑一次（启动时也会自动 ensureColumns）
+npm run migrate
+npm run dev
+
+# 用户端前端（端口 3013，新终端）
+npm run dev:user
+# 管理端前端（端口 3014，新终端）
+npm run dev:admin
 ```
 
-浏览器打开 `http://localhost:3013`，或双击根目录 **`run_dev.bat`** 一键启动。
+浏览器访问：
+- 用户端：`http://localhost:3013`
+- 管理端：`http://localhost:3014`（账号 admin / admin123）
 
-📖 [详细开发/打包/Docker 指南](docs/quickstart.md) · [AI 配置指南](docs/configuration.md)
+📖 [详细开发指南](docs/quickstart.md) · [AI 配置指南](docs/configuration.md)
 
 ---
 
@@ -229,18 +224,74 @@ cd frontweb && npm install && npm run dev
 
 ```
 LocalMiniDrama/
-├── backend-node/     # Express + SQLite，生成/合成/导入导出
-├── frontweb/         # Vue 3 + Element Plus + @vue-flow/core
+├── backend-node/     # Express + MySQL，生成/合成/导入导出/异常告警
+│   └── scripts/      # alert-scan.js · crontab 部署脚本
+├── front-user/       # 用户端（Vue 3 + @vue-flow，端口 3013）
 │   └── views/        # FilmList · DramaDetail · FilmCreate · DramaCanvas
-├── desktop/          # Electron 打包 exe
+├── front-admin/      # 管理端（Vue 3 + Element Plus，端口 3014）
+│   └── views/        # operation/* · system/* · finance/* · model-gateway/*
+├── packages/shared/  # @localmini/shared 共享包（request / theme / mediaUrl / userStore）
 └── docs/             # 文档与计划
 ```
 
+使用 **npm workspaces** 管理多项目依赖，所有前端共享 Vue 3 / Element Plus / Vite 版本，避免兼容性问题。
+
 | 层 | 技术 |
 |----|------|
-| 前端 | Vue 3 · Vite · Element Plus · Pinia · @vue-flow/core |
-| 后端 | Node.js · Express · SQLite (better-sqlite3) |
-| 桌面 | Electron 28 · electron-builder |
+| 用户端 | Vue 3 · Vite · Element Plus · Pinia · @vue-flow/core |
+| 管理端 | Vue 3 · Vite · Element Plus · Pinia · ECharts |
+| 后端 | Node.js · Express · MySQL (mysql2) · 迁移自动执行 |
+| 共享包 | @localmini/shared（request 工厂 / useTheme / mediaUrl 工具） |
+
+---
+
+## ✅ 依赖一致性 & 项目拆分维护指南
+
+### 共享依赖版本（npm workspaces 自动去重，两项目完全一致）
+
+| 依赖 | 当前版本 |
+|------|---------|
+| Vue | 3.5.41 |
+| Vue Router | 4.6.4 |
+| Pinia | 2.3.1 |
+| Element Plus | 2.14.4 |
+| @element-plus/icons-vue | 2.3.2 |
+| Axios | 1.19.0 |
+| Vite | 5.4.21 |
+| @vitejs/plugin-vue | 5.2.4 |
+
+项目独有依赖：**front-user** 使用 `@vue-flow/*`（画布工作流），**front-admin** 使用 `echarts`（运营图表）。
+
+### 版本一致性检查
+
+```bash
+# 比较两个前端的实际安装版本
+npm ls vue vue-router pinia element-plus @element-plus/icons-vue axios vite @vitejs/plugin-vue --workspace front-user
+npm ls vue vue-router pinia element-plus @element-plus/icons-vue axios vite @vitejs/plugin-vue --workspace front-admin
+```
+
+如果发现版本不一致（出现 `dedup` 字样或版本号不同），执行：
+```bash
+npm dedupe
+# 或强制重新安装
+rm -rf node_modules package-lock.json && npm install
+```
+
+### 前端拆分后开发注意事项
+
+1. **Token 隔离**：front-user 使用 `user_token`，front-admin 使用 `admin_token`，两套登录互不干扰
+2. **共享包更新**：两个前端共用的工具（`request`、`useTheme`、`mediaUrl`）提取到 `packages/shared/`，front-user 的 `utils/mediaUrl.js` 仅做重新导出
+3. **新增依赖**：跨前端共享的依赖建议在根目录执行 `npm i -w front-user -w front-admin 包名`，自动同步两边 package.json
+4. **构建验证**：拆分修改后执行 `npm run build:all` 确认两端都能打包成功
+5. **后端静态资源**：`backend-node` 5679 端口会自动服务 `front-user/dist/` 构建产物（代替原先的 frontweb/dist）
+
+### 构建产物清理/迁移检查清单
+
+| 检查项 | 说明 |
+|--------|------|
+| `.gitignore` 确认无 `frontweb/` 残留 | 仅保留 `frontweb-edu`（不同项目）|
+| `backend-node/src/app.js` 静态路径 | frontweb/dist → front-user/dist |
+| `AGENTS.md` 开发指引 | 项目结构 / 端口 / 构建命令 |
 
 ---
 
@@ -290,7 +341,7 @@ LocalMiniDrama/
 - ⭐ **Star** 帮助更多人发现本项目
 
 **GitHub 仓库建议 Topics**（在仓库 Settings → Topics 添加，便于搜索）：  
-`ai-video` `short-drama` `storyboard` `vue3` `electron` `local-first` `seedance` `comic-drama`
+`ai-video` `short-drama` `storyboard` `vue3` `local-first` `seedance` `comic-drama`
 
 ---
 
