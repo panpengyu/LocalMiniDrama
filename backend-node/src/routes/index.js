@@ -34,6 +34,7 @@ const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
 const authRoutes = require('./auth');
 const adminRoutes = require('./admin');
+const screenwriterRoutes = require('./screenwriter');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -62,6 +63,7 @@ function setupRouter(cfg, db, log) {
   const promptOverrides = promptOverridesRoutes.routes(db, log);
   const auth = authRoutes(db, log);
   const admin = adminRoutes(db, log);
+  const screenwriter = screenwriterRoutes(db, cfg, log);
   const { requireAuth, requireRole } = require('../middleware/auth');
 
   // ---------- 认证模块 ----------
@@ -374,6 +376,9 @@ function setupRouter(cfg, db, log) {
   r.get('/scene-model-map/:key', sceneModelMap.get);
   r.put('/scene-model-map/:key', sceneModelMap.update);
   r.delete('/scene-model-map/:key', sceneModelMap.delete);
+
+  // ---------- AI编剧助手模块（Sprint 1） ----------
+  r.use('/ai/screenwriter', screenwriter);
 
   // 启动时将已有的覆盖加载到 promptI18n 内存缓存
   try {

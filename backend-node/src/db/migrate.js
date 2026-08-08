@@ -534,6 +534,213 @@ function ensureAllColumns(database) {
     { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
     { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
   ]);
+
+  // ---------- AI编剧助手 Sprint 1: sw_* 系列表 ----------
+  ensure('sw_outlines', [
+    { name: 'outline_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'enterprise_id', type: 'BIGINT' },
+    { name: 'drama_id', type: 'BIGINT' },
+    { name: 'title', type: 'VARCHAR(255) NOT NULL DEFAULT \'\'' },
+    { name: 'logline', type: 'TEXT' },
+    { name: 'idea', type: 'TEXT' },
+    { name: 'genre', type: 'VARCHAR(32)' },
+    { name: 'structure', type: 'VARCHAR(32) DEFAULT \'three_act\'' },
+    { name: 'style', type: 'VARCHAR(32) DEFAULT \'hot\'' },
+    { name: 'episode_count', type: 'INTEGER DEFAULT 10' },
+    { name: 'target_audience', type: 'VARCHAR(255)' },
+    { name: 'themes_json', type: 'TEXT' },
+    { name: 'acts_json', type: 'MEDIUMTEXT' },
+    { name: 'status', type: 'VARCHAR(16) DEFAULT \'draft\'' },
+    { name: 'error_message', type: 'TEXT' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_characters', [
+    { name: 'character_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'drama_id', type: 'BIGINT' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'name', type: 'VARCHAR(128) NOT NULL DEFAULT \'\'' },
+    { name: '`role`', type: 'VARCHAR(16) NOT NULL DEFAULT \'supporting\'' },
+    { name: 'age', type: 'INTEGER' },
+    { name: 'gender', type: 'VARCHAR(16)' },
+    { name: 'personality', type: 'TEXT' },
+    { name: 'appearance', type: 'TEXT' },
+    { name: 'background', type: 'TEXT' },
+    { name: 'motivation', type: 'TEXT' },
+    { name: 'arc', type: 'TEXT' },
+    { name: 'appearance_prompt', type: 'TEXT' },
+    { name: 'voice_profile', type: 'TEXT' },
+    { name: 'tags_json', type: 'TEXT' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'status', type: 'VARCHAR(16) DEFAULT \'draft\'' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_episodes', [
+    { name: 'episode_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'outline_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'drama_id', type: 'BIGINT' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'episode_number', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'title', type: 'VARCHAR(255) NOT NULL DEFAULT \'\'' },
+    { name: 'summary', type: 'MEDIUMTEXT' },
+    { name: 'duration_estimate', type: 'VARCHAR(32)' },
+    { name: 'cliffhanger', type: 'TEXT' },
+    { name: 'status', type: 'VARCHAR(16) DEFAULT \'draft\'' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_scenes', [
+    { name: 'scene_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'episode_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'scene_number', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'location', type: 'VARCHAR(255)' },
+    { name: 'description', type: 'MEDIUMTEXT' },
+    { name: 'time_of_day', type: 'VARCHAR(32)' },
+    { name: 'atmosphere', type: 'VARCHAR(64)' },
+    { name: 'characters_json', type: 'TEXT' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_storyboards', [
+    { name: 'frame_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'episode_id', type: 'VARCHAR(64)' },
+    { name: 'scene_id', type: 'VARCHAR(64)' },
+    { name: 'drama_id', type: 'BIGINT' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'frame_number', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'shot_type', type: 'VARCHAR(32)' },
+    { name: 'camera_movement', type: 'VARCHAR(32)' },
+    { name: 'composition', type: 'VARCHAR(32)' },
+    { name: 'emotion', type: 'VARCHAR(32)' },
+    { name: 'duration', type: 'VARCHAR(32)' },
+    { name: 'transition', type: 'VARCHAR(32) DEFAULT \'cut\'' },
+    { name: 'visual_description', type: 'MEDIUMTEXT' },
+    { name: 'prompt', type: 'TEXT' },
+    { name: 'characters_json', type: 'TEXT' },
+    { name: 'image_url', type: 'VARCHAR(512)' },
+    { name: 'generation_status', type: 'VARCHAR(16) DEFAULT \'pending\'' },
+    { name: 'consistency_score', type: 'FLOAT' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_dialogues', [
+    { name: 'dialogue_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'frame_id', type: 'VARCHAR(64)' },
+    { name: 'episode_id', type: 'VARCHAR(64)' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'character_id', type: 'VARCHAR(64)' },
+    { name: 'character_name', type: 'VARCHAR(128)' },
+    { name: 'line_text', type: 'MEDIUMTEXT' },
+    { name: 'emotion', type: 'VARCHAR(32) DEFAULT \'neutral\'' },
+    { name: 'action_description', type: 'TEXT' },
+    { name: 'duration_estimate', type: 'VARCHAR(32)' },
+    { name: 'audio_url', type: 'VARCHAR(512)' },
+    { name: 'tts_provider', type: 'VARCHAR(32)' },
+    { name: 'tts_voice_id', type: 'VARCHAR(128)' },
+    { name: 'tts_status', type: 'VARCHAR(16) DEFAULT \'pending\'' },
+    { name: 'speed', type: 'FLOAT DEFAULT 1.0' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('drama_templates', [
+    { name: 'template_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'category', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: '`key`', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'name', type: 'VARCHAR(128) NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'TEXT' },
+    { name: 'prompt_system', type: 'TEXT' },
+    { name: 'prompt_example', type: 'TEXT' },
+    { name: 'output_schema', type: 'TEXT' },
+    { name: 'parameters_json', type: 'TEXT' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_jobs', [
+    { name: 'job_id', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'bull_job_id', type: 'VARCHAR(128)' },
+    { name: 'user_id', type: 'BIGINT' },
+    { name: 'enterprise_id', type: 'BIGINT' },
+    { name: 'outline_id', type: 'VARCHAR(64)' },
+    { name: 'episode_id', type: 'VARCHAR(64)' },
+    { name: 'frame_id', type: 'VARCHAR(64)' },
+    { name: 'job_type', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'payload_json', type: 'MEDIUMTEXT' },
+    { name: 'result_json', type: 'MEDIUMTEXT' },
+    { name: 'status', type: 'VARCHAR(16) NOT NULL DEFAULT \'pending\'' },
+    { name: 'progress', type: 'INTEGER DEFAULT 0' },
+    { name: 'error_message', type: 'TEXT' },
+    { name: 'retry_count', type: 'INTEGER DEFAULT 0' },
+    { name: 'max_retries', type: 'INTEGER DEFAULT 3' },
+    { name: 'started_at', type: 'DATETIME' },
+    { name: 'completed_at', type: 'DATETIME' },
+    { name: 'duration_ms', type: 'BIGINT' },
+    { name: 'cost_points', type: 'BIGINT DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_dialogue_emotions', [
+    { name: 'emotion_key', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'label_zh', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'VARCHAR(255)' },
+    { name: 'tts_speed_modifier', type: 'FLOAT DEFAULT 1.0' },
+    { name: 'tts_volume_modifier', type: 'FLOAT DEFAULT 1.0' },
+    { name: 'tts_pitch_modifier', type: 'FLOAT DEFAULT 0.0' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_shot_types', [
+    { name: 'shot_key', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'label_zh', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'VARCHAR(255)' },
+    { name: 'default_duration', type: 'VARCHAR(32)' },
+    { name: 'icon', type: 'VARCHAR(64)' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_genres', [
+    { name: 'genre_key', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'label_zh', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'VARCHAR(255)' },
+    { name: 'tags_json', type: 'TEXT' },
+    { name: 'default_episode_count', type: 'INTEGER DEFAULT 10' },
+    { name: 'default_style', type: 'VARCHAR(32)' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  ensure('sw_styles', [
+    { name: 'style_key', type: 'VARCHAR(32) NOT NULL DEFAULT \'\'' },
+    { name: 'label_zh', type: 'VARCHAR(64) NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'VARCHAR(255)' },
+    { name: 'prompt_bias', type: 'TEXT' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'is_active', type: 'TINYINT DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
 }
 
 /**

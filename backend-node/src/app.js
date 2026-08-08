@@ -58,6 +58,18 @@ function createApp() {
   const { resumeProcessingVideoGenerations } = require('./services/videoService');
   resumeProcessingVideoGenerations(db, log);
 
+  // ========== Sprint 1: AI编剧助手后台消费者（Bull队列） ==========
+  try {
+    const { startScreenwriterWorker } = require('./services/screenwriterWorker');
+    startScreenwriterWorker(db, log).then(info => {
+      log.info('[Sprint1] screenwriterWorker started:', info);
+    }).catch(err => {
+      log.warn('[Sprint1] screenwriterWorker start failed (will use sync mode fallback):', err.message);
+    });
+  } catch (e) {
+    log.warn('[Sprint1] screenwriterWorker module not available, skip:', e.message);
+  }
+
   // 创建 Express 应用实例
   const app = express();
   

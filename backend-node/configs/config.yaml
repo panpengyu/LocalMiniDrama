@@ -9,6 +9,7 @@ server:
   cors_origins:
     - http://localhost:3012
     - http://localhost:3013
+    - http://localhost:3014
   read_timeout: 600
   write_timeout: 600
   insecure_tls: true
@@ -48,3 +49,14 @@ image_proxy:
   use_for_video: true
   upload_timeout_seconds: 180
   upload_max_attempts: 2
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ''
+  db: 0
+queue:
+  default_attempts: 3
+  backoff_type: exponential
+  backoff_delay: 5000
+  concurrency: 2
+  enabled: true
