@@ -33,5 +33,29 @@ export const dashboardAPI = {
    */
   getConsumptionBreakdown() {
     return request.get('/admin/stats/consumption')
+  },
+
+  /**
+   * 创作漏斗分析（Sprint 4 - S4-T05/T06）
+   * 返回: { stages: [{key,label,count,conversionRate}], overallRate }
+   */
+  getCreationFunnel() {
+    return request.get('/admin/stats/funnel')
+  },
+
+  /**
+   * 模型成本看板（Sprint 4 - S4-T05/T06）
+   * 返回: { items: [{model,serviceType,provider,totalCalls,successCount,failedCount,successRate,avgLatency,totalCost,avgQuality}], summary: {totalModels,totalCalls,totalCost,avgSuccessRate} }
+   */
+  getModelCost() {
+    return request.get('/admin/stats/model-cost')
+  },
+
+  /**
+   * AI洞察（Sprint 4 - S4-T05/T06）
+   * 返回: { insights: [{level,type,message,data}], generatedAt }
+   */
+  getAiInsights() {
+    return request.get('/admin/stats/insights')
   }
 }

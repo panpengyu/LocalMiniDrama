@@ -88,6 +88,42 @@
                 润色镜头提示词
               </el-button>
             </div>
+            <!-- 生成的分镜列表 -->
+            <div v-if="sbFrames.length" class="sb-frames-list">
+              <div class="sb-frames-head">
+                <span>分镜列表（{{ sbFrames.length }}）</span>
+                <el-button link type="primary" size="small" @click="emit('generated', { kind: 'storyboard', frames: sbFrames, inject: true })">
+                  注入画布
+                </el-button>
+              </div>
+              <el-scrollbar max-height="320px">
+                <div v-for="(f, idx) in sbFrames" :key="idx" class="sb-frame-card">
+                  <div class="sb-frame-head">
+                    <span class="sb-frame-num">#{{ f.frame_number }}</span>
+                    <el-tag size="small" effect="plain">{{ f.shot_type_label || f.shot_type }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">{{ f.emotion_label || f.emotion }}</el-tag>
+                    <span class="sb-frame-dur">{{ f.duration }}</span>
+                    <el-button link size="small" type="danger" @click="onFrameDelete(idx)">删除</el-button>
+                  </div>
+                  <el-input
+                    v-model="f.visual_description"
+                    type="textarea" :rows="2" size="small"
+                    placeholder="视觉描述" @change="onFrameEdit(f, 'visual_description', f.visual_description)"
+                  />
+                  <el-input
+                    v-model="f.prompt"
+                    type="textarea" :rows="2" size="small"
+                    placeholder="SD Prompt" @change="onFrameEdit(f, 'prompt', f.prompt)"
+                    style="margin-top:4px"
+                  />
+                  <div class="sb-frame-meta">
+                    <span>运镜：{{ f.camera_movement_label || f.camera_movement }}</span>
+                    <span>构图：{{ f.composition_label || f.composition }}</span>
+                    <span>转场：{{ f.transition_label || f.transition }}</span>
+                  </div>
+                </div>
+              </el-scrollbar>
+            </div>
           </el-form>
         </div>
       </el-tab-pane>
@@ -101,12 +137,9 @@
                 <div v-for="c in characterList" :key="c.id" class="ai-voice-item">
                   <div class="ai-voice-cname">{{ c.name }}<span class="ai-voice-role">{{ c.role }}</span></div>
                   <el-select v-model="c.voice" placeholder="选择音色" size="small">
-                    <el-option label="女声-温柔旁白" value="female_soft" />
-                    <el-option label="女声-甜美白领" value="female_sweet" />
-                    <el-option label="男声-沉稳男主" value="male_deep" />
-                    <el-option label="男声-年轻少年" value="male_teen" />
-                    <el-option label="反派-沙哑磁性" value="male_villain" />
+                    <el-option v-for="v in (ttsVoiceList.length ? ttsVoiceList : defaultVoices)" :key="v.id" :label="v.name" :value="v.id" />
                   </el-select>
+                  <el-button link type="primary" size="small" @click="onVoiceBind(c)" style="margin-top:4px">绑定</el-button>
                 </div>
                 <div v-if="!characterList.length" class="ai-voice-empty">
                   本项目暂无角色，先到「AI编剧」生成角色。
@@ -118,13 +151,28 @@
                 placeholder="角色名:台词&#10;例：&#10;林深:这里到底发生过什么？&#10;苏暖:(低下头)我…我不想再提起。" />
             </el-form-item>
             <div class="ai-sw-actions">
-              <el-button type="primary" :loading="ttsBusy.extract">
+              <el-button type="primary" :loading="ttsBusy.extract" @click="onTTSExtract">
                 从分镜提取台词
               </el-button>
-              <el-button :loading="ttsBusy.generate">
+              <el-button :loading="ttsBusy.generate" @click="onTTSGenerate">
                 <el-icon><Microphone /></el-icon>
                 批量生成配音
               </el-button>
+            </div>
+            <!-- 配音结果列表 -->
+            <div v-if="ttsResults.length" class="tts-results-list">
+              <div class="tts-results-head">配音结果（{{ ttsResults.length }}）</div>
+              <el-scrollbar max-height="240px">
+                <div v-for="(r, idx) in ttsResults" :key="idx" class="tts-result-item" :class="r.status">
+                  <div class="tts-r-head">
+                    <el-tag size="small" :type="r.status === 'success' ? 'success' : 'danger'">{{ r.status === 'success' ? '成功' : '失败' }}</el-tag>
+                    <span class="tts-r-char">{{ r.characterName }}</span>
+                    <span class="tts-r-text">{{ r.text }}</span>
+                  </div>
+                  <audio v-if="r.audioPath" :src="'/static/' + r.audioPath" controls style="width:100%;height:28px" />
+                  <div v-if="r.error" class="tts-r-err">{{ r.error }}</div>
+                </div>
+              </el-scrollbar>
             </div>
           </el-form>
         </div>
@@ -210,10 +258,12 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { MagicStick, Document, UserFilled, Collection, Film, MagicStick as Wand, Microphone, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { screenwriterAPI } from '@/api/screenwriter'
+import { storyboardAIAPI } from '@/api/storyboardAI'
+import { ttsPipelineAPI } from '@/api/ttsPipeline'
 import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
 
 const log = useWorkbenchLogger('WorkbenchAIPanel')
@@ -242,12 +292,31 @@ const sbScript = ref('')
 const sbStyle = ref('vertical_916')
 const sbCount = ref(8)
 const sbBusy = reactive({ generate: false, polish: false })
+const sbFrames = ref([])          // 生成的分镜列表
+const sbEditingFrame = ref(null)   // 当前编辑的分镜
 // ---- AI配音 ----
 const ttsDialogue = ref('')
-const ttsBusy = reactive({ extract: false, generate: false })
+const ttsBusy = reactive({ extract: false, generate: false, bind: false })
+const ttsVoiceList = ref([])       // 音色列表
+const ttsEmotionList = ref([])     // 情感列表
+const ttsResults = ref([])         // 配音生成结果
+const ttsDialogues = ref([])       // 提取的台词列表
 // ---- 生成队列 ----
 const queue = ref([])
 const runningCount = computed(() => queue.value.filter(q => q.status === 'running').length)
+
+// 默认音色列表（API未返回时的兜底）
+const defaultVoices = [
+  { id: 'female_soft', name: '女声-温柔旁白' },
+  { id: 'female_sweet', name: '女声-甜美白领' },
+  { id: 'male_deep', name: '男声-沉稳男主' },
+  { id: 'male_teen', name: '男声-年轻少年' },
+  { id: 'male_villain', name: '反派-沙哑磁性' },
+]
+
+onMounted(() => {
+  loadVoiceDicts()
+})
 
 // 记录任务启动时间（用于耗时统计）
 const _taskStartMap = new Map()
@@ -304,24 +373,162 @@ async function onSBGenerate() {
   const end = log.startMeasure('AI.gen.storyboard')
   try {
     log.info('[SB] 启动分镜生成', { dramaId: Number(props.dramaId), scriptLen: sbScript.value.length, count: sbCount.value, style: sbStyle.value, qid })
-    updateQueue(qid, 50, 'running')
-    await new Promise(r => setTimeout(r, 400)) // 占位模拟
+    updateQueue(qid, 30, 'running')
+    const res = await storyboardAIAPI.generate({
+      scriptText: sbScript.value,
+      dramaId: Number(props.dramaId) || null,
+      style: sbStyle.value,
+      count: sbCount.value,
+      characters: (props.characterList || []).map(c => ({ name: c.name })),
+    })
+    const data = res?.data || res
+    sbFrames.value = data?.frames || []
     updateQueue(qid, 100, 'success')
-    const ms = end(true, { qid, count: sbCount.value })
-    ElMessage.success('分镜脚本已生成')
-    log.info('[SB] 分镜生成成功', { qid, totalMs: ms, count: sbCount.value })
-    emit('generated', { kind: 'storyboard' })
+    const ms = end(true, { qid, count: sbFrames.value.length })
+    ElMessage.success(`已生成 ${sbFrames.value.length} 个分镜`)
+    log.info('[SB] 分镜生成成功', { qid, totalMs: ms, count: sbFrames.value.length })
+    emit('generated', { kind: 'storyboard', frames: sbFrames.value, generationId: data?.generationId })
   } catch (e) {
     end(false, { qid, errMsg: e?.message })
     log.error('[SB] 分镜生成失败', e, { qid })
     updateQueue(qid, 0, 'failed', e?.message)
+    ElMessage.error(e?.message || '分镜生成失败')
   } finally {
     sbBusy.generate = false
   }
 }
-function onSBPolish() {
-  log.info('[SB] 镜头提示词润色（Sprint 4 实现）', { scriptLen: sbScript.value.length })
-  ElMessage.info('镜头提示词润色：已接入分镜 AI 面板后续 Sprint 4 实现')
+
+async function onSBPolish() {
+  if (sbBusy.polish) return
+  if (!sbFrames.value.length) return ElMessage.warning('请先生成分镜')
+  sbBusy.polish = true
+  const qid = pushQueue('storyboard', '润色镜头提示词')
+  try {
+    // 批量润色所有分镜的 prompt
+    let polished = 0
+    for (let i = 0; i < sbFrames.value.length; i++) {
+      updateQueue(qid, Math.round(((i + 1) / sbFrames.value.length) * 100), 'running')
+      try {
+        const res = await storyboardAIAPI.polishPrompt({
+          frame: sbFrames.value[i],
+          style: sbStyle.value,
+        })
+        const prompt = res?.data?.prompt
+        if (prompt) { sbFrames.value[i].prompt = prompt; polished++ }
+      } catch (_) { /* 单帧失败跳过 */ }
+    }
+    updateQueue(qid, 100, 'success')
+    ElMessage.success(`已润色 ${polished} 个分镜提示词`)
+    log.info('[SB] 提示词润色完成', { polished })
+    emit('generated', { kind: 'storyboard', frames: sbFrames.value, polished: true })
+  } catch (e) {
+    log.error('[SB] 润色失败', e)
+    updateQueue(qid, 0, 'failed', e?.message)
+    ElMessage.error(e?.message || '润色失败')
+  } finally {
+    sbBusy.polish = false
+  }
+}
+
+// 编辑单个分镜字段
+function onFrameEdit(frame, field, value) {
+  frame[field] = value
+  log.info('[SB] 分镜字段编辑', { frameNumber: frame.frame_number, field })
+}
+
+// 删除分镜
+function onFrameDelete(index) {
+  sbFrames.value.splice(index, 1)
+  sbFrames.value.forEach((f, i) => { f.frame_number = i + 1 })
+  log.info('[SB] 删除分镜', { index })
+}
+
+// ---- AI配音 ----
+async function loadVoiceDicts() {
+  try {
+    const [vRes, eRes] = await Promise.all([
+      ttsPipelineAPI.listVoices(),
+      ttsPipelineAPI.listEmotions(),
+    ])
+    ttsVoiceList.value = vRes?.data?.items || []
+    ttsEmotionList.value = eRes?.data?.items || []
+  } catch (_) {}
+}
+
+async function onTTSExtract() {
+  if (ttsBusy.extract) return
+  if (!props.dramaId) return ElMessage.warning('请先选择项目')
+  ttsBusy.extract = true
+  const qid = pushQueue('tts', '提取分镜台词')
+  try {
+    const res = await ttsPipelineAPI.extractDialogues({ dramaId: Number(props.dramaId) })
+    const items = res?.data?.items || []
+    ttsDialogues.value = items
+    // 填充到批量台词输入框
+    ttsDialogue.value = items.map(i => `${i.characterName}:${i.text}`).join('\n')
+    updateQueue(qid, 100, 'success')
+    ElMessage.success(`已提取 ${items.length} 条台词`)
+    log.info('[TTS] 台词提取成功', { count: items.length })
+  } catch (e) {
+    log.error('[TTS] 台词提取失败', e)
+    updateQueue(qid, 0, 'failed', e?.message)
+    ElMessage.error(e?.message || '台词提取失败')
+  } finally {
+    ttsBusy.extract = false
+  }
+}
+
+async function onTTSGenerate() {
+  if (ttsBusy.generate) return
+  // 解析台词输入框
+  const lines = ttsDialogue.value.split('\n').map(l => l.trim()).filter(Boolean)
+  if (!lines.length) return ElMessage.warning('请先输入或提取台词')
+  ttsBusy.generate = true
+  const qid = pushQueue('tts', `批量配音 x${lines.length}`)
+  try {
+    const items = lines.map((line, i) => {
+      const m = line.match(/^(.{1,20}?)[:：](.+)$/)
+      return {
+        characterName: m ? m[1].replace(/[（）()]/g, '').trim() : '旁白',
+        text: m ? m[2].trim() : line,
+        sortOrder: i,
+      }
+    })
+    updateQueue(qid, 30, 'running')
+    const res = await ttsPipelineAPI.batchSynthesize({
+      dramaId: Number(props.dramaId) || null,
+      items,
+    })
+    const data = res?.data || res
+    ttsResults.value = data?.results || []
+    updateQueue(qid, 100, 'success')
+    ElMessage.success(`配音完成：成功${data?.success || 0}/${data?.total || 0}`)
+    log.info('[TTS] 批量配音完成', { total: data?.total, success: data?.success, failed: data?.failed })
+    emit('generated', { kind: 'tts', results: ttsResults.value })
+  } catch (e) {
+    log.error('[TTS] 批量配音失败', e)
+    updateQueue(qid, 0, 'failed', e?.message)
+    ElMessage.error(e?.message || '配音生成失败')
+  } finally {
+    ttsBusy.generate = false
+  }
+}
+
+// 保存角色音色绑定
+async function onVoiceBind(character) {
+  try {
+    await ttsPipelineAPI.bindVoice({
+      dramaId: Number(props.dramaId),
+      characterId: character.id,
+      characterName: character.name,
+      voiceId: character.voice || 'female_soft',
+      emotion: character.emotion || 'neutral',
+    })
+    ElMessage.success(`${character.name} 音色已绑定`)
+    log.info('[TTS] 音色绑定', { characterId: character.id, voice: character.voice })
+  } catch (e) {
+    ElMessage.error(e?.message || '绑定失败')
+  }
 }
 
 // ---- 队列函数 ----
@@ -436,4 +643,24 @@ function qTagType(s) { return { running: 'primary', success: 'success', failed: 
 .ai-q-title { flex: 1; font-size: 12px; color: var(--el-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-q-err { font-size: 12px; color: #dc2626; margin: 4px 0; }
 .ai-q-foot { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--el-text-color-secondary); }
+
+/* S4-T02: 分镜列表样式 */
+.sb-frames-list { margin-top: 12px; border-top: 1px dashed var(--el-border-color-darker); padding-top: 10px; }
+.sb-frames-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.sb-frame-card { border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px; margin-bottom: 8px; background: var(--el-fill-color-lighter); }
+.sb-frame-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.sb-frame-num { font-size: 13px; font-weight: 700; color: #4338ca; }
+.sb-frame-dur { font-size: 11px; color: var(--el-text-color-secondary); margin-left: auto; }
+.sb-frame-meta { display: flex; gap: 12px; margin-top: 4px; font-size: 11px; color: var(--el-text-color-secondary); flex-wrap: wrap; }
+
+/* S4-T04: 配音结果样式 */
+.tts-results-list { margin-top: 12px; border-top: 1px dashed var(--el-border-color-darker); padding-top: 10px; }
+.tts-results-head { font-size: 12px; font-weight: 600; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.tts-result-item { border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px; margin-bottom: 8px; background: var(--el-fill-color-lighter); }
+.tts-result-item.success { border-left: 3px solid #67c23a; }
+.tts-result-item.failed { border-left: 3px solid #f56c6c; background: #fef2f2; }
+.tts-r-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.tts-r-char { font-size: 12px; font-weight: 600; color: #4338ca; }
+.tts-r-text { font-size: 12px; color: var(--el-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tts-r-err { font-size: 11px; color: #dc2626; margin-top: 4px; }
 </style>

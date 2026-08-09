@@ -38,6 +38,10 @@ const authRoutes = require('./auth');
 const adminRoutes = require('./admin');
 const screenwriterRoutes = require('./screenwriter');
 const consistencyRoutes = require('./consistency');
+const storyboardAIRoutes = require('./storyboardAI');
+const ttsPipelineRoutes = require('./ttsPipeline');
+const moderationRoutes = require('./moderation');
+const modelRoutingRoutes = require('./modelRouting');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -83,6 +87,10 @@ function setupRouter(cfg, db, log) {
   r.get('/admin/stats', requireAuth, requireRole(['super_admin']), admin.getStats);
   r.get('/admin/stats/trend', requireAuth, requireRole(['super_admin']), admin.getStatsTrend);
   r.get('/admin/stats/consumption', requireAuth, requireRole(['super_admin']), admin.getConsumptionBreakdown);
+  // Sprint 4 - S4-T05: 智能运营看板扩展
+  r.get('/admin/stats/funnel', requireAuth, requireRole(['super_admin']), admin.getCreationFunnel);
+  r.get('/admin/stats/model-cost', requireAuth, requireRole(['super_admin']), admin.getModelCost);
+  r.get('/admin/stats/insights', requireAuth, requireRole(['super_admin']), admin.getAiInsights);
 
   r.get('/admin/users', requireAuth, requireRole(['super_admin']), admin.getUsers);
   r.post('/admin/users', requireAuth, requireRole(['super_admin']), admin.createUser);
@@ -394,6 +402,18 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 角色一致性模块（Sprint 2: S2-T05~T08） ----------
   r.use('/ai/consistency', consistencyRoutes(db, log));
+
+  // ---------- 智能分镜模块（Sprint 4: S4-T01） ----------
+  r.use('/ai/storyboard', storyboardAIRoutes(db, cfg, log));
+
+  // ---------- 智能配音流水线模块（Sprint 4: S4-T03/T04） ----------
+  r.use('/ai/tts', ttsPipelineRoutes(db, cfg, log));
+
+  // ---------- 内容审核模块（Sprint 4: S4-T08） ----------
+  r.use('/ai/moderation', moderationRoutes(db, log));
+
+  // ---------- AI模型智能路由模块（Sprint 4: S4-T07） ----------
+  r.use('/ai/model-routing', modelRoutingRoutes(db, log));
 
   // 启动时将已有的覆盖加载到 promptI18n 内存缓存
   try {

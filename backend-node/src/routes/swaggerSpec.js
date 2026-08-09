@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------
-// Sprint 1: AI编剧助手模块 OpenAPI 3.0 规范
+// OpenAPI 3.0 规范（Sprint 1 + Sprint 4）
 // 访问端点: GET /api/v1/docs → Swagger UI
 // ---------------------------------------------------------------
 module.exports = {
   openapi: '3.0.3',
   info: {
-    title: 'LocalMiniDrama — AI编剧助手 API (Sprint 1)',
-    version: '1.0.0',
-    description: '高端智能漫剧创作平台：AI编剧助手后端接口（Sprint 1 交付物）。支持大纲/角色/分集/分镜/台词的同步与异步生成，多轮对话式编剧，任务进度查询/取消。数据全部落库 MySQL。',
+    title: 'LocalMiniDrama — AI创作平台 API',
+    version: '4.0.0',
+    description: '高端智能漫剧创作平台后端接口。Sprint 1：AI编剧助手（大纲/角色/分集/分镜/台词生成、多轮对话、任务队列）。Sprint 4：智能分镜生成、智能配音TTS流水线、AI模型智能路由引擎、内容审核服务、智能运营看板。数据全部落库 MySQL。',
     contact: { name: 'LocalMiniDrama Team' },
   },
   servers: [{ url: '/api/v1', description: 'API v1 base' }],
@@ -18,6 +18,11 @@ module.exports = {
     { name: '查询', description: '大纲/角色/分集/分镜/台词 CRUD 查询' },
     { name: '多轮对话', description: 'S1-T02 多轮对话式编剧：会话 + 消息历史' },
     { name: '任务队列', description: 'Bull 任务：查询 / 列表 / 取消' },
+    { name: '智能分镜(S4)', description: 'S4-T01 智能分镜生成：剧本段落→专业分镜（镜头类型/运镜/构图/情绪/时长）' },
+    { name: '智能配音(S4)', description: 'S4-T03 智能配音TTS流水线：角色音色绑定/台词提取/批量TTS/情感语调' },
+    { name: '模型路由(S4)', description: 'S4-T07 AI模型智能路由引擎：自动选择模型 + 故障转移 + 熔断器' },
+    { name: '内容审核(S4)', description: 'S4-T08 内容审核服务：文本/图片/视频审核 + 违规拦截 + 人工复审' },
+    { name: '运营看板(S4)', description: 'S4-T05 智能运营看板：创作漏斗 + 模型成本 + AI洞察' },
   ],
   paths: {
 
@@ -327,6 +332,276 @@ module.exports = {
       },
       delete: { tags: ['任务队列'], summary: '取消任务（若未开始）', responses: { 200: { description: 'OK' } } },
     },
+
+    // ================= Sprint 4: 智能分镜生成 (S4-T01) =================
+    '/ai/storyboard/generate': {
+      post: {
+        tags: ['智能分镜(S4)'],
+        summary: 'S4-T01 智能分镜生成（剧本段落→专业分镜列表）',
+        description: '输入剧本段落，AI 生成专业分镜脚本，包含镜头类型/运镜/构图/情绪/时长/转场/视觉描述/SD Prompt。生成结果落库 ai_storyboard_generations。',
+        requestBody: {
+          required: true,
+          content: { 'application/json': {
+            schema: { $ref: '#/components/schemas/StoryboardGenerateRequest' },
+            example: {
+              scriptText: '林深推开门，看到满地碎片，他惊恐地后退。苏暖从阴影中走出，手中握着一把染血的匕首。',
+              dramaId: 100, episodeId: 10, style: 'vertical_916', count: 8,
+              characters: [{ name: '林深' }, { name: '苏暖' }],
+            },
+          } },
+        },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { generationId: 'sbg_xxx', count: 8, frames: [{ frame_number: 1, shot_type: 'close_up', shot_type_label: '特写', camera_movement: 'push', camera_movement_label: '推镜头', duration: '3秒', visual_description: '特写：林深惊恐的眼神', prompt: 'comic panel, close_up, tense atmosphere' }] } } } } } },
+      },
+    },
+    '/ai/storyboard/polish-prompt': {
+      post: {
+        tags: ['智能分镜(S4)'],
+        summary: 'S4-T01 单帧提示词润色',
+        description: '对单个分镜的视觉描述进行 AI 润色，生成优化后的 SD Prompt。',
+        requestBody: { required: true, content: { 'application/json': { example: { frame: { shot_type: 'close_up', emotion: 'tense', visual_description: '主角惊恐' }, style: 'vertical_916' } } } },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { prompt: 'comic panel, masterpiece, close_up, tense atmosphere' } } } } } },
+      },
+    },
+    '/ai/storyboard/generations': {
+      get: {
+        tags: ['智能分镜(S4)'],
+        summary: '生成批次列表',
+        parameters: [
+          { name: 'dramaId', in: 'query', schema: { type: 'integer' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/storyboard/generations/{id}': {
+      get: {
+        tags: ['智能分镜(S4)'],
+        summary: '生成批次详情（含分镜帧列表）',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'OK' }, 404: { description: '批次不存在' } },
+      },
+    },
+    '/ai/storyboard/dictionaries': {
+      get: {
+        tags: ['智能分镜(S4)'],
+        summary: '分镜字典（镜头类型/运镜/构图/情绪/转场）',
+        description: '返回专业镜头语言字典，供前端下拉选择和分镜渲染使用。',
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { shotTypes: { close_up: '特写' }, cameraMovements: { push: '推镜头' }, compositions: { rule_of_thirds: '三分法' }, emotions: { tense: '紧张' }, transitions: { cut: '硬切' } } } } } } },
+      },
+    },
+
+    // ================= Sprint 4: 智能配音 TTS 流水线 (S4-T03) =================
+    '/ai/tts/voices': {
+      get: { tags: ['智能配音(S4)'], summary: '音色列表（预设音色字典）', responses: { 200: { description: 'OK' } } },
+    },
+    '/ai/tts/emotions': {
+      get: { tags: ['智能配音(S4)'], summary: '情感语调列表（neutral/happy/sad/angry/tense 等）', responses: { 200: { description: 'OK' } } },
+    },
+    '/ai/tts/voice-bindings': {
+      get: {
+        tags: ['智能配音(S4)'],
+        summary: '角色音色绑定列表',
+        parameters: [{ name: 'dramaId', in: 'query', schema: { type: 'integer' }, description: '按项目过滤' }],
+        responses: { 200: { description: 'OK' } },
+      },
+      post: {
+        tags: ['智能配音(S4)'],
+        summary: '绑定/更新角色音色',
+        description: '为角色绑定独特音色，支持情感语调参数。同一项目同一角色重复绑定为更新。数据落库 character_voice_bindings。',
+        requestBody: { required: true, content: { 'application/json': { example: { dramaId: 1, characterId: 101, characterName: '林深', voiceId: 'male_deep', emotion: 'tense', isDefault: true } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/tts/voice-bindings/{id}': {
+      delete: { tags: ['智能配音(S4)'], summary: '删除音色绑定', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/ai/tts/extract-dialogues': {
+      post: {
+        tags: ['智能配音(S4)'],
+        summary: '从分镜提取台词',
+        description: '从 storyboards 表的 dialogue/narration 字段提取台词，支持 "角色名:台词" 多行格式，自动识别旁白。',
+        requestBody: { required: true, content: { 'application/json': { example: { dramaId: 100, episodeId: 10 } } } },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { items: [{ storyboardId: 1, characterName: '林深', text: '这里到底发生过什么？', sortOrder: 0 }] } } } } } },
+      },
+    },
+    '/ai/tts/batch-synthesize': {
+      post: {
+        tags: ['智能配音(S4)'],
+        summary: '批量 TTS 合成',
+        description: '批量合成台词语音，自动匹配角色音色绑定，应用情感语调参数。生成音频落盘 storage/audio/，批次记录落库 tts_batch_jobs，分镜配音关联落库 storyboard_dubbing。',
+        requestBody: {
+          required: true,
+          content: { 'application/json': {
+            schema: { $ref: '#/components/schemas/BatchTTSRequest' },
+            example: { dramaId: 1, episodeId: 10, items: [{ characterName: '林深', text: '这里到底发生过什么？', storyboardId: 1, emotion: 'tense' }] },
+          } },
+        },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { batchId: 1, total: 1, success: 1, failed: 0, results: [{ index: 0, status: 'success', characterName: '林深', audioPath: 'audio/tts_xxx.mp3' }] } } } } } },
+      },
+    },
+    '/ai/tts/dubbing/episode/{id}': {
+      get: {
+        tags: ['智能配音(S4)'],
+        summary: '分集配音记录',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: 'episode_id' }],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+
+    // ================= Sprint 4: AI模型智能路由 (S4-T07) =================
+    '/ai/model-routing/rules': {
+      get: {
+        tags: ['模型路由(S4)'],
+        summary: '路由规则列表',
+        parameters: [
+          { name: 'taskType', in: 'query', schema: { type: 'string' }, description: 'image/video/text/tts' },
+          { name: 'isActive', in: 'query', schema: { type: 'boolean' } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+      post: {
+        tags: ['模型路由(S4)'],
+        summary: '创建/更新路由规则（upsert）',
+        description: '定义任务类型的模型路由策略：主模型 + 备选模型 + 成本上限 + 质量层级。相同 ruleKey 触发更新。数据落库 ai_routing_rules。',
+        requestBody: { required: true, content: { 'application/json': { example: { ruleKey: 'image_standard', taskType: 'image', qualityTier: 'standard', primaryConfigId: 1, primaryModel: 'dall-e-3', fallbackConfigId: 2, fallbackModel: 'sdxl', maxCostPerCall: 0.5, priority: 100 } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/model-routing/rules/{id}': {
+      delete: { tags: ['模型路由(S4)'], summary: '删除路由规则', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/ai/model-routing/route': {
+      post: {
+        tags: ['模型路由(S4)'],
+        summary: '智能路由决策（返回推荐模型）',
+        description: '根据任务类型/质量层级/成本预算自动选择最优模型。主模型熔断时自动故障转移到备选模型。支持 preferModel 指定优先模型。',
+        requestBody: { required: true, content: { 'application/json': { example: { taskType: 'image', qualityTier: 'standard', costBudget: 0.5, preferModel: 'dall-e-3' } } } },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { config: { id: 1, provider: 'openai' }, model: 'dall-e-3', rule: { ruleKey: 'image_standard' }, isFallback: false } } } } } },
+      },
+    },
+    '/ai/model-routing/stats': {
+      get: {
+        tags: ['模型路由(S4)'],
+        summary: '模型调用统计与综合评分',
+        description: '从 ai_model_call_logs 聚合各模型的调用量/成功率/耗时/成本/质量评分，综合评分 = 成功率40% + 速度分30% + 质量分30%。',
+        parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', default: 30 }, description: '统计最近 N 天' }],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/model-routing/circuit/{configId}/{model}': {
+      get: {
+        tags: ['模型路由(S4)'],
+        summary: '查询模型熔断状态',
+        description: '返回熔断器状态：closed（正常）/ open（熔断中，拒绝请求）/ half_open（半开探测）。',
+        parameters: [
+          { name: 'configId', in: 'path', required: true, schema: { type: 'integer' } },
+          { name: 'model', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { state: 'closed', failureCount: 0 } } } } } },
+      },
+    },
+    '/ai/model-routing/call-log': {
+      post: {
+        tags: ['模型路由(S4)'],
+        summary: '记录模型调用日志',
+        description: '记录每次模型调用的成本/耗时/质量评分/状态。status=success 重置熔断器，status=failed/timeout 增加失败计数。数据落库 ai_model_call_logs。',
+        requestBody: { required: true, content: { 'application/json': { example: { configId: 1, serviceType: 'image', model: 'dall-e-3', taskType: 'image_gen', status: 'success', latencyMs: 1500, cost: 0.04, qualityScore: 92 } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+
+    // ================= Sprint 4: 内容审核 (S4-T08) =================
+    '/ai/moderation/check': {
+      post: {
+        tags: ['内容审核(S4)'],
+        summary: '内容审核（单条）',
+        description: '审核文本/图片/视频内容，内置关键词检测 + 可配置外部审核API（阿里云绿网/腾讯云天御）。支持 strict/standard/loose 三种模式。违规内容自动拦截，审核记录落库 content_moderation_logs。',
+        requestBody: {
+          required: true,
+          content: { 'application/json': {
+            schema: { $ref: '#/components/schemas/ModerationRequest' },
+            example: { resourceType: 'text', contentSnapshot: '待审核的剧本台词', mode: 'standard', dramaId: 100 },
+          } },
+        },
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { verdict: 'safe', riskLabel: 'safe', riskScore: 0, isBlocked: false, logId: 1 } } } } } },
+      },
+    },
+    '/ai/moderation/check-batch': {
+      post: {
+        tags: ['内容审核(S4)'],
+        summary: '批量内容审核',
+        requestBody: { required: true, content: { 'application/json': { example: { mode: 'standard', items: [{ resourceType: 'text', contentSnapshot: '内容1' }, { resourceType: 'text', contentSnapshot: '内容2' }] } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/moderation/logs': {
+      get: {
+        tags: ['内容审核(S4)'],
+        summary: '审核记录列表',
+        parameters: [
+          { name: 'userId', in: 'query', schema: { type: 'integer' } },
+          { name: 'dramaId', in: 'query', schema: { type: 'integer' } },
+          { name: 'verdict', in: 'query', schema: { type: 'string', enum: ['safe', 'pending', 'violation'] } },
+          { name: 'resourceType', in: 'query', schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/moderation/logs/{id}': {
+      get: {
+        tags: ['内容审核(S4)'],
+        summary: '审核记录详情',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+        responses: { 200: { description: 'OK' }, 404: { description: '记录不存在' } },
+      },
+    },
+    '/ai/moderation/logs/{id}/review': {
+      patch: {
+        tags: ['内容审核(S4)'],
+        summary: '人工复审',
+        description: '人工更新审核结论：safe/pending/violation。verdict=violation 时自动标记拦截。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: { required: true, content: { 'application/json': { example: { verdict: 'violation', reviewNote: '人工判定违规' } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/moderation/rules': {
+      get: {
+        tags: ['内容审核(S4)'],
+        summary: '审核规则配置（按模式）',
+        parameters: [{ name: 'mode', in: 'query', schema: { type: 'string', enum: ['strict', 'standard', 'loose'], default: 'standard' } }],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+
+    // ================= Sprint 4: 智能运营看板 (S4-T05) =================
+    '/admin/stats/funnel': {
+      get: {
+        tags: ['运营看板(S4)'],
+        summary: '创作漏斗分析（全链路转化率）',
+        description: '统计创建项目→完成剧本→生成分镜→生成图片→生成视频→导出成品各阶段数量与转化率。',
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { stages: [{ key: 'created', label: '创建项目', count: 100, conversionRate: 100 }, { key: 'script', label: '完成剧本', count: 80, conversionRate: 80 }], overallRate: 30 } } } } } },
+      },
+    },
+    '/admin/stats/model-cost': {
+      get: {
+        tags: ['运营看板(S4)'],
+        summary: 'AI模型成本看板',
+        description: '各AI模型的调用量/成功率/成本/平均耗时对比，汇总总成本与平均成功率。',
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { items: [{ model: 'dall-e-3', serviceType: 'image', totalCalls: 100, successRate: 95, avgLatency: 1500, totalCost: 4.5 }], summary: { totalModels: 3, totalCalls: 500, totalCost: 22.5, avgSuccessRate: 93.5 } } } } } } },
+      },
+    },
+    '/admin/stats/insights': {
+      get: {
+        tags: ['运营看板(S4)'],
+        summary: 'AI智能洞察（异常检测）',
+        description: '自动检测指标异常波动：生成失败率上升、模型熔断、审核违规趋势、创作漏斗转化预警，生成自然语言洞察。',
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { insights: [{ level: 'warning', type: 'failure_rate', message: '今日生成失败率 15.2%，较昨日上升 10 个百分点' }], generatedAt: '2026-08-09T10:00:00Z' } } } } } },
+      },
+    },
   },
   components: {
     schemas: {
@@ -342,6 +617,55 @@ module.exports = {
           episodeCount:  { type: 'integer', minimum: 3, maximum: 100, default: 10 },
           targetAudience:{ type: 'string', example: '女性 18-35 岁' },
           userId:        { type: 'integer' },
+        },
+      },
+      StoryboardGenerateRequest: {
+        type: 'object',
+        required: ['scriptText'],
+        properties: {
+          scriptText:  { type: 'string', description: '剧本段落文本', example: '林深推开门，看到满地碎片...' },
+          dramaId:     { type: 'integer', description: '项目ID' },
+          episodeId:   { type: 'integer', description: '分集ID' },
+          style:       { type: 'string', enum: ['cinematic_235', 'vertical_916', 'anime_jp', 'noir_mood'], default: 'vertical_916', description: '镜头风格' },
+          count:       { type: 'integer', minimum: 1, maximum: 40, default: 8, description: '生成分镜数量' },
+          characters:  { type: 'array', items: { type: 'object', properties: { name: { type: 'string' } } }, description: '角色列表' },
+          scenes:      { type: 'array', items: { type: 'object' }, description: '场景列表' },
+        },
+      },
+      BatchTTSRequest: {
+        type: 'object',
+        required: ['items'],
+        properties: {
+          dramaId:   { type: 'integer', description: '项目ID' },
+          episodeId: { type: 'integer', description: '分集ID' },
+          items: {
+            type: 'array',
+            description: '台词列表',
+            items: {
+              type: 'object',
+              required: ['text'],
+              properties: {
+                characterName: { type: 'string', description: '角色名（用于匹配音色绑定）', example: '林深' },
+                text:          { type: 'string', description: '台词文本', example: '这里到底发生过什么？' },
+                storyboardId:  { type: 'integer', description: '关联分镜ID' },
+                voiceId:       { type: 'string', description: '指定音色ID（覆盖角色绑定）' },
+                emotion:       { type: 'string', enum: ['neutral', 'happy', 'sad', 'angry', 'tense', 'epic', 'warm', 'romantic'], description: '情感语调' },
+                speed:         { type: 'number', minimum: 0.5, maximum: 2.0, description: '语速（覆盖情感参数）' },
+              },
+            },
+          },
+        },
+      },
+      ModerationRequest: {
+        type: 'object',
+        required: ['resourceType'],
+        properties: {
+          resourceType:     { type: 'string', enum: ['text', 'image', 'video'], description: '资源类型' },
+          resourceId:       { type: 'integer', description: '资源ID（如 image_generations.id）' },
+          resourceUrl:      { type: 'string', description: '资源URL（图片/视频审核时填写）' },
+          contentSnapshot:  { type: 'string', description: '内容快照（文本内容或图片URL）' },
+          mode:             { type: 'string', enum: ['strict', 'standard', 'loose'], default: 'standard', description: '审核模式：strict(严格)/standard(标准)/loose(宽松)' },
+          dramaId:          { type: 'integer', description: '项目ID' },
         },
       },
     },

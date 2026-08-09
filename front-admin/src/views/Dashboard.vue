@@ -38,6 +38,72 @@
         <el-empty v-else description="暂无消费构成数据" :image-size="80" />
       </el-card>
     </div>
+
+    <!-- Sprint 4 - S4-T06: 创作漏斗 + 模型成本 + AI洞察 -->
+    <div class="chart-row">
+      <el-card class="chart-card" v-loading="funnelLoading">
+        <template #header>
+          <span class="chart-title">创作漏斗分析（全链路转化率）</span>
+        </template>
+        <div v-if="funnelData.stages.length" class="funnel-container">
+          <div v-for="(s, idx) in funnelData.stages" :key="s.key" class="funnel-stage">
+            <div class="funnel-bar" :style="{ width: funnelBarWidth(s.count), background: funnelColors[idx % funnelColors.length] }">
+              <span class="funnel-label">{{ s.label }}</span>
+              <span class="funnel-count">{{ s.count }}</span>
+            </div>
+            <div class="funnel-rate" v-if="idx > 0">转化率 {{ s.conversionRate }}%</div>
+          </div>
+          <div class="funnel-summary">
+            总体转化率：<span class="funnel-overall">{{ funnelData.overallRate }}%</span>
+          </div>
+        </div>
+        <el-empty v-else description="暂无创作漏斗数据" :image-size="80" />
+      </el-card>
+
+      <el-card class="chart-card" v-loading="modelCostLoading">
+        <template #header>
+          <span class="chart-title">AI模型成本看板</span>
+        </template>
+        <div v-if="modelCostItems.length" class="model-cost-table">
+          <div class="mc-summary">
+            <span>模型数：{{ modelCostSummary.totalModels }}</span>
+            <span>总调用：{{ modelCostSummary.totalCalls }}</span>
+            <span>总成本：¥{{ modelCostSummary.totalCost.toFixed(2) }}</span>
+            <span>平均成功率：{{ modelCostSummary.avgSuccessRate }}%</span>
+          </div>
+          <el-table :data="modelCostItems" size="small" stripe style="width:100%" max-height="260">
+            <el-table-column prop="model" label="模型" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="serviceType" label="类型" width="80" />
+            <el-table-column prop="totalCalls" label="调用量" width="70" align="center" />
+            <el-table-column prop="successRate" label="成功率" width="70" align="center">
+              <template #default="{ row }">{{ row.successRate }}%</template>
+            </el-table-column>
+            <el-table-column prop="avgLatency" label="耗时(ms)" width="80" align="center" />
+            <el-table-column prop="totalCost" label="成本(¥)" width="80" align="center">
+              <template #default="{ row }">{{ Number(row.totalCost).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <el-empty v-else description="暂无模型成本数据" :image-size="80" />
+      </el-card>
+    </div>
+
+    <!-- AI洞察面板 -->
+    <el-card class="insights-card" v-loading="insightsLoading">
+      <template #header>
+        <span class="chart-title">⚡ AI智能洞察</span>
+        <el-button link type="primary" size="small" @click="loadInsights" style="float:right">刷新</el-button>
+      </template>
+      <div v-if="insights.length" class="insights-list">
+        <div v-for="(ins, idx) in insights" :key="idx" class="insight-item" :class="ins.level">
+          <el-icon class="insight-icon">
+            <component :is="insightIcon(ins.level)" />
+          </el-icon>
+          <span class="insight-msg">{{ ins.message }}</span>
+        </div>
+      </div>
+      <el-empty v-else description="暂无异常洞察，系统运行正常" :image-size="60" />
+    </el-card>
   </div>
 </template>
 
@@ -45,7 +111,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { User, UserFilled, Connection, Film, Wallet, Coin } from '@element-plus/icons-vue'
+import { User, UserFilled, Connection, Film, Wallet, Coin, Warning, CircleCheck, InfoFilled, WarnTriangleFilled } from '@element-plus/icons-vue'
 import { dashboardAPI } from '@/api/dashboard'
 import {
   fmtInt,
@@ -80,6 +146,16 @@ const trendData = reactive({
   rechargePoints: []
 })
 const consumptionItems = ref([])
+
+// S4-T06: 创作漏斗 + 模型成本 + AI洞察
+const funnelLoading = ref(false)
+const funnelData = reactive({ stages: [], overallRate: 0 })
+const modelCostLoading = ref(false)
+const modelCostItems = ref([])
+const modelCostSummary = reactive({ totalModels: 0, totalCalls: 0, totalCost: 0, avgSuccessRate: 0 })
+const insightsLoading = ref(false)
+const insights = ref([])
+const funnelColors = ['#667eea', '#764ba2', '#f5576c', '#fa709a', '#43e97b', '#4facfe']
 
 // ============== 工具 ==============
 // fmtInt / fmtYuan / fmtBigNumber 已统一封装在 @/utils/format
@@ -181,6 +257,59 @@ async function loadConsumption() {
   } finally {
     consumptionLoading.value = false
   }
+}
+
+// S4-T06: 创作漏斗
+async function loadFunnel() {
+  funnelLoading.value = true
+  try {
+    const d = await dashboardAPI.getCreationFunnel()
+    funnelData.stages = d?.stages || []
+    funnelData.overallRate = d?.overallRate || 0
+  } catch (e) {
+    // 静默失败，不影响主看板
+  } finally {
+    funnelLoading.value = false
+  }
+}
+
+// S4-T06: 模型成本
+async function loadModelCost() {
+  modelCostLoading.value = true
+  try {
+    const d = await dashboardAPI.getModelCost()
+    modelCostItems.value = d?.items || []
+    Object.assign(modelCostSummary, d?.summary || { totalModels: 0, totalCalls: 0, totalCost: 0, avgSuccessRate: 0 })
+  } catch (e) {
+    // 静默失败
+  } finally {
+    modelCostLoading.value = false
+  }
+}
+
+// S4-T06: AI洞察
+async function loadInsights() {
+  insightsLoading.value = true
+  try {
+    const d = await dashboardAPI.getAiInsights()
+    insights.value = d?.insights || []
+  } catch (e) {
+    // 静默失败
+  } finally {
+    insightsLoading.value = false
+  }
+}
+
+// 漏斗条宽度计算
+function funnelBarWidth(count) {
+  const max = Math.max(...funnelData.stages.map(s => s.count), 1)
+  const pct = Math.max(15, (count / max) * 100)
+  return pct + '%'
+}
+
+// 洞察图标
+function insightIcon(level) {
+  return { critical: WarnTriangleFilled, warning: Warning, info: InfoFilled }[level] || CircleCheck
 }
 
 // ============== 图表渲染 ==============
@@ -318,7 +447,7 @@ watch(hasConsumption, (v) => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadStats(), loadTrend(), loadConsumption()])
+  await Promise.all([loadStats(), loadTrend(), loadConsumption(), loadFunnel(), loadModelCost(), loadInsights()])
   window.addEventListener('resize', handleResize)
 })
 
@@ -408,4 +537,37 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 }
+
+/* S4-T06: 创作漏斗样式 */
+.funnel-container { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; }
+.funnel-stage { display: flex; align-items: center; gap: 12px; }
+.funnel-bar {
+  height: 36px; border-radius: 6px; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 14px; color: #fff;
+  font-size: 13px; font-weight: 600; min-width: 120px;
+  transition: width 0.4s ease; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.funnel-label { white-space: nowrap; }
+.funnel-count { font-size: 14px; }
+.funnel-rate { font-size: 11px; color: #909399; white-space: nowrap; min-width: 80px; }
+.funnel-summary { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e4e7ed; font-size: 13px; color: #606266; }
+.funnel-overall { font-size: 18px; font-weight: 700; color: #f5576c; }
+
+/* S4-T06: 模型成本样式 */
+.model-cost-table { display: flex; flex-direction: column; gap: 8px; }
+.mc-summary { display: flex; gap: 16px; font-size: 12px; color: #606266; flex-wrap: wrap; padding: 4px 0; }
+.mc-summary span { white-space: nowrap; }
+
+/* S4-T06: AI洞察样式 */
+.insights-card { border-radius: 12px; }
+.insights-list { display: flex; flex-direction: column; gap: 8px; }
+.insight-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-radius: 8px; font-size: 13px;
+}
+.insight-item.critical { background: #fef2f2; color: #dc2626; border-left: 3px solid #f56c6c; }
+.insight-item.warning { background: #fdf6ec; color: #e6a23c; border-left: 3px solid #e6a23c; }
+.insight-item.info { background: #f4f4f5; color: #909399; border-left: 3px solid #909399; }
+.insight-icon { font-size: 16px; flex-shrink: 0; }
+.insight-msg { flex: 1; }
 </style>

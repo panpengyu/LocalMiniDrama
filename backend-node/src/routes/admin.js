@@ -1457,10 +1457,216 @@ function adminRoutes(db, log) {
     }
   }
 
+  // ============================================================
+  // Sprint 4 - S4-T05: 智能运营看板扩展
+  // 创作漏斗 + 模型成本 + AI洞察
+  // ============================================================
+
+  /**
+   * 创作漏斗分析：创建→剧本→分镜→生图→生视频→导出 全链路转化率
+   */
+  const getCreationFunnel = withPerfLog('admin/stats/funnel', async (req, res) => {
+    const stages = [
+      { key: 'created', label: '创建项目', count: 0 },
+      { key: 'script', label: '完成剧本', count: 0 },
+      { key: 'storyboard', label: '生成分镜', count: 0 },
+      { key: 'image', label: '生成图片', count: 0 },
+      { key: 'video', label: '生成视频', count: 0 },
+      { key: 'exported', label: '导出成品', count: 0 },
+    ];
+
+    try {
+      // 创建项目数
+      stages[0].count = db.prepare('SELECT COUNT(*) as c FROM dramas').get().c || 0;
+      // 完成剧本：dramas 表有 outline 数据的
+      try {
+        stages[1].count = db.prepare("SELECT COUNT(*) as c FROM dramas WHERE outline IS NOT NULL AND outline != ''").get().c || 0;
+      } catch (_) {
+        stages[1].count = db.prepare('SELECT COUNT(*) as c FROM dramas').get().c || 0;
+      }
+      // 生成分镜
+      stages[2].count = db.prepare('SELECT COUNT(*) as c FROM storyboards WHERE deleted_at IS NULL').get().c || 0;
+      // 生成图片
+      try { stages[3].count = db.prepare('SELECT COUNT(*) as c FROM image_generations').get().c || 0; } catch (_) {}
+      // 生成视频
+      try { stages[4].count = db.prepare('SELECT COUNT(*) as c FROM video_generations').get().c || 0; } catch (_) {}
+      // 导出成品（status=published 或有 export 记录）
+      try {
+        stages[5].count = db.prepare("SELECT COUNT(*) as c FROM dramas WHERE status IN ('published','archived')").get().c || 0;
+      } catch (_) {}
+
+      // 计算转化率
+      let prevCount = stages[0].count;
+      for (let i = 1; i < stages.length; i++) {
+        const rate = prevCount > 0 ? Number(((stages[i].count / prevCount) * 100).toFixed(2)) : 0;
+        stages[i].conversionRate = rate;
+        prevCount = stages[i].count;
+      }
+      stages[0].conversionRate = 100;
+
+      // 总体转化率
+      const overallRate = stages[0].count > 0
+        ? Number(((stages[stages.length - 1].count / stages[0].count) * 100).toFixed(2))
+        : 0;
+
+      response.success(res, { stages, overallRate });
+    } catch (err) {
+      response.internalError(res, err.message);
+    }
+  });
+
+  /**
+   * 模型成本看板：各AI模型的调用量/成功率/成本/平均耗时对比
+   */
+  const getModelCost = withPerfLog('admin/stats/model-cost', async (req, res) => {
+    try {
+      let items = [];
+      // 优先从 ai_model_call_logs 读取（S4-T07 记录的调用日志）
+      try {
+        const rows = db.prepare(`SELECT
+          model, service_type, provider,
+          COUNT(*) as total_calls,
+          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+          SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+          AVG(latency_ms) as avg_latency,
+          SUM(cost) as total_cost,
+          AVG(quality_score) as avg_quality
+          FROM ai_model_call_logs
+          GROUP BY model, service_type
+          ORDER BY total_calls DESC`).all();
+        items = rows.map(r => ({
+          model: r.model, serviceType: r.service_type, provider: r.provider,
+          totalCalls: r.total_calls, successCount: r.success_count, failedCount: r.failed_count,
+          successRate: r.total_calls > 0 ? Number(((r.success_count / r.total_calls) * 100).toFixed(2)) : 0,
+          avgLatency: Math.round(r.avg_latency || 0),
+          totalCost: Number(r.total_cost || 0),
+          avgQuality: r.avg_quality ? Number(Number(r.avg_quality).toFixed(2)) : null,
+        }));
+      } catch (_) {}
+
+      // 若无调用日志，从 ai_service_configs 读取已配置的模型列表
+      if (items.length === 0) {
+        try {
+          const configs = db.prepare('SELECT provider, service_type, model, is_active FROM ai_service_configs WHERE deleted_at IS NULL').all();
+          items = configs.map(c => ({
+            model: Array.isArray(c.model) ? c.model[0] : c.model,
+            serviceType: c.service_type, provider: c.provider,
+            totalCalls: 0, successCount: 0, failedCount: 0,
+            successRate: 0, avgLatency: 0, totalCost: 0, avgQuality: null,
+          }));
+        } catch (_) {}
+      }
+
+      // 汇总
+      const summary = {
+        totalModels: items.length,
+        totalCalls: items.reduce((s, i) => s + i.totalCalls, 0),
+        totalCost: items.reduce((s, i) => s + Number(i.totalCost || 0), 0),
+        avgSuccessRate: items.length > 0
+          ? Number((items.reduce((s, i) => s + i.successRate, 0) / items.length).toFixed(2))
+          : 0,
+      };
+
+      response.success(res, { items, summary });
+    } catch (err) {
+      response.internalError(res, err.message);
+    }
+  });
+
+  /**
+   * AI洞察：自动检测指标异常波动，生成自然语言洞察
+   */
+  const getAiInsights = withPerfLog('admin/stats/insights', async (req, res) => {
+    try {
+      const insights = [];
+
+      // 1. 检查今日 vs 昨日的生成失败率
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+        let todayFailed = 0, todayTotal = 0, yesterdayFailed = 0, yesterdayTotal = 0;
+        try {
+          const tRow = db.prepare(`SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status IN ('failed','error') THEN 1 ELSE 0 END) as failed
+            FROM ai_model_call_logs WHERE SUBSTR(created_at,1,10) = ?`).get(today);
+          todayTotal = tRow?.total || 0; todayFailed = tRow?.failed || 0;
+          const yRow = db.prepare(`SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status IN ('failed','error') THEN 1 ELSE 0 END) as failed
+            FROM ai_model_call_logs WHERE SUBSTR(created_at,1,10) = ?`).get(yesterday);
+          yesterdayTotal = yRow?.total || 0; yesterdayFailed = yRow?.failed || 0;
+        } catch (_) {}
+
+        if (todayTotal > 0) {
+          const todayRate = (todayFailed / todayTotal) * 100;
+          const yesterdayRate = yesterdayTotal > 0 ? (yesterdayFailed / yesterdayTotal) * 100 : 0;
+          if (todayRate > yesterdayRate + 10) {
+            insights.push({
+              level: 'warning',
+              type: 'failure_rate',
+              message: `今日生成失败率 ${todayRate.toFixed(1)}%，较昨日上升 ${(todayRate - yesterdayRate).toFixed(1)} 个百分点`,
+              data: { todayRate, yesterdayRate, todayFailed, todayTotal },
+            });
+          }
+        }
+      } catch (_) {}
+
+      // 2. 检查熔断状态
+      try {
+        const openCircuits = db.prepare("SELECT * FROM ai_model_circuit_state WHERE state = 'open'").all();
+        for (const c of openCircuits) {
+          insights.push({
+            level: 'critical',
+            type: 'circuit_open',
+            message: `模型 ${c.model}（配置#${c.config_id}）当前处于熔断状态，连续失败 ${c.failure_count} 次`,
+            data: { configId: c.config_id, model: c.model, failureCount: c.failure_count },
+          });
+        }
+      } catch (_) {}
+
+      // 3. 审核违规趋势
+      try {
+        const violations = db.prepare(`SELECT COUNT(*) as c FROM content_moderation_logs WHERE verdict = 'violation' AND SUBSTR(created_at,1,10) = ?`).get(new Date().toISOString().slice(0, 10));
+        if (violations?.c > 0) {
+          insights.push({
+            level: 'warning',
+            type: 'moderation_violation',
+            message: `今日检测到 ${violations.c} 条违规内容，请关注内容安全`,
+            data: { violations: violations.c },
+          });
+        }
+      } catch (_) {}
+
+      // 4. 创作漏斗转化预警
+      try {
+        const totalDramas = db.prepare('SELECT COUNT(*) as c FROM dramas').get().c || 0;
+        const totalStoryboards = db.prepare('SELECT COUNT(*) as c FROM storyboards WHERE deleted_at IS NULL').get().c || 0;
+        if (totalDramas > 10 && totalStoryboards === 0) {
+          insights.push({
+            level: 'info',
+            type: 'funnel_drop',
+            message: `已创建 ${totalDramas} 个项目但尚无分镜生成，建议引导用户完成分镜创作`,
+            data: { totalDramas, totalStoryboards },
+          });
+        }
+      } catch (_) {}
+
+      response.success(res, { insights, generatedAt: new Date().toISOString() });
+    } catch (err) {
+      response.internalError(res, err.message);
+    }
+  });
+
   return {
     getStats,
     getStatsTrend,
     getConsumptionBreakdown,
+    // S4-T05 新增
+    getCreationFunnel,
+    getModelCost,
+    getAiInsights,
     getUsers,
     createUser,
     updateUser,
