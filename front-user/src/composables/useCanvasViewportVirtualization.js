@@ -70,14 +70,17 @@ export function useCanvasViewportVirtualization() {
 
     // 尝试 project（屏幕坐标）
     let screenX1, screenY1
+    let usedFallback = false
     try {
       const p = project({ x: node.position.x, y: node.position.y })
       screenX1 = p.x
       screenY1 = p.y
     } catch {
-      // 退化：屏幕坐标 = (x - vpX) * zoom
-      screenX1 = (node.position.x - x) * zoom
-      screenY1 = (node.position.y - y) * zoom
+      // 退化：VueFlow 变换 screenX = worldX * zoom + vpX
+      // 注意：vpX 是屏幕空间平移量，不是世界空间偏移
+      usedFallback = true
+      screenX1 = node.position.x * zoom + x
+      screenY1 = node.position.y * zoom + y
     }
     const screenX2 = screenX1 + nW * zoom
     const screenY2 = screenY1 + nH * zoom
@@ -106,11 +109,13 @@ export function useCanvasViewportVirtualization() {
     const sz = canvasSize.value
     // 首次 / 无数据：全部渲染，避免空闪
     if ((!vp || !vp.x && !vp.y && !vp.zoom) && (!sz.w || !sz.h)) {
+      console.log('[Virtualization] 视口/画布未初始化，全量渲染', { count: allNodes.length })
       return allNodes
     }
     const selectedIds = new Set(opts.selectedIds || [])
 
     let kept = 0
+    let fallbackCount = 0
     const result = []
     for (const n of allNodes) {
       const forceKeep =
@@ -125,9 +130,27 @@ export function useCanvasViewportVirtualization() {
         kept++
       }
     }
-    if (kept === 0) return allNodes  // 防止计算异常时渲染空白
+    if (kept === 0) {
+      console.warn('[Virtualization] 全部节点被判定视口外，回退全量渲染', {
+        total: allNodes.length,
+        vp: { x: Math.round(vp.x), y: Math.round(vp.y), zoom: Number(vp.zoom?.toFixed(4)) },
+        canvas: { w: sz.w, h: sz.h },
+      })
+      return allNodes  // 防止计算异常时渲染空白
+    }
+    // 采样日志：每 5 次 or 节点数变化 >20 时输出
+    _virtCount++
+    if (_virtCount <= 3 || _virtCount % 10 === 0 || Math.abs(kept - allNodes.length) > 20) {
+      console.log('[Virtualization] 虚拟化结果:', {
+        total: allNodes.length, kept, filtered: allNodes.length - kept,
+        vp: { x: Math.round(vp.x), y: Math.round(vp.y), zoom: Number(vp.zoom?.toFixed(4)) },
+        canvas: { w: sz.w, h: sz.h },
+        sample: _virtCount,
+      })
+    }
     return result
   }
+  let _virtCount = 0
 
   const stats = computed(() => ({
     padding: SCREEN_PADDING_PX,

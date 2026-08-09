@@ -12,9 +12,14 @@
 --    （如 31/32 号迁移已建 drama_templates 表，这里确保 metadata 列可用）
 SET @dbt = (SELECT COUNT(*) FROM information_schema.TABLES
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'drama_templates');
-SET @sql1 = IF(@dbt > 0,
+SET @dt_has_meta = (SELECT COUNT(*) FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'drama_templates' AND COLUMN_NAME = 'metadata');
+-- 如果表存在且已有 metadata 列 → MODIFY；表存在但无 metadata 列 → ADD；表不存在 → 跳过
+SET @sql1 = IF(@dbt > 0 AND @dt_has_meta > 0,
   'ALTER TABLE drama_templates MODIFY COLUMN metadata JSON NULL COMMENT ''模板元数据（含默认分区/默认视口）''',
-  'SELECT ''drama_templates 表不存在，跳过'' AS note');
+  IF(@dbt > 0,
+    'ALTER TABLE drama_templates ADD COLUMN metadata JSON NULL COMMENT ''模板元数据（含默认分区/默认视口）''',
+    'SELECT ''drama_templates 表不存在，跳过'' AS note'));
 PREPARE stmt1 FROM @sql1; EXECUTE stmt1; DEALLOCATE PREPARE stmt1;
 
 -- 2) 新建 canvas_bookmarks 表（书签：常用视口位置，一键跳转）

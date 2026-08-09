@@ -5,6 +5,7 @@
     <!-- 顶栏：5档缩放按钮 + 分区操作 + 视图信息 -->
     <div class="wb-canvas-toolbar">
       <div class="wct-left">
+        <template v-if="zoomModes">
         <el-tooltip v-for="(lv, i) in zoomModes.ZOOM_LEVELS" :key="lv.key"
                     :content="`${lv.desc} ${lv.label}`" placement="bottom">
           <el-button
@@ -18,6 +19,7 @@
             <span class="wct-z">({{ lv.label }})</span>
           </el-button>
         </el-tooltip>
+        </template>
       </div>
       <div class="wct-right">
         <!-- S5-T05 分区操作 -->
@@ -28,17 +30,17 @@
         </el-button>
         <el-divider direction="vertical" />
         <!-- 视图模式指示器 -->
-        <el-tag size="small" :type="viewModeTag(zoomModes.viewMode.value).type" effect="plain">
+        <el-tag v-if="zoomModes" size="small" :type="viewModeTag(zoomModes.viewMode.value).type" effect="plain">
           视图: {{ viewModeTag(zoomModes.viewMode.value).label }}
         </el-tag>
-        <span class="wct-zoom">{{ Math.round(zoomModes.zoomRatio.value * 100) }}%</span>
+        <span v-if="zoomModes" class="wct-zoom">{{ Math.round(zoomModes.zoomRatio.value * 100) }}%</span>
       </div>
     </div>
 
     <div ref="canvasMainRef" class="wb-canvas-main">
       <!-- S5-T05 分区背景层（在 VueFlow 外层，绝对定位 + 自己做 world->screen 变换） -->
       <CanvasZones
-        v-if="rawNodes.length > 0"
+        v-if="rawNodes.length > 0 && canvasZones"
         :zones="canvasZones.zones.value"
         :viewport="viewportForZones"
         :canvas-rect="canvasRect"
@@ -425,7 +427,11 @@ watch(() => props.focusStoryboardId, (sbId, old) => {
   if (targetNode && zoomModes) {
     selectedStoryboardIds.value = [sbId]
     // S5-T06: 平滑居中跳转
-    zoomModes.smoothFitToNode(targetNode, { zoom: 0.6, duration: 420 })
+    zoomModes.smoothFitToNode(targetNode, {
+      zoom: 0.6, duration: 420,
+      canvasW: canvasRect.value.w || 1000,
+      canvasH: canvasRect.value.h || 800,
+    })
     log.info('[Sync] 找到并平滑跳转到分镜节点', {
       storyboardId: sbId, nodeId: targetNode.id,
       position: targetNode.position, lookupMs: ms,
@@ -573,32 +579,20 @@ function onSelectionChange(sel) {
   emit('selection-change', ids)
 }
 
-/* S5-T04 小地图跳转：平移视口（不改变 zoom） */
+/* S5-T04 小地图跳转：平滑平移视口（不改变 zoom） */
 function onMinimapCenter({ x, y }) {
   if (!zoomModes) return
-  const t0 = performance.now()
   const vp = currentViewport.value
   log.info('[Minimap] 小地图跳转请求', {
     targetX: Math.round(x), targetY: Math.round(y),
     currentZoom: Number(vp.zoom?.toFixed(3)),
     currentX: Math.round(vp.x), currentY: Math.round(vp.y),
   })
-  zoomModes.smoothZoomTo(vp.zoom, {
-    duration: 200,
-    onDone: () => {
-      // 注意：useCanvasZoomModes 只操作 zoom，viewport 平移用 setViewport
-      const { setViewport, getViewport } = useVueFlow?.() ? useVueFlow() : (typeof window.__useVueFlowCache?.() === 'function' ? window.__useVueFlowCache() : { setViewport: null, getViewport: null })
-      if (!setViewport) {
-        log.warn('[Minimap] setViewport 不可用，跳转失败', { x, y })
-        return
-      }
-      const cur = getViewport()
-      setViewport({ x, y, zoom: cur.zoom }, { duration: 260, force: true })
-      log.debug('[Minimap] setViewport 平移完成', {
-        x: Math.round(x), y: Math.round(y), zoom: Number(cur.zoom?.toFixed(3)),
-        totalMs: Math.round((performance.now() - t0) * 1000) / 1000,
-      })
-    },
+  // 直接调用 smoothPanTo，内部用 RAF + easeOutCubic 动画，
+  // 避免在回调中调用 useVueFlow()（组合式 API 不应在回调内调用）
+  zoomModes.smoothPanTo(x, y, { duration: 280 })
+  log.debug('[Minimap] smoothPanTo 已触发', {
+    x: Math.round(x), y: Math.round(y), zoom: Number(vp.zoom?.toFixed(3)),
   })
 }
 

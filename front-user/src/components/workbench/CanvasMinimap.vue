@@ -304,11 +304,22 @@ function onClick(e) {
   const w = props.canvasRect.w || 0
   const h = props.canvasRect.h || 0
   const zoom = vp.zoom || 1
-  // 目标世界坐标 (x, y) 对应屏幕 (w/2, h/2)
-  // screenX = (worldX - vpX) * zoom
-  // vpX = worldX - screenX/zoom
-  const targetX = x - (w / 2) / zoom
-  const targetY = y - (h / 2) / zoom
+  // VueFlow 变换：screenX = worldX * zoom + vp.x
+  // 要让 worldX 出现在屏幕中心 (w/2)，则：w/2 = x * zoom + vp.x
+  // → vp.x = w/2 - x * zoom（屏幕空间平移量）
+  const targetX = (w / 2) - x * zoom
+  const targetY = (h / 2) - y * zoom
+
+  // === 排查日志：小地图点击 → 视口坐标映射全过程 ===
+  console.log('[Minimap onClick] 坐标映射链路:', {
+    '1.minimap像素': { lx: Math.round(lx), ly: Math.round(ly) },
+    '2.世界坐标': { worldX: Math.round(x), worldY: Math.round(y) },
+    '3.当前vp': { vpX: Math.round(vp.x), vpY: Math.round(vp.y), zoom: Number(zoom.toFixed(4)) },
+    '4.画布尺寸': { w, h },
+    '5.目标vp(屏幕空间)': { targetX: Math.round(targetX), targetY: Math.round(targetY) },
+    '6.验证': `screenX=${Math.round(x * zoom + targetX)} 应等于 w/2=${Math.round(w / 2)}`,
+  })
+
   log.info('[Click] 小地图点击跳转', {
     localX: Math.round(lx), localY: Math.round(ly),
     worldX: Math.round(x), worldY: Math.round(y),

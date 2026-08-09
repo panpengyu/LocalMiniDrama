@@ -140,12 +140,31 @@ export function useCanvasZoomModes() {
 
   /**
    * 平滑平移 + 缩放 居中到指定节点（S5-T04 小地图点击跳转用）
+   * @param {Object} node - VueFlow 节点（需要有 position）
+   * @param {Object} opts - { zoom, duration, canvasW, canvasH }
+   *   canvasW/canvasH 为主画布像素尺寸，用于精确居中计算
    */
   function smoothFitToNode(node, opts = {}) {
     if (!node || node.position == null) return
     const targetRatio = opts.zoom ?? 0.50
-    const px = node.position.x - 100
-    const py = node.position.y - 80
+    const cw = opts.canvasW || 1000
+    const ch = opts.canvasH || 800
+    // VueFlow 变换：screenX = worldX * zoom + vp.x
+    // 居中要求：cw/2 = node.x * targetZoom + vp.x → vp.x = cw/2 - node.x * targetZoom
+    const targetX = (cw / 2) - node.position.x * targetRatio
+    const targetY = (ch / 2) - node.position.y * targetRatio
+
+    // === 排查日志：smoothFitToNode 居中计算全过程 ===
+    const _startVp = getViewport()
+    console.log('[smoothFitToNode] 居中计算链路:', {
+      '1.节点世界坐标': { x: node.position.x, y: node.position.y },
+      '2.目标zoom': targetRatio,
+      '3.画布尺寸': { cw, ch },
+      '4.目标vp(屏幕空间)': { targetX: Math.round(targetX), targetY: Math.round(targetY) },
+      '5.当前vp': { x: Math.round(_startVp.x), y: Math.round(_startVp.y), zoom: Number(_startVp.zoom.toFixed(4)) },
+      '6.验证': `节点应在屏幕中心: screenX=${Math.round(node.position.x * targetRatio + targetX)} 应等于 cw/2=${Math.round(cw / 2)}`,
+    })
+
     const duration = opts.duration ?? 360
     const startVp = { ...getViewport() }
     if (viewportRafId) cancelAnimationFrame(viewportRafId)
@@ -156,9 +175,50 @@ export function useCanvasZoomModes() {
       const eased = easeOutCubic(t)
       setViewport(
         {
-          x: startVp.x + (px - startVp.x) * eased,
-          y: startVp.y + (py - startVp.y) * eased,
+          x: startVp.x + (targetX - startVp.x) * eased,
+          y: startVp.y + (targetY - startVp.y) * eased,
           zoom: startVp.zoom + (targetRatio - startVp.zoom) * eased,
+        },
+        { duration: 0, force: true }
+      )
+      if (t < 1) viewportRafId = requestAnimationFrame(step)
+      else { animating.value = false; viewportRafId = null }
+    }
+    viewportRafId = requestAnimationFrame(step)
+  }
+
+  /**
+   * 平滑平移视口到指定屏幕空间坐标（不改变 zoom）
+   * 供小地图点击/拖拽跳转使用，避免在回调中调用 useVueFlow()
+   * @param {number} x - 目标 vp.x（屏幕空间平移量）
+   * @param {number} y - 目标 vp.y
+   * @param {Object} opts - { duration }
+   */
+  function smoothPanTo(x, y, opts = {}) {
+    const duration = opts.duration ?? 280
+    const startVp = { ...getViewport() }
+    if (Math.abs(x - startVp.x) < 1 && Math.abs(y - startVp.y) < 1) return
+
+    // === 排查日志：smoothPanTo 平移计算 ===
+    console.log('[smoothPanTo] 平移视口:', {
+      '1.目标vp(屏幕空间)': { targetX: Math.round(x), targetY: Math.round(y) },
+      '2.当前vp': { x: Math.round(startVp.x), y: Math.round(startVp.y), zoom: Number(startVp.zoom.toFixed(4)) },
+      '3.平移距离': { dx: Math.round(x - startVp.x), dy: Math.round(y - startVp.y) },
+      '4.duration': duration,
+      '5.验证': `worldMinX=${Math.round(-startVp.x / startVp.zoom)} → 目标worldMinX=${Math.round(-x / startVp.zoom)}`,
+    })
+
+    if (viewportRafId) cancelAnimationFrame(viewportRafId)
+    animating.value = true
+    const start = performance.now()
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration)
+      const eased = easeOutCubic(t)
+      setViewport(
+        {
+          x: startVp.x + (x - startVp.x) * eased,
+          y: startVp.y + (y - startVp.y) * eased,
+          zoom: startVp.zoom,
         },
         { duration: 0, force: true }
       )
@@ -196,6 +256,7 @@ export function useCanvasZoomModes() {
     zoomInSmooth,
     zoomOutSmooth,
     smoothFitToNode,
+    smoothPanTo,
     syncViewport,
   }
 }
