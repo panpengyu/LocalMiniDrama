@@ -49,8 +49,13 @@ export function resolveViewport(savedLayout, fallback = { x: 0, y: 0, zoom: 0.75
 
 const NON_DRAGGABLE_TYPES = new Set(['canvasLabel', 'canvasAddButton'])
 
-/** 从当前 Vue Flow 节点与视口构建可持久化的 canvas_layout */
-export function buildCanvasLayoutPayload(flowNodes, viewport, existingLayout = null) {
+/** 从当前 Vue Flow 节点与视口构建可持久化的 canvas_layout
+ *  @param {Array} flowNodes - 全量节点数组（rawNodes，非虚拟化子集）
+ *  @param {{x,y,zoom}} viewport - 当前视口
+ *  @param {object|null} existingLayout - 已保存布局，用于继承 nodes / zone_collapsed / meta
+ *  @param {object} extras - 扩展字段：zoneCollapsed, meta 等（S5-T05 分区折叠持久化）
+ */
+export function buildCanvasLayoutPayload(flowNodes, viewport, existingLayout = null, extras = null) {
   const nodes = { ...(existingLayout?.nodes || {}) }
   for (const node of flowNodes || []) {
     if (!node?.id || NON_DRAGGABLE_TYPES.has(node.type)) continue
@@ -60,8 +65,8 @@ export function buildCanvasLayoutPayload(flowNodes, viewport, existingLayout = n
       y: node.position.y,
     }
   }
-  return {
-    version: 1,
+  const payload = {
+    version: 2,
     viewport: {
       x: Number(viewport?.x) || 0,
       y: Number(viewport?.y) || 0,
@@ -69,6 +74,28 @@ export function buildCanvasLayoutPayload(flowNodes, viewport, existingLayout = n
     },
     nodes,
     updated_at: new Date().toISOString(),
+  }
+  // S5-T05: 分区折叠状态写入（如有）
+  if (extras?.zoneCollapsed && typeof extras.zoneCollapsed === 'object') {
+    payload.zone_collapsed = extras.zoneCollapsed
+  } else if (existingLayout?.zone_collapsed) {
+    payload.zone_collapsed = existingLayout.zone_collapsed
+  }
+  // 自定义 meta 合并
+  if (extras?.meta && typeof extras.meta === 'object') {
+    payload.meta = { ...(existingLayout?.meta || {}), ...extras.meta }
+  } else if (existingLayout?.meta) {
+    payload.meta = existingLayout.meta
+  }
+  return payload
+}
+
+/** 读取 zone_collapsed（分区折叠状态），无则返回默认全展开 */
+export function resolveZoneCollapsed(savedLayout) {
+  const zc = savedLayout?.zone_collapsed
+  if (zc && typeof zc === 'object') return zc
+  return {
+    characters: false, scenes: false, props: false, storyboard: false, reference: false,
   }
 }
 

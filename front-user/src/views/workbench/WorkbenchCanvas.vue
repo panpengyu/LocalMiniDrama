@@ -1,9 +1,53 @@
 <template>
-  <!-- S3-T05: 一站式工作台画布核心（简化版 DramaCanvas，无顶栏/素材栏，嵌入工作台中间） -->
-  <div class="wb-canvas" v-loading="loading">
+  <!-- Sprint 5 升级版工作台画布核心：
+       S5-T01 节点三视图模式 / S5-T02 缩放联动 / S5-T03 虚拟化 / S5-T04 自定义小地图 / S5-T05 分区 / S5-T06 平滑缩放 -->
+  <div class="wb-canvas" v-loading="loading" ref="canvasContainerRef">
+    <!-- 顶栏：5档缩放按钮 + 分区操作 + 视图信息 -->
+    <div class="wb-canvas-toolbar">
+      <div class="wct-left">
+        <el-tooltip v-for="(lv, i) in zoomModes.ZOOM_LEVELS" :key="lv.key"
+                    :content="`${lv.desc} ${lv.label}`" placement="bottom">
+          <el-button
+            size="small"
+            type="primary"
+            :plain="zoomModes.zoomLevelIdx.value !== i"
+            :style="zoomModes.zoomLevelIdx.value === i ? { opacity: 1 } : { opacity: 0.55 }"
+            @click="zoomModes.setZoomLevel(i)"
+          >
+            {{ lv.desc }}
+            <span class="wct-z">({{ lv.label }})</span>
+          </el-button>
+        </el-tooltip>
+      </div>
+      <div class="wct-right">
+        <!-- S5-T05 分区操作 -->
+        <el-button size="small" @click="onToggleZonesAll(false)">展开分区</el-button>
+        <el-button size="small" @click="onToggleZonesAll(true)">折叠分区</el-button>
+        <el-button size="small" type="success" @click="onTidyLayout">
+          <el-icon><Grid /></el-icon> 一键整理
+        </el-button>
+        <el-divider direction="vertical" />
+        <!-- 视图模式指示器 -->
+        <el-tag size="small" :type="viewModeTag(zoomModes.viewMode.value).type" effect="plain">
+          视图: {{ viewModeTag(zoomModes.viewMode.value).label }}
+        </el-tag>
+        <span class="wct-zoom">{{ Math.round(zoomModes.zoomRatio.value * 100) }}%</span>
+      </div>
+    </div>
+
     <div ref="canvasMainRef" class="wb-canvas-main">
+      <!-- S5-T05 分区背景层（在 VueFlow 外层，绝对定位 + 自己做 world->screen 变换） -->
+      <CanvasZones
+        v-if="rawNodes.length > 0"
+        :zones="canvasZones.zones.value"
+        :viewport="viewportForZones"
+        :canvas-rect="canvasRect"
+        :node-zone-counts="nodeZoneCounts"
+        @toggle="(k) => canvasZones.toggleZone(k)"
+      />
+
       <VueFlow
-        v-if="nodes.length"
+        v-if="rawNodes.length"
         v-model:nodes="nodes"
         v-model:edges="edges"
         :node-types="nodeTypes"
@@ -22,8 +66,9 @@
         @pane-click="onPaneClick"
         @node-drag-stop="scheduleLayoutSave"
         @viewport-change="onViewportChange"
-        @move-end="scheduleLayoutSave"
+        @move-end="onMoveEnd"
         @selection-change="onSelectionChange"
+        @init="onVueFlowInit"
       >
         <Background pattern-color="#3f3f46" :gap="20" />
         <Controls>
@@ -31,8 +76,18 @@
           <template #icon-zoom-out><ZoomOut :size="16" /></template>
           <template #icon-fit-view><FullScreen :size="16" /></template>
         </Controls>
-        <MiniMap pannable zoomable />
       </VueFlow>
+
+      <!-- S5-T04 自定义小地图（Canvas2D + 视口框 + 点击跳转） -->
+      <CanvasMinimap
+        v-if="rawNodes.length > 0"
+        :nodes="rawNodes"
+        :viewport="currentViewport"
+        :canvas-rect="canvasRect"
+        :zones="minimapZones"
+        @center="onMinimapCenter"
+      />
+
       <el-empty v-else-if="!loading" description="暂无画布数据，请在左侧导航树或AI面板创建内容" />
     </div>
   </div>
@@ -40,17 +95,15 @@
 
 <script setup>
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { VueFlow } from '@vue-flow/core'
+import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { MiniMap } from '@vue-flow/minimap'
-import { ZoomIn, ZoomOut, FullScreen } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ZoomIn, ZoomOut, FullScreen, Grid } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
-import '@vue-flow/minimap/dist/style.css'
 
 import { dramaAPI } from '@/api/drama'
 import {
@@ -63,6 +116,7 @@ import {
   buildCanvasLayoutPayload,
   parseCanvasLayout,
   resolveViewport,
+  resolveZoneCollapsed,
 } from '@/utils/canvasLayout'
 import { storyboardIdFromNodeId } from '@/utils/canvasWorkflow'
 import { useCanvasStoryboardMedia } from '@/composables/useCanvasStoryboardMedia'
@@ -77,34 +131,40 @@ import CanvasStoryboardNode from '@/components/dramaCanvas/CanvasStoryboardNode.
 import CanvasMediaNode from '@/components/dramaCanvas/CanvasMediaNode.vue'
 import CanvasAddButtonNode from '@/components/dramaCanvas/CanvasAddButtonNode.vue'
 
+// Sprint 5
+import { useCanvasZoomModes } from '@/composables/useCanvasZoomModes'
+import { useCanvasViewportVirtualization } from '@/composables/useCanvasViewportVirtualization'
+import { useCanvasZones } from '@/composables/useCanvasZones'
+import CanvasMinimap from '@/components/workbench/CanvasMinimap.vue'
+import CanvasZones from '@/components/workbench/CanvasZones.vue'
+
 const log = useWorkbenchLogger('WorkbenchCanvas')
 
 const props = defineProps({
   dramaId: { type: [Number, String], required: true },
-  // 高亮的素材节点ID (格式：char:xxx / scene:xxx / prop:xxx)
   highlightAssetId: { type: String, default: null },
-  // 选中的分镜ID（从时间轴同步过来）
   focusStoryboardId: { type: [Number, String], default: null },
-  // 过滤集
   filterEpisodeId: { type: [Number, String], default: 'all' },
 })
 const emit = defineEmits([
-  'drama-loaded',      // drama数据加载完成 payload: drama
-  'node-click',        // 节点点击 payload: { nodeType, data, id }
-  'storyboard-click',  // 分镜节点点击 payload: storyboard
-  'script-click',      // 剧本节点点击 payload: script
-  'layout-saved',      // 布局保存完成
-  'selection-change',  // 选区变化 payload: selectedStoryboardIds
+  'drama-loaded', 'node-click', 'storyboard-click', 'script-click',
+  'layout-saved', 'selection-change',
 ])
 
 const loading = ref(false)
 const drama = ref(null)
+// rawNodes: 全量节点（布局保存、虚拟化、分区折叠判定都用它）
+// nodes:    视口内可见节点（VueFlow 实际渲染的是它；VueFlow v-model:nodes="nodes"）
+const rawNodes = ref([])
 const nodes = ref([])
 const edges = ref([])
 const layoutCache = ref(null)
 const currentViewport = ref({ x: 0, y: 0, zoom: 0.75 })
 const canvasMainRef = ref(null)
+const canvasContainerRef = ref(null)
+const canvasRect = ref({ w: 0, h: 0 })
 const selectedStoryboardIds = ref([])
+const selectedIdsSet = computed(() => new Set(selectedStoryboardIds.value.map(String)))
 const { imagesBySbId, videosBySbId, loadForDrama } = useCanvasStoryboardMedia()
 
 const nodeTypes = {
@@ -119,7 +179,7 @@ const nodeTypes = {
 }
 
 let saveTimer = null
-
+let resizeObserver = null
 const resolvedEpisodeId = computed(() =>
   props.filterEpisodeId === 'all' ? null : props.filterEpisodeId
 )
@@ -129,6 +189,47 @@ const initialViewport = computed(() => {
   return { x: v.x, y: v.y, zoom: v.zoom }
 })
 const hasSavedViewport = computed(() => Boolean(savedLayout.value?.viewport))
+
+// ---- Sprint 5 composables ----
+// 注意：useVueFlow 必须在 <VueFlow> 作用域内可用，所以在 onVueFlowInit 之后再初始化
+let zoomModes = null
+let viewportVirt = null
+let canvasZones = null
+
+function initSprint5() {
+  zoomModes = useCanvasZoomModes()
+  viewportVirt = useCanvasViewportVirtualization()
+  canvasZones = useCanvasZones()
+  // S5-T05: 从 savedLayout 恢复分区折叠状态
+  const restored = resolveZoneCollapsed(savedLayout.value)
+  if (canvasZones && restored) {
+    try { canvasZones.zoneCollapsed.value = { ...canvasZones.zoneCollapsed.value, ...restored } } catch (_) {}
+  }
+}
+
+const viewportForZones = computed(() => currentViewport.value)
+const minimapZones = computed(() =>
+  (canvasZones?.zones?.value || []).map(z => ({
+    key: z.key, label: z.label, color: z.color, worldBounds: z.worldBounds,
+  }))
+)
+
+function viewModeTag(vm) {
+  return vm === 'compact' ? { type: 'info', label: 'Compact 鸟瞰' }
+    : vm === 'detailed' ? { type: 'warning', label: 'Detailed 精编' }
+      : { type: 'success', label: 'Normal 编辑' }
+}
+
+// 分区节点数统计
+const nodeZoneCounts = computed(() => {
+  const counter = {}
+  if (!canvasZones) return counter
+  for (const n of rawNodes.value) {
+    const zk = canvasZones.zoneKeyOfNode(n)
+    counter[zk] = (counter[zk] || 0) + 1
+  }
+  return counter
+})
 
 /* ===================== 加载 & 构图 ===================== */
 async function loadDrama(force = false) {
@@ -147,7 +248,7 @@ async function loadDrama(force = false) {
         title: drama.value?.title || '',
         episodes: (drama.value?.episodes || []).length,
         characters: (drama.value?.characters || []).length,
-        scenes: (drama.value?.scenes || []).length,
+        scenes: (drama.value?.scenes?.length || 0),
         estNodeCount: nodeCount,
       })
       layoutCache.value = parseCanvasLayout(drama.value?.metadata)
@@ -166,9 +267,42 @@ async function loadDrama(force = false) {
   })
 }
 
+/**
+ * 将视图模式/渲染密度注入每个节点的 data（S5-T01/S5-T02 节点组件内通过 this.$props.data 读取）
+ * 保持单向：每次 rebuildGraph 都写入最新值
+ */
+function injectViewModeIntoNodes(arr) {
+  const t0 = performance.now()
+  const vm = zoomModes ? zoomModes.viewMode.value : 'normal'
+  const den = zoomModes ? zoomModes.renderDensity.value : {
+    showThumbnail: true, showMetadata: true, showActions: true, showDialogue: false, showHint: true,
+  }
+  const result = arr.map(n => {
+    const hiddenByZone = canvasZones?.isNodeHiddenByZone(n) ?? false
+    return {
+      ...n,
+      data: {
+        ...(n.data || {}),
+        _viewMode: vm,
+        _renderDensity: den,
+        _zoneKey: canvasZones?.zoneKeyOfNode(n) ?? null,
+        _zoneCollapsed: hiddenByZone,
+      },
+    }
+  })
+  const ms = Math.round((performance.now() - t0) * 1000) / 1000
+  if (arr.length > 20) {
+    log.debug('[Inject] 视图模式注入完成', {
+      viewMode: vm, nodeCount: arr.length, ms,
+      density: den,
+    })
+  }
+  return result
+}
+
 function rebuildGraph() {
   const end = log.startMeasure('rebuildGraph')
-  if (!drama.value) { nodes.value = []; edges.value = []; end(true, { nodes: 0, edges: 0 }); return }
+  if (!drama.value) { rawNodes.value = []; nodes.value = []; edges.value = []; end(true, { nodes: 0, edges: 0 }); return }
   const graph = buildDramaCanvasGraph(drama.value, {
     episodeId: resolvedEpisodeId.value,
     savedLayout: savedLayout.value,
@@ -176,37 +310,72 @@ function rebuildGraph() {
     imagesBySbId: imagesBySbId.value,
     videosBySbId: videosBySbId.value,
   })
-  let nextNodes = graph.nodes
+  let nextRawNodes = injectViewModeIntoNodes(graph.nodes)
   let nextEdges = stampEdgeBaseStyles(graph.edges)
-  const hlStart = performance.now()
   if (props.highlightAssetId) {
-    const h = applyCanvasHighlight(nextNodes, nextEdges, props.highlightAssetId, drama.value)
-    nextNodes = h.nodes; nextEdges = h.edges
+    const h = applyCanvasHighlight(nextRawNodes, nextEdges, props.highlightAssetId, drama.value)
+    nextRawNodes = h.nodes; nextEdges = h.edges
   }
-  const hlMs = Math.round(performance.now() - hlStart)
-  nodes.value = nextNodes
+  rawNodes.value = nextRawNodes
   edges.value = nextEdges
+  // S5-T03 虚拟化：立即重新计算可见子集
+  refreshVisibleNodes(true)
   end(true, {
-    nodes: nextNodes.length,
+    rawNodes: nextRawNodes.length,
+    visibleNodes: nodes.value.length,
     edges: nextEdges.length,
     highlightAssetId: props.highlightAssetId || null,
-    highlightMs: hlMs,
     episodeFilter: props.filterEpisodeId,
   })
 }
 
+/* S5-T03 虚拟化：把 rawNodes 过滤成 nodes（视口内 + 选中 + 非折叠分区） */
+function refreshVisibleNodes(immediate = false) {
+  const t0 = performance.now()
+  if (!viewportVirt) { nodes.value = rawNodes.value; return }
+  viewportVirt.updateViewport(currentViewport.value, immediate)
+  // 分区折叠强制剔除（在虚拟化之前）
+  const candidates = canvasZones
+    ? rawNodes.value.filter(n => !canvasZones.isNodeHiddenByZone(n))
+    : rawNodes.value
+  const filterMs = Math.round((performance.now() - t0) * 1000) / 1000
+  const t1 = performance.now()
+  const visible = viewportVirt.makeVisibleNodes(candidates, { selectedIds: selectedIdsSet.value })
+  const virtMs = Math.round((performance.now() - t1) * 1000) / 1000
+  const totalMs = Math.round((performance.now() - t0) * 1000) / 1000
+  // 记录节点增减量，帮助排查渲染抖动
+  const prevCount = nodes.value.length
+  nodes.value = visible
+  const delta = visible.length - prevCount
+  log.debug('[Virtual] 节点可见性更新', {
+    total: rawNodes.value.length,
+    candidates: candidates.length,
+    visible: visible.length,
+    removed: rawNodes.value.length - visible.length,
+    delta,
+    filterMs, virtMs, totalMs,
+    viewport: { z: Number(currentViewport.value.zoom?.toFixed(3)), x: Math.round(currentViewport.value.x), y: Math.round(currentViewport.value.y) },
+    immediate,
+  })
+  // 可见节点数剧变（>30）时输出 WARN，帮助定位渲染抖动
+  if (Math.abs(delta) > 30) {
+    log.warn('[Virtual] 可见节点数剧变', { delta, from: prevCount, to: visible.length, totalMs, viewport: currentViewport.value })
+  }
+}
+
 /* ===================== 素材高亮 ===================== */
 function applyHighlight() {
-  if (!nodes.value.length) return
-  const cleared = nodes.value.map((n) => ({
+  if (!rawNodes.value.length) return
+  const cleared = rawNodes.value.map((n) => ({
     ...n, class: undefined, data: { ...n.data, highlighted: false, dimmed: false },
   }))
+  let next = cleared
   if (props.highlightAssetId) {
     const h = applyCanvasHighlight(cleared, edges.value, props.highlightAssetId, drama.value)
-    nodes.value = h.nodes; edges.value = h.edges
-  } else {
-    nodes.value = cleared
+    next = h.nodes; edges.value = h.edges
   }
+  rawNodes.value = injectViewModeIntoNodes(next)
+  refreshVisibleNodes(true)
 }
 watch(() => props.highlightAssetId, applyHighlight)
 
@@ -217,35 +386,156 @@ watch(() => props.filterEpisodeId, () => {
   }
 })
 
+/* S5-T01/S5-T02：视图模式/渲染密度变化 → 重新注入节点 data */
+watch(
+  () => [zoomModes?.viewMode?.value, JSON.stringify(zoomModes?.renderDensity?.value || {})],
+  (n, o) => {
+    if (!rawNodes.value.length) return
+    const t0 = performance.now()
+    rawNodes.value = injectViewModeIntoNodes(rawNodes.value)
+    log.info('[Watch] 视图模式变化 → 重新注入', {
+      newMode: n?.[0], oldMode: o?.[0],
+      nodes: rawNodes.value.length,
+      ms: Math.round((performance.now() - t0) * 1000) / 1000,
+    })
+  },
+  { immediate: false }
+)
+/* S5-T05：分区折叠变化 → 重新计算可见节点 */
+watch(
+  () => JSON.stringify(canvasZones?.zoneCollapsed?.value || {}),
+  (n, o) => {
+    if (!canvasZones) return
+    log.info('[Watch] 分区折叠状态变化', { from: o, to: n, rawNodes: rawNodes.value.length })
+    refreshVisibleNodes(true)
+  }
+)
+
 /* ===================== 分镜焦点同步（时间轴→画布） ===================== */
 watch(() => props.focusStoryboardId, (sbId, old) => {
   if (!sbId) return
   log.info('[Sync] 时间轴→画布：聚焦分镜节点', { storyboardId: sbId, prev: old || null, nodesCount: nodes.value.length })
-  if (!nodes.value.length) return
+  if (!rawNodes.value.length) return
   const t0 = performance.now()
-  const targetNode = nodes.value.find((n) => {
+  const targetNode = rawNodes.value.find((n) => {
     const sid = storyboardIdFromNodeId(n.id)
     return sid && String(sid) === String(sbId)
   })
   const ms = Math.round(performance.now() - t0)
-  if (targetNode) {
+  if (targetNode && zoomModes) {
     selectedStoryboardIds.value = [sbId]
-    log.info('[Sync] 找到并标记选中分镜节点', {
-      storyboardId: sbId,
-      nodeId: targetNode.id,
-      position: targetNode.position,
-      lookupMs: ms,
+    // S5-T06: 平滑居中跳转
+    zoomModes.smoothFitToNode(targetNode, { zoom: 0.6, duration: 420 })
+    log.info('[Sync] 找到并平滑跳转到分镜节点', {
+      storyboardId: sbId, nodeId: targetNode.id,
+      position: targetNode.position, lookupMs: ms,
     })
   } else {
-    log.warn('[Sync] 未找到对应分镜节点（可能集数过滤未包含）', { storyboardId: sbId, lookupMs: ms })
+    log.warn('[Sync] 未找到对应分镜节点或 zoomModes 未就绪', { storyboardId: sbId, lookupMs: ms })
   }
 })
 
 /* ===================== 事件回调 ===================== */
-function onPaneClick() { /* 留空 */ }
-function onViewportChange(ev) {
-  if (ev?.viewport) currentViewport.value = ev.viewport
+function onPaneClick() { }
+
+function onVueFlowInit() {
+  const t0 = performance.now()
+  // 此时 @vue-flow/core 的 Provider 已就绪，可使用 useVueFlow
+  initSprint5()
+  log.info('[Init] VueFlow 已就绪，Sprint5 composables 初始化', {
+    hasZoomModes: !!zoomModes,
+    hasViewportVirt: !!viewportVirt,
+    hasCanvasZones: !!canvasZones,
+    initMs: Math.round((performance.now() - t0) * 1000) / 1000,
+  })
+  // 尺寸初始化
+  if (canvasMainRef.value) {
+    const rect = canvasMainRef.value.getBoundingClientRect()
+    canvasRect.value = { w: rect.width, h: rect.height }
+    viewportVirt?.updateCanvasSize(rect.width, rect.height)
+    log.debug('[Init] 画布尺寸初始化', { w: Math.round(rect.width), h: Math.round(rect.height) })
+  }
+  // 监听尺寸变化
+  if (canvasMainRef.value && typeof ResizeObserver !== 'undefined') {
+    let roCount = 0
+    resizeObserver = new ResizeObserver(entries => {
+      for (const e of entries || []) {
+        const w = e.contentRect.width
+        const h = e.contentRect.height
+        if (!w || !h) continue
+        canvasRect.value = { w, h }
+        viewportVirt?.updateCanvasSize(w, h)
+        roCount++
+        if (roCount <= 3 || roCount % 10 === 0) {
+          log.debug('[ResizeObserver] 画布尺寸变化', { w: Math.round(w), h: Math.round(h), count: roCount })
+        }
+      }
+    })
+    resizeObserver.observe(canvasMainRef.value)
+  }
+  // 初次按档级重置为合理默认
+  if (zoomModes) {
+    const startVp = currentViewport.value
+    // 不强制平滑，直接赋值起点
+    zoomModes.syncViewport({ zoom: startVp.zoom })
+    log.debug('[Init] 初始 zoom 同步', { zoom: startVp.zoom })
+  }
 }
+
+/* onViewportChange 高频回调，用 _vpLogAcc 累计统计，每 500ms 聚合输出一次，避免日志刷屏 */
+let _vpLogAcc = { count: 0, lastZoom: 0, lastT: performance.now(), maxGap: 0 }
+function onViewportChange(ev) {
+  if (!ev?.viewport) return
+  const vp = ev.viewport
+  currentViewport.value = vp
+  zoomModes?.syncViewport(vp)
+  // S5-T03 虚拟化：节流更新（debounce 100ms）
+  viewportVirt?.updateViewport(vp)
+
+  // 性能采样：统计 viewport 变更频率 & 单帧间隔
+  const now = performance.now()
+  const gap = now - _vpLogAcc.lastT
+  _vpLogAcc.count++
+  _vpLogAcc.lastT = now
+  if (gap > _vpLogAcc.maxGap) _vpLogAcc.maxGap = gap
+  if (_vpLogAcc.count % 10 === 0) {
+    log.debug('[Viewport] viewport-change 聚合采样', {
+      frames: _vpLogAcc.count,
+      zoom: Number(vp.zoom?.toFixed(4)),
+      x: Math.round(vp.x), y: Math.round(vp.y),
+      avgGapMs: Math.round(gap * 10) / 10,
+      maxGapMs: Math.round(_vpLogAcc.maxGap * 10) / 10,
+      viewMode: zoomModes?.viewMode?.value || '?',
+      visibleNodes: nodes.value.length,
+      rawNodes: rawNodes.value.length,
+    })
+    _vpLogAcc.maxGap = 0
+  }
+  // 缩放档级跨越时立即输出一次（用于排查缩放卡顿拐点）
+  const z = Number(vp.zoom?.toFixed(3))
+  if (_vpLogAcc.lastZoom && Math.abs(z - _vpLogAcc.lastZoom) > 0.15) {
+    log.info('[Viewport] 缩放幅度跨越阈值', {
+      from: _vpLogAcc.lastZoom, to: z,
+      viewMode: zoomModes?.viewMode?.value || '?',
+      gapMs: Math.round(gap * 10) / 10,
+      visibleNodes: nodes.value.length,
+    })
+  }
+  _vpLogAcc.lastZoom = z
+}
+
+function onMoveEnd(ev) {
+  const t0 = performance.now()
+  if (ev?.viewport) currentViewport.value = ev.viewport
+  log.debug('[MoveEnd] 平移/缩放结束', {
+    zoom: Number(ev?.viewport?.zoom?.toFixed(4)),
+    x: Math.round(ev?.viewport?.x || 0), y: Math.round(ev?.viewport?.y || 0),
+    visibleNodes: nodes.value.length,
+    ms: Math.round((performance.now() - t0) * 1000) / 1000,
+  })
+  scheduleLayoutSave()
+}
+
 function onNodeClick(_, node) {
   const type = node?.type || ''
   const id = node?.id
@@ -255,9 +545,7 @@ function onNodeClick(_, node) {
     const sb = getStoryboardRefFromNode(node, drama.value)
     if (sb) {
       log.info('分镜节点点击 → 向上发射 storyboard-click', {
-        storyboardId: sb.id,
-        number: sb.storyboard_number,
-        image_status: sb.status || 'draft',
+        storyboardId: sb.id, number: sb.storyboard_number, image_status: sb.status || 'draft',
       })
       emit('storyboard-click', sb)
     }
@@ -285,26 +573,77 @@ function onSelectionChange(sel) {
   emit('selection-change', ids)
 }
 
+/* S5-T04 小地图跳转：平移视口（不改变 zoom） */
+function onMinimapCenter({ x, y }) {
+  if (!zoomModes) return
+  const t0 = performance.now()
+  const vp = currentViewport.value
+  log.info('[Minimap] 小地图跳转请求', {
+    targetX: Math.round(x), targetY: Math.round(y),
+    currentZoom: Number(vp.zoom?.toFixed(3)),
+    currentX: Math.round(vp.x), currentY: Math.round(vp.y),
+  })
+  zoomModes.smoothZoomTo(vp.zoom, {
+    duration: 200,
+    onDone: () => {
+      // 注意：useCanvasZoomModes 只操作 zoom，viewport 平移用 setViewport
+      const { setViewport, getViewport } = useVueFlow?.() ? useVueFlow() : (typeof window.__useVueFlowCache?.() === 'function' ? window.__useVueFlowCache() : { setViewport: null, getViewport: null })
+      if (!setViewport) {
+        log.warn('[Minimap] setViewport 不可用，跳转失败', { x, y })
+        return
+      }
+      const cur = getViewport()
+      setViewport({ x, y, zoom: cur.zoom }, { duration: 260, force: true })
+      log.debug('[Minimap] setViewport 平移完成', {
+        x: Math.round(x), y: Math.round(y), zoom: Number(cur.zoom?.toFixed(3)),
+        totalMs: Math.round((performance.now() - t0) * 1000) / 1000,
+      })
+    },
+  })
+}
+
+/* S5-T05 分区折叠/展开全部 + 一键整理 */
+function onToggleZonesAll(collapse) {
+  if (!canvasZones) return
+  if (collapse) canvasZones.collapseAll(); else canvasZones.expandAll()
+}
+
+async function onTidyLayout() {
+  if (!canvasZones || !rawNodes.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      '一键整理会将所有节点按类型移入 5 个分区并重新网格排列（布局会被覆盖，可手动再调），确认继续？',
+      '一键整理布局',
+      { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  const tidied = canvasZones.tidyLayout(rawNodes.value, drama.value)
+  rawNodes.value = injectViewModeIntoNodes(tidied)
+  refreshVisibleNodes(true)
+  log.info('[Tidy] 一键整理布局完成', { nodes: tidied.length, zones: 5 })
+  ElMessage.success('布局已重新排列，稍后会自动保存到后端')
+  // 立即触发布局保存
+  scheduleLayoutSave(true)
+}
+
 /* ===================== 布局保存 ===================== */
 let _lastScheduleAt = 0
 const layoutDirty = ref(false)
 
 async function flushLayoutSave() {
-  if (!layoutDirty.value || !drama.value) {
-    log.debug('[LayoutSave] 跳过：layout 非 dirty 或无 drama')
-    return
-  }
+  if (!layoutDirty.value || !drama.value) return
   const t0 = Date.now()
   try {
+    // 布局保存时，使用**全量 rawNodes**（不能用虚拟化后的 nodes）
+    const zc = canvasZones?.zoneCollapsed?.value
     const payload = buildCanvasLayoutPayload(
-      nodes.value, currentViewport.value,
-      drama.value?.metadata?.canvas_layout?.meta || {}
+      rawNodes.value, currentViewport.value,
+      savedLayout.value || drama.value?.metadata?.canvas_layout || null,
+      { zoneCollapsed: zc, meta: (savedLayout.value?.meta || {}) }
     )
-    const nodeCount = Array.isArray(payload?.nodes) ? payload.nodes.length : 0
+    const nodeCount = payload?.nodes ? Object.keys(payload.nodes).length : 0
     log.info('[LayoutSave] 开始保存画布布局到后端', {
-      dramaId: drama.value.id,
-      nodes: nodeCount,
-      hasViewport: !!payload?.viewport,
+      dramaId: drama.value.id, nodes: nodeCount, hasViewport: !!payload?.viewport,
       debounceMs: Date.now() - _lastScheduleAt,
     })
     await dramaAPI.saveCanvasLayout(drama.value.id, payload, undefined)
@@ -315,17 +654,19 @@ async function flushLayoutSave() {
   } catch (e) {
     const ms = Date.now() - t0
     log.error('[LayoutSave] 画布布局保存失败（下次拖动将重新触发）', e, {
-      dramaId: Number(drama.value?.id),
-      nodes: nodes.value.length,
-      totalMs: ms,
+      dramaId: Number(drama.value?.id), nodes: rawNodes.value.length, totalMs: ms,
     })
   }
 }
 
-function scheduleLayoutSave() {
+function scheduleLayoutSave(immediate) {
   layoutDirty.value = true
   _lastScheduleAt = Date.now()
   if (saveTimer) clearTimeout(saveTimer)
+  if (immediate) {
+    flushLayoutSave()
+    return
+  }
   saveTimer = setTimeout(() => {
     log.info('[LayoutSave] 防抖触发 flushLayoutSave', { dramaId: Number(drama.value?.id), debounceMs: Date.now() - _lastScheduleAt })
     flushLayoutSave()
@@ -333,19 +674,22 @@ function scheduleLayoutSave() {
 }
 
 /* ===================== 对外暴露方法 ===================== */
-async function refresh(keepFocus = true) {
-  await loadDrama(true)
-}
+async function refresh(keepFocus = true) { await loadDrama(true) }
 defineExpose({
   refresh,
   getDrama: () => drama.value,
   getSelectedStoryboardIds: () => selectedStoryboardIds.value,
   rebuild: rebuildGraph,
+  // Sprint 5 扩展
+  zoomModes: () => zoomModes,
+  zones: () => canvasZones,
+  setZoomLevel: (i) => zoomModes?.setZoomLevel(i),
 })
 
 onMounted(() => { loadDrama() })
 onBeforeUnmount(() => {
   if (saveTimer) { clearTimeout(saveTimer); flushLayoutSave() }
+  if (resizeObserver) resizeObserver.disconnect()
 })
 </script>
 
@@ -356,8 +700,28 @@ onBeforeUnmount(() => {
   background: #0f172a;
   overflow: hidden;
 }
+.wb-canvas-toolbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 25;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.wct-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wct-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wct-z { opacity: 0.7; font-size: 11px; margin-left: 2px; }
+.wct-zoom {
+  font-variant-numeric: tabular-nums;
+  color: #e2e8f0; font-weight: 600;
+  background: rgba(255,255,255,0.04);
+  padding: 2px 8px; border-radius: 4px; font-size: 12px;
+}
 .wb-canvas-main {
   width: 100%; height: 100%;
+  padding-top: 52px; /* 为顶栏让出空间 */
+  box-sizing: border-box;
+  position: relative;
 }
 .vue-flow-canvas {
   width: 100%; height: 100%;
