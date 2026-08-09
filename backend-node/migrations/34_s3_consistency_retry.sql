@@ -11,3 +11,4 @@ ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS consistency_score DECIMAL
 ALTER TABLE image_generations ADD COLUMN IF NOT EXISTS consistency_passed TINYINT(1) NULL;
 CREATE INDEX IF NOT EXISTS idx_ig_retried_from ON image_generations(retried_from_id);
 CREATE INDEX IF NOT EXISTS idx_ig_consistency ON image_generations(consistency_passed);
+.

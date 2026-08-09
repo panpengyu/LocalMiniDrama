@@ -59,6 +59,13 @@ const router = createRouter({
           meta: { title: '一站式创作工作台' }
         },
         {
+          // S3-T01 验收点：独立角色详情页，展示一致性分数，低于阈值标红警告
+          path: 'character/:id',
+          name: 'character-detail',
+          component: () => import('@/views/CharacterDetail.vue'),
+          meta: { title: '角色详情 · 一致性展示' }
+        },
+        {
           path: 'ai-config',
           name: 'ai-config',
           component: () => import('@/views/AiConfig.vue'),

@@ -262,6 +262,220 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- ============== 内嵌剧集资料 Drawer（S3-T05 验收点：替代 goListMode，消除页面跳转 /drama/:id） ============== -->
+    <el-drawer
+      v-model="infoDrawerVisible"
+      title="剧集资料 · 一站式内嵌管理（无需跳转）"
+      direction="ltr"
+      size="560px"
+      :with-header="true"
+    >
+      <el-tabs v-model="infoDrawerTab">
+        <!-- ① 剧集基本信息 Tab，内嵌管理 → 替代 DramaDetail 剧集信息 section -->
+        <el-tab-pane label="剧集信息" name="info">
+          <div class="info-section">
+            <div class="info-section-title">基本信息（可直接编辑并保存）</div>
+            <el-form label-width="100px" label-position="left">
+              <el-form-item label="标题">
+                <el-input v-model="infoDrawerForm.title" placeholder="剧集标题" />
+              </el-form-item>
+              <el-form-item label="风格">
+                <el-select v-model="infoDrawerForm.style" clearable style="width:100%">
+                  <el-option-group label="写实 / 影视">
+                    <el-option label="写实" value="realistic" /><el-option label="电影感" value="cinematic" />
+                    <el-option label="纪录片" value="documentary" /><el-option label="黑色电影" value="noir" />
+                  </el-option-group>
+                  <el-option-group label="动漫 / 卡通">
+                    <el-option label="日本动漫" value="anime style" /><el-option label="欧美漫画" value="comic style" />
+                  </el-option-group>
+                  <el-option-group label="中国风">
+                    <el-option label="中国风" value="chinese style" /><el-option label="古装" value="historical" /><el-option label="武侠" value="wuxia" />
+                  </el-option-group>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="画面比例">
+                <el-select v-model="infoDrawerForm.aspect_ratio" style="width:100%">
+                  <el-option label="16:9 横屏" value="16:9" />
+                  <el-option label="9:16 竖屏短剧" value="9:16" />
+                  <el-option label="1:1 方形" value="1:1" />
+                  <el-option label="4:3" value="4:3" />
+                  <el-option label="21:9" value="21:9" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="故事梗概">
+                <el-input v-model="infoDrawerForm.description" type="textarea" :rows="4" />
+              </el-form-item>
+            </el-form>
+            <div class="info-foot">
+              <el-button :loading="infoDrawerSaving" type="primary" @click="saveInfoDrawer">保存到数据库</el-button>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ② 分集列表 Tab → 内嵌 DramaDetail 分集列表核心功能 -->
+        <el-tab-pane label="分集列表" name="episodes">
+          <div class="info-section">
+            <div class="info-section-title-row">
+              <div class="info-section-title">共 {{ (drama?.episodes || []).length }} 集</div>
+              <el-button size="small" type="primary" @click="addEpisodeInline">
+                <el-icon><Plus /></el-icon>新增一集
+              </el-button>
+            </div>
+            <div v-if="!drama?.episodes?.length" class="wb-empty-hint">本剧暂无分集，点击右上角新增一集</div>
+            <div v-else class="ep-list">
+              <div v-for="(ep, i) in (drama.episodes || [])" :key="ep.id" class="ep-card">
+                <div class="ep-head">
+                  <div class="ep-number">第 {{ ep.episode_number ?? i + 1 }} 集</div>
+                  <el-tag size="small" :type="{ draft: 'info', processing: 'warning', completed: 'success', failed: 'danger' }[ep.status] || 'info'">
+                    {{ { draft: '草稿', processing: '生成中', completed: '已完成', failed: '失败' }[ep.status] || ep.status || '草稿' }}
+                  </el-tag>
+                  <span class="ep-actions">
+                    <el-button size="small" link type="primary" @click="editEpisodeInline(ep)">编辑</el-button>
+                    <el-button size="small" link type="danger" @click="deleteEpisodeInline(ep)">删除</el-button>
+                  </span>
+                </div>
+                <div class="ep-title">{{ ep.title || `第 ${ep.episode_number ?? i + 1} 集（未命名）` }}</div>
+                <div class="ep-desc">{{ (ep.description || '').slice(0, 80) || '无剧情描述' }}{{ (ep.description || '').length > 80 ? '…' : '' }}</div>
+                <div class="ep-meta">分镜数：{{ (ep.storyboards || []).length || 0 }} 张</div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ③ 剧本大纲 Tab → 在工作台内直接管理剧本，无需跳转 -->
+        <el-tab-pane label="剧本大纲" name="script">
+          <div class="info-section">
+            <div class="info-section-title-row">
+              <div class="info-section-title">剧本结构（大纲/三幕式）</div>
+              <el-button size="small" type="primary" :loading="saveOutlineLoading" @click="saveOutlineInline">保存剧本结构</el-button>
+            </div>
+            <el-form label-width="100px" label-position="left">
+              <el-form-item label="三幕·开端"><el-input v-model="infoDrawerScript.act1" type="textarea" :rows="4" placeholder="第一幕：建置/钩子/人物出场" /></el-form-item>
+              <el-form-item label="三幕·对抗"><el-input v-model="infoDrawerScript.act2" type="textarea" :rows="6" placeholder="第二幕：升级冲突/中点转折/困境" /></el-form-item>
+              <el-form-item label="三幕·结局"><el-input v-model="infoDrawerScript.act3" type="textarea" :rows="4" placeholder="第三幕：高潮/解决/余韵" /></el-form-item>
+              <el-form-item label="故事风格关键字"><el-input v-model="infoDrawerScript.tags" placeholder="例如：复仇,暗黑,反转,小人物逆袭" /></el-form-item>
+            </el-form>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </el-drawer>
+
+    <!-- ============== 内嵌剧本节点 Drawer（画布点击"剧本节点"打开） ============== -->
+    <el-drawer v-model="scriptDrawerVisible" title="剧本节点 · 结构管理" direction="rtl" size="520px">
+      <div class="info-section">
+        <div class="info-section-title-row">
+          <div class="info-section-title">一句话创意 → 三幕结构</div>
+        </div>
+        <el-form label-width="100px" label-position="left">
+          <el-form-item label="一句话创意"><el-input v-model="scriptDrawerForm.idea" type="textarea" :rows="2" /></el-form-item>
+          <el-form-item label="创作模板">
+            <el-select v-model="scriptDrawerForm.template" style="width:100%">
+              <el-option label="三幕式" value="three_act" /><el-option label="起承转合" value="kikaku" />
+              <el-option label="英雄之旅" value="hero_journey" /><el-option label="救猫咪" value="save_the_cat" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="第一幕"><el-input v-model="scriptDrawerForm.act1" type="textarea" :rows="3" /></el-form-item>
+          <el-form-item label="第二幕"><el-input v-model="scriptDrawerForm.act2" type="textarea" :rows="5" /></el-form-item>
+          <el-form-item label="第三幕"><el-input v-model="scriptDrawerForm.act3" type="textarea" :rows="3" /></el-form-item>
+        </el-form>
+        <div class="info-foot">
+          <el-button :loading="saveOutlineLoading" type="primary" @click="saveOutlineInline">保存剧本结构</el-button>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- ============== 内嵌分镜节点 Drawer（画布点击分镜节点 / S3-T05：在工作台内编辑分镜，无需跳转） ============== -->
+    <el-drawer v-model="sbDrawerVisible" :title="editingSb ? `分镜 #${editingSb.storyboard_number || ''} 编辑` : '分镜编辑'" direction="rtl" size="560px">
+      <div v-if="editingSb" class="info-section">
+        <div class="info-section-title-row">
+          <div class="info-section-title">分镜核心信息（直接写入 MySQL）</div>
+          <el-tag size="small" type="info">ID：{{ editingSb.id }}</el-tag>
+          <el-button size="small" link type="danger" @click="deleteSbInline" style="margin-left:auto">删除此分镜</el-button>
+        </div>
+        <!-- 一致性 & 重试摘要（S3-T01/T02 联动） -->
+        <div v-if="editingSb.consistency_score != null || editingSb.retry_count > 0" class="sb-consistency-row" :class="{ fail: Number(editingSb.consistency_score) < 0.85 }">
+          <el-tag :type="Number(editingSb.consistency_score) < 0.85 ? 'danger' : 'success'" effect="dark" size="small">
+            一致性 {{ (Number(editingSb.consistency_score) * 100).toFixed(0) }}%
+          </el-tag>
+          <el-tag v-if="editingSb.retry_count > 0" type="warning" size="small">自动重试 R{{ editingSb.retry_count }} / 3</el-tag>
+          <span v-if="Number(editingSb.consistency_score) < 0.85" class="warn-sub">低于阈值，点击"重绘"可追加强化 prompt 自动重试</span>
+          <el-button v-if="Number(editingSb.consistency_score) < 0.85" size="small" type="warning" style="margin-left:auto" @click="redrawLowSb">一致性强制重绘</el-button>
+        </div>
+
+        <el-form label-width="90px" label-position="left">
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="所属集">
+                <el-select v-model="editingSb.episode_id" style="width:100%">
+                  <el-option v-for="ep in (drama?.episodes || [])" :key="ep.id"
+                    :label="ep.title || '第' + (ep.episode_number || '') + '集'" :value="ep.id" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="序号"><el-input-number v-model="editingSb.storyboard_number" :min="1" :max="999" controls-position="right" style="width:100%" /></el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="镜头类型">
+                <el-select v-model="editingSb.shot_type" style="width:100%">
+                  <el-option v-for="v in ['LS','FS','MS','CU','ECU','OTS']" :key="v" :label="v" :value="v" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="镜头角度">
+                <el-select v-model="editingSb.angle_s" style="width:100%">
+                  <el-option v-for="v in ['eye_level','high_angle','low_angle','bird_eye','dutch_angle']" :key="v" :label="v" :value="v" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="动作描述"><el-input v-model="editingSb.action" type="textarea" :rows="4" /></el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="对白/旁白"><el-input v-model="editingSb.dialogue" type="textarea" :rows="3" /></el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="关联角色"><el-select v-model="editingSb._chars" multiple filterable placeholder="选择本分镜出演角色（用于一致性校验关联）" style="width:100%">
+                <el-option v-for="c in (drama?.characters || [])" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select></el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="画面/Prompt备注"><el-input v-model="editingSb.prompt_note" type="textarea" :rows="3" /></el-form-item>
+            </el-col>
+          </el-row>
+        </el-form>
+        <div class="info-foot">
+          <el-button @click="sbDrawerVisible = false">关闭</el-button>
+          <el-button type="primary" :loading="sbSaving" @click="saveSbInline">保存分镜到数据库</el-button>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- ============== 内嵌场景节点 Drawer（画布点击场景节点打开） ============== -->
+    <el-drawer v-model="sceneDrawerVisible" :title="editingScene ? `场景编辑：${editingScene.location || ''}` : '场景编辑'" direction="rtl" size="480px">
+      <div v-if="editingScene" class="info-section">
+        <div class="info-section-title-row">
+          <div class="info-section-title">场景核心信息（直接写入 MySQL）</div>
+          <el-button size="small" link type="danger" style="margin-left:auto" @click="deleteSceneInline">删除此场景</el-button>
+        </div>
+        <el-form label-width="90px" label-position="left">
+          <el-form-item label="地点"><el-input v-model="editingScene.location" /></el-form-item>
+          <el-form-item label="时间段">
+            <el-select v-model="editingScene.time" style="width:100%">
+              <el-option v-for="v in ['day','night','dawn','dusk','morning','midnight']" :key="v" :label="v" :value="v" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="氛围/描述"><el-input v-model="editingScene.description" type="textarea" :rows="4" /></el-form-item>
+          <el-form-item label="视觉风格"><el-input v-model="editingScene.atmosphere" type="textarea" :rows="3" placeholder="如：低饱和蓝灰、阴雨连绵、霓虹灯下" /></el-form-item>
+        </el-form>
+        <div class="info-foot">
+          <el-button @click="sceneDrawerVisible = false">关闭</el-button>
+          <el-button type="primary" :loading="sceneSaving" @click="saveSceneInline">保存场景到数据库</el-button>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -645,21 +859,115 @@ function onDramaLoaded(d) {
   // 默认选中第一集（若有）
   if (!drama.value?.episodes?.length) return
   filterEpisodeId.value = drama.value.episodes[0]?.id || 'all'
+  // 初始化剧集资料 Drawer 的表单预填
+  infoDrawerForm.title = d.title || ''
+  infoDrawerForm.description = d.description || ''
+  infoDrawerForm.style = d.style || ''
+  infoDrawerForm.aspect_ratio = d.metadata?.aspect_ratio || '16:9'
+  infoDrawerScript.idea = d.script?.idea || d.metadata?.script?.idea || d.description || ''
+  infoDrawerScript.template = d.metadata?.script?.template || 'three_act'
+  infoDrawerScript.act1 = d.outline?.act1 || d.metadata?.script?.act1 || ''
+  infoDrawerScript.act2 = d.outline?.act2 || d.metadata?.script?.act2 || ''
+  infoDrawerScript.act3 = d.outline?.act3 || d.metadata?.script?.act3 || ''
+  infoDrawerScript.tags = d.genre || ''
 }
-function onCanvasNodeClick(p) { /* 预留扩展 */ }
+/* ==================== 画布节点点击 → 按类型打开内嵌 Drawer（S3-T05 核心：整合剧本/角色/场景/分镜管理） ==================== */
+function onCanvasNodeClick(p) {
+  const nodeType = String(p?.nodeType || '').toLowerCase()
+  const id = p?.id
+  const data = p?.data || {}
+  log.info('[Canvas→Workbench] 画布节点点击 → 打开对应类型内嵌管理 Drawer', {
+    nodeType, id, label: data.label || p?.label || null,
+  })
+  // ——— 角色节点 → 打开角色一致性 Drawer + 顺带切编辑入口 ——
+  if (nodeType.includes('character') || /char/i.test(id || '')) {
+    const cid = extractIdFromNodeId(id || data.id || data?.character_id)
+    const found = findCharacterById(cid)
+    if (found) {
+      selectedCharacter.value = found
+      charDrawerVisible.value = true
+      highlightAssetId.value = `char:${cid}`
+      return
+    }
+  }
+  // ——— 分镜节点 → 打开分镜编辑 Drawer（S3-T05 验收点：在工作台内管理分镜，无需跳页面） ——
+  if (nodeType.includes('storyboard') || /^sb-|^storyboard/i.test(id || '')) {
+    const sid = extractIdFromNodeId(id || data.id || data?.storyboard_id)
+    const sb = findStoryboardById(sid)
+    if (sb) {
+      openSbEditor(sb)
+      canvasFocusSbId.value = sid
+      treeSelectedKey.value = `storyboard:${sid}`
+      return
+    }
+  }
+  // ——— 场景节点 → 打开场景编辑 Drawer ——
+  if (nodeType.includes('scene') || /^scene-/i.test(id || '')) {
+    const scid = extractIdFromNodeId(id || data.id || data?.scene_id)
+    const sc = findSceneById(scid)
+    if (sc) { openSceneEditor(sc); highlightAssetId.value = `scene:${scid}`; return }
+  }
+  // ——— 剧本/大纲节点 → 打开剧本大纲 Drawer ——
+  if (nodeType.includes('script') || /^script|^outline/i.test(id || '')) {
+    scriptDrawerForm.idea = infoDrawerScript.idea
+    scriptDrawerForm.template = infoDrawerScript.template
+    scriptDrawerForm.act1 = infoDrawerScript.act1
+    scriptDrawerForm.act2 = infoDrawerScript.act2
+    scriptDrawerForm.act3 = infoDrawerScript.act3
+    scriptDrawerVisible.value = true
+    treeSelectedKey.value = 'script:root'
+    return
+  }
+  // ——— 道具节点 → 提示信息 ——
+  if (nodeType.includes('prop') || /^prop-/i.test(id || '')) {
+    highlightAssetId.value = `prop:${extractIdFromNodeId(id || data.id)}`
+    ElMessage.info('道具节点内嵌管理：Sprint 4 扩展（当前已完成画布高亮）')
+    return
+  }
+  // 兜底：未知节点类型
+  log.warn('[Canvas→Workbench] 未知节点类型，未匹配到 Drawer 类型', { nodeType, id })
+}
 function onCanvasStoryboardClick(sb) {
-  // 画布点击分镜：高亮时间轴对应卡片
+  // 画布点击分镜：高亮时间轴 + 同步树 + 打开分镜编辑 Drawer
   canvasFocusSbId.value = sb?.id
   treeSelectedKey.value = `storyboard:${sb.id}`
+  if (sb?.id) openSbEditor(sb)
 }
 function onCanvasScriptClick() {
   treeSelectedKey.value = 'script:root'
+  // 同时打开剧本节点 Drawer（S3-T05：在工作台内管理剧本）
+  scriptDrawerForm.idea = infoDrawerScript.idea
+  scriptDrawerForm.template = infoDrawerScript.template
+  scriptDrawerForm.act1 = infoDrawerScript.act1
+  scriptDrawerForm.act2 = infoDrawerScript.act2
+  scriptDrawerForm.act3 = infoDrawerScript.act3
+  scriptDrawerVisible.value = true
 }
 function onCanvasLayoutSaved() {
   layoutState.value = 'saved'
   setTimeout(() => (layoutState.value = 'idle'), 1500)
 }
 function onCanvasSelectionChange(ids) { /* 预留 */ }
+
+/* ==================== 内嵌 Drawer 工具函数：从 nodeId 中提取数据库数字 ID ==================== */
+function extractIdFromNodeId(raw) {
+  if (!raw) return null
+  if (typeof raw === 'number') return raw
+  const m = String(raw).match(/(\d+)/)
+  return m ? Number(m[1]) : null
+}
+function findCharacterById(cid) {
+  if (!cid) return null
+  return (drama.value?.characters || []).find(c => Number(c.id) === Number(cid)) || null
+}
+function findStoryboardById(sid) {
+  if (!sid) return null
+  return storyboards.value.find(sb => Number(sb.id) === Number(sid)) || null
+}
+function findSceneById(scid) {
+  if (!scid) return null
+  return (drama.value?.scenes || []).find(s => Number(s.id) === Number(scid)) || null
+}
 
 /* ==================== Tree 回调 (S3-T04 双向联动) ==================== */
 function onTreeSelect(p) {

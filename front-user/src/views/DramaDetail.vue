@@ -270,13 +270,71 @@
                   <span v-else class="library-placeholder">暂无图</span>
                 </div>
                 <div class="drama-res-info">
-                  <div class="drama-res-name">{{ item.name || '未命名' }}</div>
+                  <div class="drama-res-name-row">
+                    <div class="drama-res-name">{{ item.name || '未命名' }}</div>
+                    <!-- S3-T01 验收点：角色卡片显示一致性分数，低于阈值红色标警告+重试次数 -->
+                    <el-tooltip
+                      v-if="charStatsMap.get(item.id)"
+                      effect="dark"
+                      placement="top"
+                    >
+                      <template #content>
+                        <div style="font-size:12px;line-height:1.6">
+                          <div><b>最近一致性分数</b>：{{ (charStatsMap.get(item.id).latest_score * 100).toFixed(0) }}%</div>
+                          <div><b>历史校验总次数</b>：{{ charStatsMap.get(item.id).total_checks }} 次</div>
+                          <div><b>通过率</b>：{{ charStatsMap.get(item.id).pass_rate ?? '—' }}%</div>
+                          <div><b>自动触发重试</b>：{{ charStatsMap.get(item.id).auto_retries ?? 0 }} 次（最多 3 次）</div>
+                          <div v-if="(charStatsMap.get(item.id).latest_score ?? 1) < CHAR_CONSISTENCY_THRESHOLD" style="color:#fecaca;margin-top:4px">
+                            ⚠️ 低于阈值 {{ (CHAR_CONSISTENCY_THRESHOLD * 100).toFixed(0) }}%，S3-T02 自动重绘机制已激活
+                          </div>
+                        </div>
+                      </template>
+                      <el-tag
+                        size="small"
+                        effect="dark"
+                        round
+                        :type="
+                          (charStatsMap.get(item.id)?.latest_score ?? 1) < CHAR_CONSISTENCY_THRESHOLD
+                            ? 'danger'
+                            : (charStatsMap.get(item.id)?.latest_score ?? 1) >= CHAR_CONSISTENCY_THRESHOLD + 0.1
+                              ? 'success'
+                              : 'warning'
+                        "
+                        class="drama-char-score-tag"
+                      >
+                        一致性
+                        {{ charStatsMap.get(item.id)?.latest_score != null
+                            ? (charStatsMap.get(item.id).latest_score * 100).toFixed(0) + '%'
+                            : '未检测'
+                        }}
+                        <span v-if="(charStatsMap.get(item.id)?.auto_retries ?? 0) > 0">·R{{ charStatsMap.get(item.id).auto_retries }}</span>
+                      </el-tag>
+                    </el-tooltip>
+                    <el-tag
+                      v-else
+                      size="small"
+                      effect="plain"
+                      type="info"
+                      round
+                      class="drama-char-score-tag"
+                    >
+                      一致性待检测
+                    </el-tag>
+                  </div>
                   <div class="drama-res-meta" v-if="item.role">
                     <el-tag size="small" type="info">{{ item.role === 'main' ? '主角' : item.role === 'supporting' ? '配角' : item.role }}</el-tag>
                   </div>
                   <div class="drama-res-desc">{{ (item.description || item.prompt || '').slice(0, 80) }}</div>
                   <div class="drama-res-actions">
                     <el-button size="small" @click="openEditDramaChar(item)">编辑</el-button>
+                    <el-button
+                      size="small"
+                      type="success"
+                      link
+                      @click="router.push(`/character/${item.id}`)"
+                    >
+                      角色详情 →
+                    </el-button>
                   </div>
                 </div>
               </div>
@@ -579,12 +637,17 @@ import { taskAPI } from '@/api/task'
 import { characterAPI } from '@/api/characters'
 import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
+import { consistencyAPI } from '@/api/consistency'
 import { stylePromptMetadataForSave, backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
 
 const route = useRoute()
 const { isDark, toggle: toggleTheme } = useTheme()
 const router = useRouter()
 const dramaId = Number(route.params.id)
+
+// S3-T01 验收点：角色一致性统计（角色id→stats map），用于角色卡"分数徽章+低于阈值红色标红"
+const charStatsMap = reactive(new Map())  // { [characterId]: { latest_score, pass_rate, total_checks, passed_count, avg_score, auto_retries } }
+const CHAR_CONSISTENCY_THRESHOLD = 0.85
 
 // 图片编辑 – 文件输入 refs（各资源类型独立）
 const charFileRef  = ref(null)
@@ -911,6 +974,22 @@ async function loadDrama() {
     infoForm.genre = d.genre || ''
     infoForm.style = d.style || ''
     infoForm.aspect_ratio = d.metadata?.aspect_ratio || '16:9'
+
+    // === S3-T01 验收点：批量拉每个本剧角色的一致性统计（总次数/通过率/最近一次分数），供角色卡片标红使用 ===
+    charStatsMap.clear()
+    if (Array.isArray(d.characters) && d.characters.length) {
+      const jobs = d.characters.map(async (c) => {
+        try {
+          const r = await consistencyAPI.getCharacterStats(c.id)
+          const s = r?.data ?? r ?? null
+          if (s) charStatsMap.set(c.id, s)
+        } catch (e) {
+          // 个别角色无统计不影响主页面加载（可能还没做过任何生图/校验）
+          console.debug(`[DramaDetail] 角色 ${c.id} 一致性统计为空或加载失败`, e?.message || '')
+        }
+      })
+      await Promise.all(jobs)
+    }
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
   } finally {
