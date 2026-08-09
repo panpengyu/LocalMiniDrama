@@ -22,6 +22,79 @@
         </template>
       </div>
       <div class="wct-right">
+        <!-- S6-T01 画布搜索 -->
+        <el-input
+          v-if="canvasSearch"
+          v-model="canvasSearch.searchQuery.value"
+          placeholder="搜索节点..."
+          size="small"
+          class="wct-search"
+          clearable
+          @input="onSearchInput"
+          @clear="onSearchClear"
+          @keyup.enter="onSearchEnter"
+        >
+          <template #prepend>
+            <el-select
+              v-model="canvasSearch.searchType.value"
+              size="small"
+              style="width: 90px"
+              @change="onSearchTypeChange"
+            >
+              <el-option label="全部" value="all" />
+              <el-option label="名称" value="name" />
+              <el-option label="内容" value="content" />
+              <el-option label="类型" value="type" />
+              <el-option label="状态" value="status" />
+            </el-select>
+          </template>
+          <template #suffix>
+            <span v-if="canvasSearch.hasResults.value" class="wct-search-count">
+              {{ canvasSearch.selectedIndex.value + 1 }}/{{ canvasSearch.searchResults.value.length }}
+            </span>
+          </template>
+        </el-input>
+        <el-button-group v-if="canvasSearch && canvasSearch.hasResults.value" size="small">
+          <el-button @click="onSearchPrev" title="上一个">‹</el-button>
+          <el-button @click="onSearchNext" title="下一个">›</el-button>
+        </el-button-group>
+
+        <el-divider direction="vertical" v-if="canvasSearch" />
+
+        <!-- S6-T02 书签 -->
+        <el-dropdown v-if="canvasBookmarks" trigger="click" @command="onBookmarkCommand">
+          <el-button size="small">
+            <el-icon><CollectionTag /></el-icon> 书签
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="save">📌 保存当前视口</el-dropdown-item>
+              <el-dropdown-item
+                divided
+                class="bm-item"
+                v-for="bm in canvasBookmarks.bookmarks.value"
+                :key="bm.id"
+                :command="bm.id"
+              >
+                <span class="bm-label">{{ bm.name }} ({{ Math.round((bm.viewport_zoom || bm.viewportZoom || 1) * 100) }}%)</span>
+                <el-icon class="bm-del" @click.stop="onDeleteBookmark(bm.id)"><Delete /></el-icon>
+              </el-dropdown-item>
+              <el-dropdown-item v-if="canvasBookmarks.bookmarks.value.length === 0" disabled command="__empty__">暂无书签</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <!-- S6-T03 标注 -->
+        <el-button
+          size="small"
+          :type="annotationActive ? 'primary' : ''"
+          @click="toggleAnnotation"
+        >
+          <el-icon><EditPen /></el-icon> 标注
+        </el-button>
+
+        <el-divider direction="vertical" />
+
         <!-- S5-T05 分区操作 -->
         <el-button size="small" @click="onToggleZonesAll(false)">展开分区</el-button>
         <el-button size="small" @click="onToggleZonesAll(true)">折叠分区</el-button>
@@ -80,6 +153,20 @@
         </Controls>
       </VueFlow>
 
+      <!-- S6-T03 画布标注层（SVG overlay，标注模式下捕获鼠标） -->
+      <CanvasAnnotations
+        v-if="rawNodes.length > 0"
+        :drama-id="dramaId"
+        :viewport="currentViewport"
+        :canvas-rect="canvasRect"
+        :annotations="annotations"
+        :active="annotationActive"
+        @create="createAnnotation"
+        @delete="deleteAnnotation"
+        @update="updateAnnotation"
+        @close="onAnnotationClose"
+      />
+
       <!-- S5-T04 自定义小地图（Canvas2D + 视口框 + 点击跳转） -->
       <CanvasMinimap
         v-if="rawNodes.length > 0"
@@ -89,6 +176,34 @@
         :zones="minimapZones"
         @center="onMinimapCenter"
       />
+
+      <!-- S6-T01 搜索结果浮动面板（可折叠） -->
+      <div
+        v-if="canvasSearch && canvasSearch.searchQuery.value"
+        class="wct-search-panel"
+      >
+        <div class="wsp-header" @click="searchPanelCollapsed = !searchPanelCollapsed">
+          <span class="wsp-title">搜索结果 ({{ canvasSearch.searchResults.value.length }})</span>
+          <el-icon class="wsp-toggle">
+            <component :is="searchPanelCollapsed ? 'ArrowDown' : 'ArrowUp'" />
+          </el-icon>
+        </div>
+        <div v-show="!searchPanelCollapsed" class="wsp-body">
+          <div
+            v-for="(n, i) in canvasSearch.searchResults.value"
+            :key="n.id"
+            class="wsp-item"
+            :class="{ active: i === canvasSearch.selectedIndex.value }"
+            @click="onSearchResultClick(n)"
+          >
+            <span class="wsp-idx">{{ i + 1 }}</span>
+            <span class="wsp-text">{{ describeNode(n) }}</span>
+          </div>
+          <div v-if="canvasSearch.searchResults.value.length === 0" class="wsp-empty">
+            无匹配节点
+          </div>
+        </div>
+      </div>
 
       <el-empty v-else-if="!loading" description="暂无画布数据，请在左侧导航树或AI面板创建内容" />
     </div>
@@ -100,7 +215,7 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } f
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { ZoomIn, ZoomOut, FullScreen, Grid } from '@element-plus/icons-vue'
+import { ZoomIn, ZoomOut, FullScreen, Grid, CollectionTag, EditPen, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import '@vue-flow/core/dist/style.css'
@@ -139,6 +254,11 @@ import { useCanvasViewportVirtualization } from '@/composables/useCanvasViewport
 import { useCanvasZones } from '@/composables/useCanvasZones'
 import CanvasMinimap from '@/components/workbench/CanvasMinimap.vue'
 import CanvasZones from '@/components/workbench/CanvasZones.vue'
+
+// Sprint 6
+import { useCanvasSearch, describeNode } from '@/composables/useCanvasSearch'
+import { useCanvasBookmarks, apiJson } from '@/composables/useCanvasBookmarks'
+import CanvasAnnotations from '@/components/workbench/CanvasAnnotations.vue'
 
 const log = useWorkbenchLogger('WorkbenchCanvas')
 
@@ -198,15 +318,31 @@ let zoomModes = null
 let viewportVirt = null
 let canvasZones = null
 
+// ---- Sprint 6 composables ----
+let canvasSearch = null
+let canvasBookmarks = null
+const annotations = ref([])
+const annotationActive = ref(false)
+const searchPanelCollapsed = ref(false)
+
 function initSprint5() {
   zoomModes = useCanvasZoomModes()
   viewportVirt = useCanvasViewportVirtualization()
   canvasZones = useCanvasZones()
+  // S6-T01/S6-T02：搜索与书签（不依赖 useVueFlow，可在此初始化）
+  canvasSearch = useCanvasSearch()
+  canvasBookmarks = useCanvasBookmarks()
   // S5-T05: 从 savedLayout 恢复分区折叠状态
   const restored = resolveZoneCollapsed(savedLayout.value)
   if (canvasZones && restored) {
     try { canvasZones.zoneCollapsed.value = { ...canvasZones.zoneCollapsed.value, ...restored } } catch (_) {}
   }
+  // S6-T02：加载已存书签
+  if (canvasBookmarks && props.dramaId) {
+    canvasBookmarks.loadBookmarks(props.dramaId)
+  }
+  // S6-T03：加载画布标注
+  loadAnnotations()
 }
 
 const viewportForZones = computed(() => currentViewport.value)
@@ -620,6 +756,141 @@ async function onTidyLayout() {
   scheduleLayoutSave(true)
 }
 
+/* ===================== S6-T01 画布搜索 ===================== */
+let _searchDebounce = null
+function runSearch(immediate = false) {
+  if (!canvasSearch) return
+  const doSearch = () => {
+    canvasSearch.search(rawNodes.value)
+    rawNodes.value = canvasSearch.applyHighlight(rawNodes.value)
+    refreshVisibleNodes(true)
+  }
+  if (_searchDebounce) clearTimeout(_searchDebounce)
+  if (immediate) { doSearch(); return }
+  _searchDebounce = setTimeout(doSearch, 300)
+}
+function onSearchInput() { runSearch(false) }
+function onSearchTypeChange() { runSearch(true) }
+function onSearchClear() { runSearch(true) }
+function onSearchEnter() {
+  if (!canvasSearch) return
+  runSearch(true)
+  const results = canvasSearch.searchResults.value
+  if (results.length) {
+    canvasSearch.selectedIndex.value = 0
+    canvasSearch.focusNode(results[0], zoomModes, canvasRect.value.w, canvasRect.value.h)
+  } else {
+    ElMessage.info('未找到匹配节点')
+  }
+}
+function onSearchNext() {
+  if (!canvasSearch) return
+  canvasSearch.nextMatch()
+  const node = canvasSearch.searchResults.value[canvasSearch.selectedIndex.value]
+  if (node) canvasSearch.focusNode(node, zoomModes, canvasRect.value.w, canvasRect.value.h)
+}
+function onSearchPrev() {
+  if (!canvasSearch) return
+  canvasSearch.prevMatch()
+  const node = canvasSearch.searchResults.value[canvasSearch.selectedIndex.value]
+  if (node) canvasSearch.focusNode(node, zoomModes, canvasRect.value.w, canvasRect.value.h)
+}
+function onSearchResultClick(node) {
+  if (!node || !canvasSearch) return
+  const idx = canvasSearch.searchResults.value.findIndex(n => n.id === node.id)
+  if (idx >= 0) canvasSearch.selectedIndex.value = idx
+  canvasSearch.focusNode(node, zoomModes, canvasRect.value.w, canvasRect.value.h)
+}
+
+/* ===================== S6-T02 视图书签 ===================== */
+async function onBookmarkCommand(cmd) {
+  if (!canvasBookmarks) return
+  if (cmd === 'save') {
+    let name = ''
+    try {
+      const r = await ElMessageBox.prompt('请输入书签名称', '保存当前视口', {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputValue: `视口 ${Math.round(currentViewport.value.zoom * 100)}%`,
+        inputPattern: /.+/,
+        inputErrorMessage: '名称不能为空',
+      })
+      name = r.value
+    } catch { return }
+    const saved = await canvasBookmarks.saveBookmark(props.dramaId, currentViewport.value, name)
+    if (saved) ElMessage.success('书签已保存')
+    return
+  }
+  if (cmd === '__empty__') return
+  // 数字 id → 跳转
+  const bm = canvasBookmarks.bookmarks.value.find(b => String(b.id) === String(cmd))
+  if (bm) {
+    canvasBookmarks.jumpToBookmark(bm, zoomModes, canvasRect.value.w, canvasRect.value.h)
+    log.info('[Bookmark] 跳转到书签', { id: bm.id, name: bm.name })
+  }
+}
+function onDeleteBookmark(id) {
+  if (!canvasBookmarks || !id) return
+  ElMessageBox.confirm('删除该书签？', '书签管理', {
+    confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning',
+  }).then(() => {
+    canvasBookmarks.deleteBookmark(id)
+  }).catch(() => {})
+}
+
+/* ===================== S6-T03 画布标注 ===================== */
+async function loadAnnotations() {
+  if (!props.dramaId) return
+  try {
+    const data = await apiJson(`/api/v1/dramas/${props.dramaId}/annotations`)
+    const list = Array.isArray(data) ? data : (data?.items || data?.list || [])
+    annotations.value = list
+  } catch (e) {
+    // 后端可能尚未提供该接口，静默处理
+    annotations.value = []
+  }
+}
+async function createAnnotation(payload) {
+  try {
+    const data = await apiJson(`/api/v1/dramas/${props.dramaId}/annotations`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    if (data) annotations.value = [...annotations.value, data]
+  } catch (e) {
+    ElMessage.error('创建标注失败：' + e.message)
+  }
+}
+async function deleteAnnotation(id) {
+  if (!id) return
+  try {
+    await apiJson(`/api/v1/annotations/${id}`, { method: 'DELETE' })
+    annotations.value = annotations.value.filter(a => a.id !== id)
+  } catch (e) {
+    ElMessage.error('删除标注失败：' + e.message)
+  }
+}
+async function updateAnnotation(id, payload) {
+  if (!id) return
+  try {
+    const data = await apiJson(`/api/v1/annotations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+    annotations.value = annotations.value.map(a => a.id === id ? { ...a, ...payload, ...data } : a)
+  } catch (e) {
+    // 后端可能未实现 PUT，降级为本地更新
+    annotations.value = annotations.value.map(a => a.id === id ? { ...a, ...payload } : a)
+  }
+}
+function toggleAnnotation() {
+  annotationActive.value = !annotationActive.value
+  if (!annotationActive.value) log.debug('[Annotation] 退出标注模式')
+}
+function onAnnotationClose() {
+  annotationActive.value = false
+}
+
 /* ===================== 布局保存 ===================== */
 let _lastScheduleAt = 0
 const layoutDirty = ref(false)
@@ -678,6 +949,11 @@ defineExpose({
   zoomModes: () => zoomModes,
   zones: () => canvasZones,
   setZoomLevel: (i) => zoomModes?.setZoomLevel(i),
+  // Sprint 6 扩展
+  canvasSearch: () => canvasSearch,
+  canvasBookmarks: () => canvasBookmarks,
+  annotations: () => annotations.value,
+  toggleAnnotation,
 })
 
 onMounted(() => { loadDrama() })
@@ -720,4 +996,62 @@ onBeforeUnmount(() => {
 .vue-flow-canvas {
   width: 100%; height: 100%;
 }
+
+/* ---- S6-T01 搜索 ---- */
+.wct-search { width: 220px; }
+.wct-search-count {
+  color: #22d3ee;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.wct-search-panel {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  z-index: 18;
+  width: 260px;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.wsp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  user-select: none;
+}
+.wsp-title { color: #e2e8f0; font-size: 12px; font-weight: 600; }
+.wsp-toggle { color: #94a3b8; }
+.wsp-body { overflow-y: auto; padding: 4px 0; }
+.wsp-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+.wsp-item:hover { background: rgba(255, 255, 255, 0.06); }
+.wsp-item.active { background: rgba(34, 211, 238, 0.16); color: #22d3ee; }
+.wsp-idx {
+  flex: 0 0 20px;
+  text-align: center;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+.wsp-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wsp-empty { padding: 12px; color: #94a3b8; font-size: 12px; text-align: center; }
+
+/* ---- S6-T02 书签 ---- */
+.bm-item { display: flex; align-items: center; }
+.bm-label { flex: 1; }
+.bm-del { color: #94a3b8; margin-left: 8px; }
+.bm-del:hover { color: #f87171; }
 </style>

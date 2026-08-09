@@ -27,6 +27,7 @@ const routes = [
 
       { path: 'content-asset/works', name: 'Works', component: () => import('@/views/content-asset/Works.vue'), meta: { title: '作品管理' } },
       { path: 'content-asset/skills', name: 'Skills', component: () => import('@/views/content-asset/Skills.vue'), meta: { title: '技能管理' } },
+      { path: 'content-asset/templates', name: 'AdminTemplates', component: () => import('@/views/content/Templates.vue'), meta: { title: '模板管理' } },
       { path: 'content-asset/public-assets', name: 'PublicAssets', component: () => import('@/views/content-asset/PublicAssets.vue'), meta: { title: '公共资产 / 工具库' } },
       { path: 'content-asset/actor-library', name: 'ActorLibrary', component: () => import('@/views/content-asset/ActorLibrary.vue'), meta: { title: '真人库' } },
 

@@ -376,6 +376,12 @@ function createApp() {
   // 挂载 API 路由（版本 v1）
   app.use('/api/v1', setupRouter(config, db, log));
 
+  // Sprint 6: 模板系统 + 画布标注/书签路由
+  const templateRoutes = require('./routes/templates');
+  const canvasExtrasRoutes = require('./routes/canvasExtras');
+  app.use('/api/v1/templates', templateRoutes(db, log));
+  app.use('/api/v1', canvasExtrasRoutes(db, log));
+
   // 前端静态资源服务（生产环境）
   // Electron 打包时可通过 WEB_DIST_PATH 环境变量指定
   const webDist = process.env.WEB_DIST_PATH || path.join(process.cwd(), '..', 'front-user', 'dist');

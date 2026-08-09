@@ -83,6 +83,9 @@
                 <el-button type="primary" size="large" class="action-btn action-btn-new" @click="goNewProject">
                   <el-icon><Plus /></el-icon>新建短剧项目
                 </el-button>
+                <el-button size="large" class="action-btn action-btn-template" @click="showTemplateGallery = true">
+                  <el-icon><Files /></el-icon>从模板创建
+                </el-button>
                 <el-button size="large" class="action-btn action-btn-import" :loading="importing" @click="triggerImport">
                   <el-icon><Upload /></el-icon>导入短剧项目
                 </el-button>
@@ -178,6 +181,9 @@
     <el-dialog v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close>
       <AIConfigContent v-if="showAiConfigDialog" />
     </el-dialog>
+
+    <!-- 从模板创建 -->
+    <TemplateGallery v-model="showTemplateGallery" @applied="onTemplateApplied" />
 
     <!-- 公共角色库 -->
     <el-dialog v-model="showCharLibrary" title="素材库 · 角色" width="720px" destroy-on-close class="library-dialog" @open="loadCharLibraryList">
@@ -497,6 +503,7 @@ import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import AIConfigContent from '@/components/AIConfigContent.vue'
+import TemplateGallery from '@/components/template/TemplateGallery.vue'
 import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
@@ -859,6 +866,7 @@ async function onDeletePropLibrary(item) {
 }
 
 const showNewDialog = ref(false)
+const showTemplateGallery = ref(false)
 const newForm = ref({ title: '', description: '', aspect_ratio: '16:9' })
 const newSaving = ref(false)
 const exportingId = ref(null)
@@ -994,6 +1002,11 @@ async function submitNew() {
   } finally {
     newSaving.value = false
   }
+}
+
+function onTemplateApplied(drama) {
+  loadList()
+  if (drama?.id) router.push('/film/' + drama.id)
 }
 
 function openEditDialog(d) {
@@ -1367,6 +1380,14 @@ html.light .btn-import {
   --el-button-hover-bg-color: rgba(99, 102, 241, 0.22);
   --el-button-hover-border-color: rgba(99, 102, 241, 0.55);
   --el-button-hover-text-color: #c7d2fe;
+}
+.action-btn-template {
+  --el-button-bg-color: rgba(168, 85, 247, 0.14);
+  --el-button-border-color: rgba(168, 85, 247, 0.38);
+  --el-button-text-color: #d8b4fe;
+  --el-button-hover-bg-color: rgba(168, 85, 247, 0.24);
+  --el-button-hover-border-color: rgba(168, 85, 247, 0.6);
+  --el-button-hover-text-color: #e9d5ff;
 }
 .action-card-example {
   width: 100%;

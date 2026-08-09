@@ -125,6 +125,7 @@ const menuGroups = [
     children: [
       { path: '/content-asset/works', title: '作品管理' },
       { path: '/content-asset/skills', title: '技能管理' },
+      { path: '/content-asset/templates', title: '模板管理' },
       { path: '/content-asset/public-assets', title: '公共资产 / 工具库' },
       { path: '/content-asset/actor-library', title: '真人库' }
     ]
