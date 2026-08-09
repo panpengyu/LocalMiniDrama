@@ -132,10 +132,12 @@
           :episodes="drama?.episodes || []"
           :focus-id="canvasFocusSbId"
           :episode-filter-value="filterEpisodeId === 'all' ? null : filterEpisodeId"
+          :dubbing-map="dubbingMap"
           @update:frames="onTimelineFramesUpdate"
           @select="onTimelineSelect"
           @reorder="onTimelineReorder"
           @playReel="onTimelinePlay"
+          @align-duration="onTimelineAlignDuration"
           @update:episodeFilter="(v)=>{ filterEpisodeId = v || 'all'; onFilterEpisodeChange() }"
         />
       </div>
@@ -495,6 +497,7 @@ import { dramaAPI } from '@/api/drama'
 import { characterAPI } from '@/api/characters'
 import { sceneAPI } from '@/api/scenes'
 import { storyboardsAPI } from '@/api/storyboards'
+import { ttsPipelineAPI } from '@/api/ttsPipeline'
 import { imagesAPI } from '@/api/images'
 import { useTheme } from '@localmini/shared/composables/useTheme'
 import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
@@ -978,11 +981,176 @@ const highlightAssetId = ref(null)
 const treeSelectedKey = ref('script:root')
 // aiPanelCollapsed 已在 417 行从 LS 恢复声明
 
+// ---- S4-T04: 配音数据（时间轴音画同步） ----
+const dubbingMap = ref({})
+async function loadDubbingData(d) {
+  if (!d?.episodes?.length) return
+  const map = {}
+  for (const ep of d.episodes) {
+    try {
+      const res = await ttsPipelineAPI.listDubbingByEpisode(ep.id)
+      const items = res?.data?.items || []
+      for (const item of items) {
+        if (item.storyboardId && item.durationMs) {
+          map[item.storyboardId] = {
+            durationMs: item.durationMs,
+            audioPath: item.audioPath,
+            characterName: item.characterName,
+            text: item.dialogueText,
+          }
+        }
+      }
+    } catch (e) {
+      log.warn('[TTS] 加载分集配音数据失败', { episodeId: ep.id, msg: e?.message })
+    }
+  }
+  dubbingMap.value = map
+  log.info('[TTS] 配音数据加载完成', { count: Object.keys(map).length, episodes: d.episodes.length })
+}
+
+/**
+ * 从 axios / fetch / 自定义错误中提取可读错误信息
+ * 返回 { status, code, message, hint }
+ */
+function _extractErr(e) {
+  let status = null, code = null, message = e?.message || '未知错误', hint = ''
+  // axios 响应错误
+  if (e?.response) {
+    status = e.response.status
+    const data = e.response.data || {}
+    code = data.code || data.errCode || status
+    message = typeof data === 'string'
+      ? data.slice(0, 120)
+      : (data.message || data.msg || data.error || `HTTP ${status}`).toString().slice(0, 120)
+    if (status === 401) hint = '登录已过期，请刷新页面重新登录'
+    else if (status === 403) hint = '无权限，请联系管理员'
+    else if (status === 404) hint = '接口不存在，请确认后端已启动'
+    else if (status >= 500) hint = '后端服务异常，请检查后端日志'
+  } else if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) {
+    hint = '请求超时，请检查网络或重试'
+  } else if (e?.code === 'ERR_NETWORK' || /network/.test(e?.message || '')) {
+    hint = '网络错误，无法连接后端'
+  }
+  return { status, code, message, hint }
+}
+
+/**
+ * S4-T04: 音画对齐 — 根据配音时长更新分镜 duration 并持久化
+ *
+ * 错误捕获与提示流程：
+ * 1. 对齐前（子组件已完成偏差分析+异常跳过，父组件接收详细 result）
+ * 2. 本地数据更新 → 逐条持久化
+ * 3. 收集失败详情（哪条分镜、HTTP 状态、错误消息、解决建议）
+ * 4. 失败率 > 0 时用 ElMessageBox 展示完整失败列表，支持"稍后重试"指引
+ * 5. 失败率高（≥50% 或 ≥3 条）使用 error 级对话框，引导用户排查
+ */
+async function onTimelineAlignDuration(result) {
+  // 解构新的 result 格式（兼容旧格式 { updated, aligned }）
+  const updated = result?.updated || []
+  const aligned = result?.aligned ?? 0
+  const analysisReport = result?.analysisReport || null
+  const skipped = result?.skippedItems || []
+
+  if (!aligned) {
+    log.info('[Timeline→Workbench] 对齐事件：无需要更新的分镜', { skipped: skipped.length })
+    // 子组件已提示，此处省略重复消息
+    return
+  }
+  log.info('[Timeline→Workbench] 音画对齐：持久化分镜时长', {
+    aligned, total: updated.length,
+    suspicious: analysisReport?.suspicious?.length || 0,
+    skippedItems: skipped.length,
+  })
+  let saved = 0
+  let failed = 0
+  const failedItems = []  // { storyboardId, storyboardNum, durationSec, status, code, message, hint }
+
+  // 更新本地 drama.value 中分镜的 duration_sec（先乐观更新 UI，失败再手动回滚）
+  const updatedIds = new Set(updated.filter(f => f.duration_sec != null).map(f => f.id))
+  const frameById = new Map()
+  for (const f of updated) frameById.set(f.id, f)
+
+  for (const ep of (drama.value?.episodes || [])) {
+    for (const sb of (ep.storyboards || [])) {
+      const u = frameById.get(sb.id)
+      if (u && u.duration_sec != null) {
+        sb.duration_sec = u.duration_sec
+        sb.duration = u.duration_sec + 's'
+      }
+    }
+  }
+
+  // 持久化到后端（逐条更新，避免批量接口不存在）
+  for (const f of updated) {
+    if (!f.id || f.duration_sec == null || !updatedIds.has(f.id)) continue
+    try {
+      await storyboardsAPI.update(f.id, { duration: String(f.duration_sec) })
+      saved++
+    } catch (e) {
+      failed++
+      const eInfo = _extractErr(e)
+      failedItems.push({
+        storyboardId: f.id,
+        storyboardNum: f.storyboard_number || f.storyboardNumber || f.id,
+        durationSec: f.duration_sec,
+        ...eInfo,
+      })
+      log.warn('[Timeline→Workbench] 分镜时长持久化失败', {
+        storyboardId: f.id,
+        durationSec: f.duration_sec,
+        ...eInfo,
+      })
+    }
+  }
+  log.info('[Timeline→Workbench] 音画对齐持久化完成', { saved, failed, failedItems })
+
+  // 失败详情展示
+  if (failed > 0) {
+    const failRate = failed / (saved + failed)
+    const critical = failRate >= 0.5 || failed >= 3
+
+    const lines = [
+      `共 ${saved + failed} 条分镜需要保存：`,
+      `• ✅ 保存成功：${saved} 条`,
+      `• ❌ 保存失败：${failed} 条（失败率 ${(failRate*100).toFixed(0)}%）`,
+      '',
+    ]
+    if (skipped.length > 0) {
+      lines.push(`• ⚠️ 未对齐（时长异常）：${skipped.length} 条`)
+    }
+    lines.push('')
+    if (failedItems.length > 0) {
+      lines.push('失败分镜详情：')
+      const display = failedItems.slice(0, 6)
+      for (const it of display) {
+        const tag = it.status ? `[HTTP${it.status}]` : (it.code ? `[${it.code}]` : '')
+        lines.push(`  - 分镜 #${it.storyboardNum}（→${it.durationSec}s）${tag} ${it.message}`)
+        if (it.hint) lines.push(`    💡 ${it.hint}`)
+      }
+      if (failedItems.length > 6) lines.push(`  ...另有 ${failedItems.length - 6} 条失败`)
+    }
+    lines.push('')
+    lines.push(critical
+      ? '💥 失败率较高，建议先排查后端连接（登录态/网络/服务状态），再点击"重试保存"。'
+      : '建议点击"重试保存"，或稍后进入分镜编辑页面手动修正。')
+
+    await ElMessageBox.alert(lines.join('\n'), `音画对齐保存：${failed} 条失败`, {
+      type: critical ? 'error' : 'warning',
+      confirmButtonText: critical ? '我知道了（请先排查）' : '好的',
+      customClass: 'align-save-error-dialog',
+    }).catch(() => {})
+  } else {
+    ElMessage.success(`音画对齐：${saved} 条分镜时长已保存到服务器`)
+  }
+}
+
 function onDramaLoaded(d) {
   drama.value = d
   // 默认选中第一集（若有）
   if (!drama.value?.episodes?.length) return
   filterEpisodeId.value = drama.value.episodes[0]?.id || 'all'
+  // S4-T04: 加载配音数据用于时间轴音画同步
+  loadDubbingData(d)
   // 初始化剧集资料 Drawer 的表单预填
   infoDrawerForm.title = d.title || ''
   infoDrawerForm.description = d.description || ''

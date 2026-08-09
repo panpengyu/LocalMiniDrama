@@ -33,7 +33,23 @@
           预览
         </el-button>
         <el-divider direction="vertical" />
-        <span class="sbt-hint">💡 拖拽卡片可调整分镜顺序；点击缩略图跳转画布对应节点</span>
+        <!-- S4-T04: 音画对齐 -->
+        <div class="sbt-dub-stat" v-if="dubbingStats.count > 0">
+          <el-icon><Headset /></el-icon>
+          <span>配音 {{ dubbingStats.count }}/{{ frames.length }} · {{ dubbingStats.totalSec }}s</span>
+        </div>
+        <el-button
+          size="small"
+          type="warning"
+          :disabled="!dubbingStats.count"
+          @click="onAlignDuration"
+          title="按配音时长自动调整分镜时长，实现音画同步"
+        >
+          <el-icon><Sort /></el-icon>
+          音画对齐
+        </el-button>
+        <el-divider direction="vertical" />
+        <span class="sbt-hint">💡 拖拽调整顺序；音画对齐按配音时长调整分镜</span>
       </div>
     </div>
 
@@ -81,6 +97,18 @@
               {{ pct(f.consistency_score) }}%
             </div>
             <div v-if="f.retry_count > 0" class="sbt-retry">R{{ f.retry_count }}</div>
+            <!-- S4-T04: 配音音频指示层 -->
+            <div v-if="getDub(f)" class="sbt-audio-ind" :title="`${getDub(f).characterName}: ${(getDub(f).durationMs/1000).toFixed(1)}s`">
+              <div class="sbt-wave">
+                <span
+                  v-for="(h, wi) in waveBars(getDub(f).durationMs)"
+                  :key="wi"
+                  class="sbt-wave-bar"
+                  :style="{ height: h + '%' }"
+                ></span>
+              </div>
+              <div class="sbt-audio-dur">{{ (getDub(f).durationMs / 1000).toFixed(1) }}s</div>
+            </div>
           </div>
 
           <div class="sbt-meta">
@@ -91,6 +119,21 @@
               <el-tag size="small" effect="plain" v-if="f.shot_type">{{ f.shot_type }}</el-tag>
               <el-tag size="small" effect="plain" type="warning" v-if="f.angle_s">{{ f.angle_s }}</el-tag>
               <span class="sbt-duration" v-if="f.duration_sec">{{ f.duration_sec }}s</span>
+              <span
+                class="sbt-dub-dur"
+                v-if="getDub(f)"
+                :class="[
+                  isDurationSuspicious(getDub(f)) ? 'is-error' : '',
+                  Math.abs((f.duration_sec||0) - getDub(f).durationMs/1000) > 0.5 ? 'is-mismatch' : '',
+                  Math.abs((f.duration_sec||0) - getDub(f).durationMs/1000) > MISMATCH_ALERT_SEC ? 'is-alert' : '',
+                ]"
+                :title="isDurationSuspicious(getDub(f))
+                  ? '配音时长异常：' + (getDub(f).durationMs < 0 ? '负数' : getDub(f).durationMs < 400 ? '过短' : '过长')
+                  : '配音 ' + (getDub(f).durationMs/1000).toFixed(1) + 's / 分镜 ' + (f.duration_sec||0) + 's / 偏差 ' + Math.abs((f.duration_sec||0) - getDub(f).durationMs/1000).toFixed(1) + 's'"
+              >
+                {{ isDurationSuspicious(getDub(f)) ? '⚠️' : '🎙' }}
+                {{ (getDub(f).durationMs / 1000).toFixed(1) }}s
+              </span>
             </div>
           </div>
         </div>
@@ -103,9 +146,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch } from 'vue'
-import { Grid, Aim, VideoPlay, Picture, WarningFilled } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, watch, computed } from 'vue'
+import { Grid, Aim, VideoPlay, Picture, WarningFilled, Sort, Headset } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
 
 const log = useWorkbenchLogger('StoryboardTimeline')
@@ -115,8 +158,262 @@ const props = defineProps({
   episodes: { type: Array, default: () => [] },
   focusId: { type: [Number, String], default: null },
   episodeFilterValue: { type: [Number, String], default: null },
+  // S4-T04: 配音数据映射 { [storyboardId]: { durationMs, audioPath, characterName, text } }
+  dubbingMap: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['update:frames', 'select', 'reorder', 'playReel', 'update:episodeFilter'])
+const emit = defineEmits(['update:frames', 'select', 'reorder', 'playReel', 'update:episodeFilter', 'alignDuration'])
+
+// ---- S4-T04: 配音时长统计与音画同步 ----
+const dubbingStats = computed(() => {
+  const map = props.dubbingMap || {}
+  let count = 0
+  let totalMs = 0
+  for (const f of props.frames) {
+    const d = map[f.id]
+    if (d && d.durationMs) { count++; totalMs += d.durationMs }
+  }
+  return { count, totalMs, totalSec: (totalMs / 1000).toFixed(1) }
+})
+
+// 分镜原时长总和（秒）
+const frameDurationTotal = computed(() => {
+  let sec = 0
+  for (const f of props.frames) {
+    const d = Number(f.duration_sec || f.duration || 0)
+    if (d) sec += d
+  }
+  return sec
+})
+
+/**
+ * 取分镜的配音信息
+ */
+function getDub(f) {
+  if (!f || !f.id) return null
+  return (props.dubbingMap || {})[f.id] || null
+}
+
+// ---- 时长偏差判定常量 ----
+const MISMATCH_WARN_SEC = 1       // 偏差 > 1s → 卡片橙色警告
+const MISMATCH_ALERT_SEC = 5      // 偏差 > 5s → 对齐前拦截询问
+const DURATION_SUSPICIOUS_MIN_MS = 400  // < 0.4s 可疑（过短）
+const DURATION_SUSPICIOUS_MAX_MS = 40000 // > 40s 可疑（过长）
+
+/**
+ * 计算单个分镜的配音时长与原时长偏差（秒）
+ */
+function getDurationDiffSec(f) {
+  const d = getDub(f)
+  if (!d || !d.durationMs) return 0
+  const dubSec = d.durationMs / 1000
+  const origSec = Number(f.duration_sec || f.duration || 0)
+  if (!origSec) return 0
+  return Math.abs(dubSec - origSec)
+}
+
+/**
+ * 检测配音时长是否异常（非数字/负数/极短/极长）
+ */
+function isDurationSuspicious(d) {
+  if (!d || typeof d.durationMs !== 'number') return true
+  if (isNaN(d.durationMs) || !isFinite(d.durationMs)) return true
+  if (d.durationMs <= 0) return true
+  return d.durationMs < DURATION_SUSPICIOUS_MIN_MS || d.durationMs > DURATION_SUSPICIOUS_MAX_MS
+}
+
+/**
+ * 对齐前偏差分析，返回分析报告
+ */
+function analyzeDurationMismatch() {
+  const map = props.dubbingMap || {}
+  const report = {
+    total: props.frames.length,
+    hasDub: 0,
+    suspicious: [],       // [{ frameId, storyboardNum, reason, durationMs, origSec }]
+    mismatchAlert: [],    // 偏差 > 5s
+    mismatchWarn: [],     // 偏差 1~5s
+    matched: [],          // 偏差 ≤ 1s
+  }
+  for (const f of props.frames) {
+    const d = map[f.id]
+    if (!d || !d.durationMs) continue
+    report.hasDub++
+    if (isDurationSuspicious(d)) {
+      const reason = !isFinite(d.durationMs) || isNaN(d.durationMs)
+        ? '时长值无效（NaN/Infinity）'
+        : d.durationMs <= 0
+          ? '时长为 0 或负数'
+          : d.durationMs < DURATION_SUSPICIOUS_MIN_MS
+            ? `时长过短（${d.durationMs}ms < ${DURATION_SUSPICIOUS_MIN_MS}ms）`
+            : `时长过长（${d.durationMs}ms > ${DURATION_SUSPICIOUS_MAX_MS}ms）`
+      report.suspicious.push({
+        frameId: f.id,
+        storyboardNum: f.storyboard_number || f.storyboardNumber || f.id,
+        reason, durationMs: d.durationMs,
+        origSec: Number(f.duration_sec || f.duration || 0),
+      })
+      continue
+    }
+    const diffSec = getDurationDiffSec(f)
+    const entry = {
+      frameId: f.id,
+      storyboardNum: f.storyboard_number || f.storyboardNumber || f.id,
+      dubSec: (d.durationMs / 1000).toFixed(1),
+      origSec: Number(f.duration_sec || f.duration || 0) || '未设',
+      diffSec: diffSec.toFixed(1),
+    }
+    if (diffSec > MISMATCH_ALERT_SEC) report.mismatchAlert.push(entry)
+    else if (diffSec > MISMATCH_WARN_SEC) report.mismatchWarn.push(entry)
+    else report.matched.push(entry)
+  }
+  return report
+}
+
+/**
+ * 格式化偏差分析报告为对话框文本
+ */
+function formatAlignReport(report) {
+  if (report.suspicious.length === 0 && report.mismatchAlert.length === 0 && report.mismatchWarn.length === 0) {
+    return `✅ 全部 ${report.hasDub} 条配音时长与分镜原时长匹配良好（偏差 ≤ ${MISMATCH_WARN_SEC}s），可直接对齐。`
+  }
+  const lines = []
+  lines.push(`检测到 ${report.hasDub} 条配音，偏差分析如下：`)
+  lines.push(`• 匹配良好（≤${MISMATCH_WARN_SEC}s）：${report.matched.length} 条`)
+  if (report.mismatchWarn.length) lines.push(`• 轻度偏差（${MISMATCH_WARN_SEC+1}~${MISMATCH_ALERT_SEC}s）：${report.mismatchWarn.length} 条`)
+  if (report.mismatchAlert.length) {
+    lines.push(`• ⚠️ 偏差过大（>${MISMATCH_ALERT_SEC}s）：${report.mismatchAlert.length} 条`)
+    const samples = report.mismatchAlert.slice(0, 3)
+    for (const s of samples) {
+      lines.push(`  - 分镜 #${s.storyboardNum}：原 ${s.origSec}s → 配音 ${s.dubSec}s，偏差 ${s.diffSec}s`)
+    }
+    if (report.mismatchAlert.length > 3) lines.push(`  ...另有 ${report.mismatchAlert.length - 3} 条`)
+  }
+  if (report.suspicious.length) {
+    lines.push(`• ❌ 配音时长异常（将被跳过）：${report.suspicious.length} 条`)
+    const samples = report.suspicious.slice(0, 2)
+    for (const s of samples) lines.push(`  - 分镜 #${s.storyboardNum}：${s.reason}`)
+    if (report.suspicious.length > 2) lines.push(`  ...另有 ${report.suspicious.length - 2} 条`)
+  }
+  lines.push('')
+  lines.push('是否继续执行对齐？（继续将按配音时长重写分镜 duration，异常值跳过）')
+  return lines.join('\n')
+}
+
+/**
+ * 音画对齐：根据配音时长自动更新分镜 duration_sec
+ *
+ * 错误捕获与提示流程：
+ * 1. 对齐前偏差分析 → 有偏差时弹窗确认用户意图
+ * 2. 异常时长（NaN/∞/0/过短/过长）直接跳过，不写入
+ * 3. 对齐完成后输出详细结果报告（成功/跳过/异常），失败率高时给出警告
+ * 4. emit alignDuration 时携带对齐详情，便于父组件展示
+ */
+async function onAlignDuration() {
+  const map = props.dubbingMap || {}
+  if (Object.keys(map).length === 0) {
+    ElMessage.warning('暂无配音数据，无法执行音画对齐。请先为分镜生成配音。')
+    return
+  }
+  if (!props.frames.length) {
+    ElMessage.warning('当前时间轴无分镜。')
+    return
+  }
+
+  // 阶段 1：偏差分析 + 用户确认
+  const report = analyzeDurationMismatch()
+  log.info('[Align] 对齐前偏差分析', report)
+
+  const shouldConfirm = report.suspicious.length > 0 || report.mismatchAlert.length > 0
+  if (shouldConfirm) {
+    try {
+      await ElMessageBox.confirm(formatAlignReport(report), '音画对齐偏差预警', {
+        type: report.suspicious.length ? 'error' : 'warning',
+        confirmButtonText: '继续对齐（跳异常）',
+        cancelButtonText: '取消',
+        customClass: 'align-warning-dialog',
+      })
+    } catch {
+      log.info('[Align] 用户取消对齐', { mismatches: report.mismatchAlert.length, suspicious: report.suspicious.length })
+      return
+    }
+  }
+
+  // 阶段 2：执行对齐
+  let aligned = 0
+  let skippedSuspicious = 0
+  let skippedNoDub = 0
+  const skippedItems = []
+  const updated = props.frames.map(f => {
+    const d = map[f.id]
+    if (!d || !d.durationMs) { skippedNoDub++; return f }
+    if (isDurationSuspicious(d)) {
+      skippedSuspicious++
+      skippedItems.push({
+        frameId: f.id,
+        storyboardNum: f.storyboard_number || f.storyboardNumber || f.id,
+        reason: isNaN(d.durationMs) ? 'NaN' : d.durationMs < 0 ? '负数' : d.durationMs < 400 ? '过短' : '过长',
+        rawMs: d.durationMs,
+      })
+      return f
+    }
+    const sec = Math.max(1, Math.round(d.durationMs / 1000))
+    aligned++
+    return { ...f, duration_sec: sec }
+  })
+
+  const result = {
+    updated, aligned, skippedSuspicious, skippedNoDub,
+    skippedItems,
+    analysisReport: report,
+    dubbingStats: dubbingStats.value,
+  }
+
+  log.info('[Align] 音画对齐执行结果', {
+    aligned, skippedSuspicious, skippedNoDub,
+    skippedCount: skippedItems.length,
+    mismatches: report.mismatchAlert.length,
+  })
+
+  emit('update:frames', updated)
+  emit('alignDuration', result)
+
+  // 阶段 3：结果提示
+  const mismatchRemain = report.mismatchAlert.length // 对齐后偏差（配音仍可能 >5s，用户需要二次确认）
+  const critical = skippedSuspicious > 0 || (aligned === 0 && skippedNoDub === 0)
+  if (critical) {
+    const msg = skippedSuspicious > 0
+      ? `音画对齐：${aligned} 条成功，${skippedSuspicious} 条因时长异常被跳过（请检查配音质量）`
+      : `音画对齐：无有效分镜可对齐（${report.suspicious.length} 条配音时长异常）`
+    ElMessage({ type: 'error', message: msg, duration: 6000 })
+    log.warn('[Align] 对齐存在严重问题', { skippedSuspicious, skippedItems })
+  } else if (mismatchRemain > 0) {
+    ElMessage.warning(
+      `音画对齐：${aligned} 条已调整；仍有 ${mismatchRemain} 条原时长与配音偏差超过 ${MISMATCH_ALERT_SEC}s，建议检查分镜时长设置`
+    )
+  } else if (skippedNoDub > 0 && aligned === 0) {
+    ElMessage.warning('当前分镜无配音数据，未执行对齐。请先生成配音。')
+  } else {
+    ElMessage.success(
+      skippedSuspicious > 0
+        ? `音画对齐完成：${aligned} 条成功，${skippedSuspicious} 条异常值被跳过`
+        : `音画对齐完成：${aligned} 个分镜已按配音时长调整`
+    )
+  }
+}
+
+/**
+ * 生成简化波形条（基于时长生成伪随机高度）
+ */
+function waveBars(durationMs) {
+  const n = Math.min(12, Math.max(4, Math.round(durationMs / 600)))
+  const bars = []
+  let seed = (durationMs % 100) + 1
+  for (let i = 0; i < n; i++) {
+    seed = (seed * 9301 + 49297) % 233280
+    bars.push(30 + Math.round((seed / 233280) * 70))
+  }
+  return bars
+}
 
 const scrollRef = ref(null)
 const episodeFilter = ref(props.episodeFilterValue)
@@ -343,6 +640,55 @@ function onPlayReel() {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
 }
 .sbt-duration { font-size: 11px; color: var(--el-text-color-secondary); margin-left: auto; }
+
+/* S4-T04: 配音音频指示样式 */
+.sbt-dub-stat {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #7c3aed; font-weight: 600;
+  padding: 2px 8px; background: #f5f3ff; border-radius: 4px;
+}
+.sbt-dub-dur {
+  font-size: 11px; color: #7c3aed; font-weight: 600;
+}
+/* 三档偏差色：正常紫 → 偏差异常橙 → 大红差红 */
+.sbt-dub-dur.is-mismatch { color: #f59e0b; }
+.sbt-dub-dur.is-alert {
+  color: #ef4444;
+  background: #fef2f2;
+  padding: 1px 4px; border-radius: 3px;
+  animation: sbt-pulse 1.5s infinite;
+}
+.sbt-dub-dur.is-error {
+  color: #dc2626;
+  background: #fee2e2;
+  padding: 1px 4px; border-radius: 3px;
+  font-weight: 700;
+}
+@keyframes sbt-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* 缩略图上的音频指示层 */
+.sbt-audio-ind {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 2;
+  background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  padding: 14px 4px 3px;
+  display: flex; flex-direction: column; gap: 2px;
+  pointer-events: none;
+}
+.sbt-wave {
+  display: flex; align-items: flex-end; gap: 1px; height: 16px; padding: 0 2px;
+}
+.sbt-wave-bar {
+  flex: 1; min-width: 2px;
+  background: linear-gradient(to top, #a78bfa, #60a5fa);
+  border-radius: 1px; opacity: 0.85;
+}
+.sbt-audio-dur {
+  font-size: 10px; color: #fff; font-weight: 600; text-align: center;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
 </style>
 
 <!-- S3-T07 全局：拖拽时防止意外文本选中（参考 Sprint 2 经验） -->
