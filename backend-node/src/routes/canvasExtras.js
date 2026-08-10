@@ -76,7 +76,17 @@ function canvasExtrasRoutes(db, log) {
 
   // POST /dramas/:dramaId/annotations - 创建
   router.post('/dramas/:dramaId/annotations', (req, res) => {
-    const body = req.body || {};
+    const raw = req.body || {};
+    // 字段兼容：前端可能发送 camelCase（worldX/worldY/worldX2/worldY2/fontSize），
+    // 后端统一按 snake_case 处理，避免坐标丢失。
+    const body = {
+      ...raw,
+      world_x: raw.world_x != null ? raw.world_x : raw.worldX,
+      world_y: raw.world_y != null ? raw.world_y : raw.worldY,
+      world_x2: raw.world_x2 != null ? raw.world_x2 : raw.worldX2,
+      world_y2: raw.world_y2 != null ? raw.world_y2 : raw.worldY2,
+      font_size: raw.font_size != null ? raw.font_size : raw.fontSize,
+    };
     if (!body.annotation_type) return response.badRequest(res, 'annotation_type 必填');
     if (body.world_x == null || body.world_y == null) {
       return response.badRequest(res, 'world_x / world_y 必填');
@@ -177,7 +187,18 @@ function canvasExtrasRoutes(db, log) {
 
   // POST /dramas/:dramaId/bookmarks - 创建
   router.post('/dramas/:dramaId/bookmarks', (req, res) => {
-    const body = req.body || {};
+    const raw = req.body || {};
+    // 字段兼容：前端 useCanvasBookmarks 发送 camelCase（viewportX/viewportY/viewportZoom/sortOrder/zoneKey），
+    // 后端统一按 snake_case 处理，避免视口坐标丢失导致跳转回 (0,0,0.5) 默认位置。
+    const body = {
+      ...raw,
+      viewport_x: raw.viewport_x != null ? raw.viewport_x : raw.viewportX,
+      viewport_y: raw.viewport_y != null ? raw.viewport_y : raw.viewportY,
+      viewport_zoom: raw.viewport_zoom != null ? raw.viewport_zoom : raw.viewportZoom,
+      zone_key: raw.zone_key != null ? raw.zone_key : raw.zoneKey,
+      sort_order: raw.sort_order != null ? raw.sort_order : raw.sortOrder,
+      user_id: raw.user_id != null ? raw.user_id : raw.userId,
+    };
     if (!body.name || String(body.name).trim() === '') {
       return response.badRequest(res, 'name 必填');
     }

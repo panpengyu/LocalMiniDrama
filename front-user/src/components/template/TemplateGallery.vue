@@ -165,8 +165,22 @@ const projectTitle = ref('')
 const projectRatio = ref('16:9')
 
 const filteredTemplates = computed(() => {
-  if (!filterGenre.value) return templates.value
-  return templates.value.filter((t) => t.genre_type === filterGenre.value)
+  const all = templates.value
+  const filter = filterGenre.value
+  let result
+  if (!filter) {
+    result = all
+  } else {
+    result = all.filter((t) => t.genre_type === filter)
+  }
+  // === 排查日志：模板筛选 ===
+  console.log('[TemplateGallery] 筛选:', {
+    筛选条件: filter || '全部',
+    总模板数: all.length,
+    筛选后数量: result.length,
+    筛选结果ID: result.map(t => `${t.template_id}(${t.genre_type || 'null'})`),
+  })
+  return result
 })
 
 function onOpen() {
@@ -181,8 +195,22 @@ async function loadTemplates() {
   loading.value = true
   try {
     const res = await templateAPI.list({ is_active: 1, page_size: 100 })
+    // === 排查日志：模板列表加载 ===
+    console.log('[TemplateGallery] 加载模板列表:', {
+      API返回类型: typeof res,
+      是否数组: Array.isArray(res),
+      有items字段: !!res?.items,
+      items长度: res?.items?.length,
+      返回字段: res ? Object.keys(res) : 'null',
+      raw前300字符: typeof res === 'object' ? JSON.stringify(res).substring(0, 300) : String(res).substring(0, 300),
+    })
     templates.value = res?.items ?? (Array.isArray(res) ? res : [])
+    console.log('[TemplateGallery] 模板列表解析完成:', {
+      最终数量: templates.value.length,
+      各模板: templates.value.map(t => `${t.template_id}(${t.genre_type || '-'})`),
+    })
   } catch (e) {
+    console.error('[TemplateGallery] 加载模板列表失败:', e)
     templates.value = []
   } finally {
     loading.value = false
@@ -196,6 +224,25 @@ function selectTemplate(tpl) {
 }
 
 function openPreview(tpl) {
+  // === 排查日志：模板预览 ===
+  const chars = parseJSON(tpl.character_presets)
+  const scenes = parseJSON(tpl.scene_presets)
+  const style = parseJSON(tpl.style_config)
+  console.log('[TemplateGallery] 预览模板:', {
+    模板ID: tpl.template_id,
+    模板名: tpl.name,
+    题材: tpl.genre_type,
+    分类: tpl.category,
+    角色预设数: Array.isArray(chars) ? chars.length : '非数组',
+    场景预设数: Array.isArray(scenes) ? scenes.length : '非数组',
+    风格配置: style && typeof style === 'object' ? Object.keys(style) : '空',
+    有系统提示词: !!tpl.prompt_system,
+    raw字段: {
+      character_presets类型: typeof tpl.character_presets,
+      scene_presets类型: typeof tpl.scene_presets,
+      style_config类型: typeof tpl.style_config,
+    },
+  })
   previewTemplate.value = tpl
   showPreview.value = true
 }
@@ -204,15 +251,42 @@ async function onApply() {
   if (!selectedId.value) return
   applying.value = true
   try {
-    const drama = await templateAPI.apply(selectedId.value, {
+    const payload = {
       title: projectTitle.value?.trim() || selectedTemplate.value?.name || undefined,
       aspect_ratio: projectRatio.value || '16:9'
+    }
+    // === 排查日志：模板应用创建项目 ===
+    console.log('[TemplateGallery] 应用模板:', {
+      模板ID: selectedId.value,
+      模板名: selectedTemplate.value?.name,
+      请求参数: payload,
     })
-    ElMessage.success('项目已创建')
+
+    const drama = await templateAPI.apply(selectedId.value, payload)
+
+    // === 排查日志：应用结果 ===
+    console.log('[TemplateGallery] 创建结果:', {
+      返回类型: typeof drama,
+      有id: !!drama?.id,
+      dramaId: drama?.id,
+      title: drama?.title,
+      返回字段: drama ? Object.keys(drama).slice(0, 10) : 'null',
+      raw: typeof drama === 'object' ? JSON.stringify(drama).substring(0, 300) : String(drama).substring(0, 300),
+    })
+
+    if (!drama || !drama.id) {
+      console.error('[TemplateGallery] 应用模板返回的数据缺少 id 字段!', drama)
+      ElMessage.warning('项目已创建，但返回数据异常，请刷新列表查看')
+    } else {
+      ElMessage.success('项目已创建')
+    }
     emit('applied', drama)
     visible.value = false
   } catch (e) {
-    // request 拦截器已提示错误
+    console.error('[TemplateGallery] 应用模板失败:', {
+      错误消息: e?.message,
+      错误对象: e,
+    })
   } finally {
     applying.value = false
   }

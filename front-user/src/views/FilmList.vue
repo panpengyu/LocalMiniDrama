@@ -141,6 +141,20 @@
             </div>
           </div>
         </div>
+        <!-- 分页：修复此前硬编码 page_size:50 导致项目被静默截断的 P0 Bug -->
+        <div v-if="total > 0" class="pagination-wrap">
+          <el-pagination
+            background
+            layout="total, sizes, prev, pager, next"
+            :total="total"
+            :current-page="page"
+            :page-size="pageSize"
+            :page-sizes="pageSizes"
+            :hide-on-single-page="false"
+            @current-change="onPageChange"
+            @size-change="onPageSizeChange"
+          />
+        </div>
       </div>
     </main>
 
@@ -705,6 +719,10 @@ async function doGenerateLibImg(form, prompt, api, reloadFn) {
 const loading = ref(false)
 const dramas = ref([])
 const total = ref(0)
+// 分页状态：修复此前硬编码 { page:1, page_size:50 } 导致超过 50 条项目被静默截断的 P0 问题
+const page = ref(1)
+const pageSize = ref(12)
+const pageSizes = [12, 24, 48, 96]
 
 const showAiConfigDialog = ref(false)
 const showWechat = ref(false)
@@ -903,17 +921,29 @@ const editSaving = ref(false)
 function loadList() {
   loading.value = true
   dramaAPI
-    .list({ page: 1, page_size: 50 })
+    .list({ page: page.value, page_size: pageSize.value })
     .then((res) => {
       dramas.value = res?.items ?? []
       total.value = res?.pagination?.total ?? 0
     })
     .catch(() => {
       dramas.value = []
+      total.value = 0
     })
     .finally(() => {
       loading.value = false
     })
+}
+
+// 分页变化：page 改变只重新拉取，不重置；pageSize 改变回到第一页
+function onPageChange(p) {
+  page.value = p
+  loadList()
+}
+function onPageSizeChange(size) {
+  pageSize.value = size
+  page.value = 1
+  loadList()
 }
 
 function formatDate(val) {
@@ -1300,6 +1330,13 @@ html.light .btn-import {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 18px;
+}
+.pagination-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 28px;
+  padding: 16px 0 4px;
 }
 .project-card {
   position: relative;

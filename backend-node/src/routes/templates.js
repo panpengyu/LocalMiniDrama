@@ -82,8 +82,8 @@ function templateRoutes(db, log) {
     response.success(res, { message: '删除成功' });
   });
 
-  // POST /:id/apply - 应用模板创建项目
-  router.post('/:id/apply', (req, res) => {
+  // POST /:id/apply - 应用模板创建项目（需要登录）
+  router.post('/:id/apply', requireAuth, (req, res) => {
     const body = req.body || {};
     const idParam = req.params.id;
     let templateId = idParam;
