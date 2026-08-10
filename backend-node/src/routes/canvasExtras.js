@@ -16,8 +16,31 @@
  */
 const express = require('express');
 const response = require('../response');
+const { requireAuth } = require('../middleware/auth');
+const permissionService = require('../services/permissionService');
 
 const now = () => new Date().toISOString();
+
+/**
+ * S7-F05: 项目级权限校验
+ * 验证当前用户是否有权操作该 drama 的标注/书签
+ * 超级管理员 / 项目创建者 / 同企业 / 同团队 可操作；否则返回 403
+ */
+function checkDramaPermission(db, user, dramaId) {
+  if (!user) return false;
+  if (permissionService.isSuperAdmin(user)) return true;
+  const drama = db.prepare('SELECT id, created_by, enterprise_id, team_id FROM dramas WHERE id = ?').get(Number(dramaId));
+  if (!drama) return false;
+  return permissionService.canViewDrama(user, drama);
+}
+
+function ensureDramaAccess(db, req, res, dramaId) {
+  if (!checkDramaPermission(db, req.user, dramaId)) {
+    response.forbidden(res, '无权操作该项目的资源');
+    return false;
+  }
+  return true;
+}
 
 function rowToAnnotation(r) {
   if (!r) return null;
@@ -75,7 +98,8 @@ function canvasExtrasRoutes(db, log) {
   });
 
   // POST /dramas/:dramaId/annotations - 创建
-  router.post('/dramas/:dramaId/annotations', (req, res) => {
+  router.post('/dramas/:dramaId/annotations', requireAuth, (req, res) => {
+    if (!ensureDramaAccess(db, req, res, req.params.dramaId)) return;
     const raw = req.body || {};
     // 字段兼容：前端可能发送 camelCase（worldX/worldY/worldX2/worldY2/fontSize），
     // 后端统一按 snake_case 处理，避免坐标丢失。
@@ -124,12 +148,14 @@ function canvasExtrasRoutes(db, log) {
   });
 
   // PUT /annotations/:id - 更新
-  router.put('/annotations/:id', (req, res) => {
+  router.put('/annotations/:id', requireAuth, (req, res) => {
     const body = req.body || {};
     const existing = db
       .prepare('SELECT * FROM canvas_annotations WHERE id = ?')
       .get(Number(req.params.id));
     if (!existing) return response.notFound(res, '标注不存在');
+    // S7-F05: 校验项目级权限
+    if (!ensureDramaAccess(db, req, res, existing.drama_id)) return;
 
     const updates = [];
     const params = [];
@@ -159,11 +185,13 @@ function canvasExtrasRoutes(db, log) {
   });
 
   // DELETE /annotations/:id - 删除
-  router.delete('/annotations/:id', (req, res) => {
+  router.delete('/annotations/:id', requireAuth, (req, res) => {
     const existing = db
-      .prepare('SELECT id FROM canvas_annotations WHERE id = ?')
+      .prepare('SELECT id, drama_id FROM canvas_annotations WHERE id = ?')
       .get(Number(req.params.id));
     if (!existing) return response.notFound(res, '标注不存在');
+    // S7-F05: 校验项目级权限
+    if (!ensureDramaAccess(db, req, res, existing.drama_id)) return;
     db.prepare('DELETE FROM canvas_annotations WHERE id = ?').run(Number(req.params.id));
     response.success(res, { message: '删除成功' });
   });
@@ -186,7 +214,8 @@ function canvasExtrasRoutes(db, log) {
   });
 
   // POST /dramas/:dramaId/bookmarks - 创建
-  router.post('/dramas/:dramaId/bookmarks', (req, res) => {
+  router.post('/dramas/:dramaId/bookmarks', requireAuth, (req, res) => {
+    if (!ensureDramaAccess(db, req, res, req.params.dramaId)) return;
     const raw = req.body || {};
     // 字段兼容：前端 useCanvasBookmarks 发送 camelCase（viewportX/viewportY/viewportZoom/sortOrder/zoneKey），
     // 后端统一按 snake_case 处理，避免视口坐标丢失导致跳转回 (0,0,0.5) 默认位置。
@@ -234,11 +263,13 @@ function canvasExtrasRoutes(db, log) {
   });
 
   // DELETE /bookmarks/:id - 删除
-  router.delete('/bookmarks/:id', (req, res) => {
+  router.delete('/bookmarks/:id', requireAuth, (req, res) => {
     const existing = db
-      .prepare('SELECT id FROM canvas_bookmarks WHERE id = ?')
+      .prepare('SELECT id, drama_id FROM canvas_bookmarks WHERE id = ?')
       .get(Number(req.params.id));
     if (!existing) return response.notFound(res, '书签不存在');
+    // S7-F05: 校验项目级权限
+    if (!ensureDramaAccess(db, req, res, existing.drama_id)) return;
     db.prepare('DELETE FROM canvas_bookmarks WHERE id = ?').run(Number(req.params.id));
     response.success(res, { message: '删除成功' });
   });

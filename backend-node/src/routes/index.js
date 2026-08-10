@@ -42,6 +42,8 @@ const storyboardAIRoutes = require('./storyboardAI');
 const ttsPipelineRoutes = require('./ttsPipeline');
 const moderationRoutes = require('./moderation');
 const modelRoutingRoutes = require('./modelRouting');
+const workflowRoutes = require('./workflows');
+const editRoutes = require('./edit');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -414,6 +416,12 @@ function setupRouter(cfg, db, log) {
 
   // ---------- AI模型智能路由模块（Sprint 4: S4-T07） ----------
   r.use('/ai/model-routing', modelRoutingRoutes(db, log));
+
+  // ---------- 智能工作流引擎模块（Sprint 7: S7-T01~T04） ----------
+  r.use('/workflows', workflowRoutes(db, log));
+
+  // ---------- 智能剪辑模块（Sprint 7: S7-T05~T08） ----------
+  r.use('/ai/edit', editRoutes(db, log));
 
   // 启动时将已有的覆盖加载到 promptI18n 内存缓存
   try {

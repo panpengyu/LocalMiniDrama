@@ -50,6 +50,19 @@
         </el-button>
         <el-button size="small" @click="openCreateDrawer('scene')">场景</el-button>
         <el-button size="small" @click="openCreateDrawer('storyboard')">分镜</el-button>
+        <!-- S7: 智能工作流 + 智能剪辑入口 -->
+        <el-button size="small" type="primary" plain @click="wfOrchVisible = true">
+          <el-icon><Connection /></el-icon>
+          工作流
+        </el-button>
+        <el-button size="small" type="success" plain @click="openWorkflowMonitor">
+          <el-icon><Monitor /></el-icon>
+          执行监控
+        </el-button>
+        <el-button size="small" type="warning" plain @click="openSmartEdit">
+          <el-icon><VideoCamera /></el-icon>
+          智能剪辑
+        </el-button>
         <el-button size="small" @click="toggleTheme" class="wb-theme-btn">
           <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
           {{ isDark ? '浅色' : '暗色' }}
@@ -478,13 +491,36 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- ============== S7: 智能工作流编排 Dialog ============== -->
+    <WorkflowOrchestrator
+      :drama-id="dramaId"
+      :visible="wfOrchVisible"
+      @update:visible="wfOrchVisible = $event"
+      @instance-created="onWorkflowInstanceCreated"
+    />
+
+    <!-- ============== S7: 工作流执行监控 Dialog ============== -->
+    <WorkflowMonitor
+      v-if="wfMonitorVisible"
+      :drama-id="dramaId"
+      :instance-id="wfMonitorInstanceId"
+      @close="wfMonitorVisible = false"
+    />
+
+    <!-- ============== S7: 智能剪辑工作台 Dialog ============== -->
+    <SmartEditTimeline
+      ref="smartEditRef"
+      :drama-id="dramaId"
+      @edit-completed="onEditCompleted"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { List, Moon, Plus, Sunny, FullScreen } from '@element-plus/icons-vue'
+import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ProjectNavTree from './ProjectNavTree.vue'
@@ -492,6 +528,10 @@ import WorkbenchCanvas from './WorkbenchCanvas.vue'
 import WorkbenchAIPanel from './WorkbenchAIPanel.vue'
 import StoryboardTimeline from './StoryboardTimeline.vue'
 import CharacterConsistencyPanel from './CharacterConsistencyPanel.vue'
+// S7: 智能工作流编排 + 智能剪辑组件
+import WorkflowOrchestrator from '@/components/workbench/WorkflowOrchestrator.vue'
+import WorkflowMonitor from '@/components/workbench/WorkflowMonitor.vue'
+import SmartEditTimeline from '@/components/workbench/SmartEditTimeline.vue'
 
 import { dramaAPI } from '@/api/drama'
 import { characterAPI } from '@/api/characters'
@@ -1594,6 +1634,37 @@ async function onSubmitCreateStoryboard() {
       await wbCanvasRef.value?.refresh()
     }
   } catch (e) { ElMessage.error(e?.message || '保存失败') }
+}
+
+/* ==================== S7: 智能工作流 + 智能剪辑 ==================== */
+const wfOrchVisible = ref(false)
+const wfMonitorVisible = ref(false)
+const wfMonitorInstanceId = ref(null)
+const smartEditRef = ref(null)
+
+/** 打开工作流执行监控（可指定实例ID） */
+function openWorkflowMonitor(instanceId = null) {
+  wfMonitorInstanceId.value = instanceId
+  wfMonitorVisible.value = true
+}
+
+/** 打开智能剪辑工作台 */
+function openSmartEdit() {
+  smartEditRef.value?.open()
+}
+
+/** 工作流实例创建后 → 自动打开执行监控 */
+function onWorkflowInstanceCreated(instanceId) {
+  if (instanceId) {
+    wfOrchVisible.value = false
+    openWorkflowMonitor(instanceId)
+  }
+}
+
+/** 智能剪辑完成 → 刷新画布 */
+function onEditCompleted(outputUrl) {
+  log.info('[SmartEdit] 智能剪辑完成', { outputUrl })
+  wbCanvasRef.value?.refresh?.()
 }
 
 /* ==================== 集数切换 & 路由跳转 ==================== */

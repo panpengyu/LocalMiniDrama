@@ -23,6 +23,10 @@ module.exports = {
     { name: '模型路由(S4)', description: 'S4-T07 AI模型智能路由引擎：自动选择模型 + 故障转移 + 熔断器' },
     { name: '内容审核(S4)', description: 'S4-T08 内容审核服务：文本/图片/视频审核 + 违规拦截 + 人工复审' },
     { name: '运营看板(S4)', description: 'S4-T05 智能运营看板：创作漏斗 + 模型成本 + AI洞察' },
+    { name: '模板系统(S6)', description: 'S6-T05 模板管理：CRUD + 按类型/风格筛选 + 一键应用' },
+    { name: '画布标注/书签(S6)', description: 'S6-T02/T03 画布标注与书签 CRUD（项目级权限校验）' },
+    { name: '智能工作流(S7)', description: 'S7-T01~T04 工作流引擎：定义CRUD + 实例执行 + 暂停/继续/跳过/重试/审核' },
+    { name: '智能剪辑(S7)', description: 'S7-T05~T08 智能剪辑：自动拼接 + 转场效果 + 节奏匹配 + 配音对齐' },
   ],
   paths: {
 
@@ -602,6 +606,190 @@ module.exports = {
         responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: { insights: [{ level: 'warning', type: 'failure_rate', message: '今日生成失败率 15.2%，较昨日上升 10 个百分点' }], generatedAt: '2026-08-09T10:00:00Z' } } } } } },
       },
     },
+
+    // ================= 模板系统 (S6) =================
+    '/templates': {
+      get: {
+        tags: ['模板系统(S6)'],
+        summary: 'S6-T05 模板列表（支持按 category/genre_type/is_active/keyword 筛选）',
+        parameters: [
+          { name: 'category', in: 'query', schema: { type: 'string' }, description: '模板分类' },
+          { name: 'genre_type', in: 'query', schema: { type: 'string' }, description: '题材类型: urban_romance/ancient_fantasy/mystery/scifi/campus' },
+          { name: 'is_active', in: 'query', schema: { type: 'integer' }, description: '1=启用 0=禁用' },
+          { name: 'keyword', in: 'query', schema: { type: 'string' }, description: '名称关键词' },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+      post: {
+        tags: ['模板系统(S6)'],
+        summary: 'S6-T05 创建模板',
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/TemplateCreateRequest' } } } },
+        responses: { 201: { description: 'Created' } },
+      },
+    },
+    '/templates/{id}': {
+      get: { tags: ['模板系统(S6)'], summary: '获取模板详情（含角色预设/场景预设/风格配置）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' }, 404: { description: 'Not Found' } } },
+      put: { tags: ['模板系统(S6)'], summary: '更新模板', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: true, content: { 'application/json': {} } }, responses: { 200: { description: 'OK' } } },
+      delete: { tags: ['模板系统(S6)'], summary: '删除模板', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/templates/{id}/apply': {
+      post: {
+        tags: ['模板系统(S6)'],
+        summary: 'S6-T06 一键应用模板创建项目（requireAuth）',
+        description: '从模板创建短剧项目，自动写入角色预设/场景预设/style_config/storyboard_rhythm 到 metadata。需登录。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: { required: false, content: { 'application/json': { example: { title: '我的新短剧', description: '基于模板创建' } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' } },
+      },
+    },
+
+    // ================= 画布标注/书签 (S6) =================
+    '/dramas/{dramaId}/annotations': {
+      get: { tags: ['画布标注/书签(S6)'], summary: 'S6-T03 获取画布标注列表', parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+      post: {
+        tags: ['画布标注/书签(S6)'],
+        summary: 'S6-T03 创建画布标注（requireAuth + 项目级权限校验 S7-F04/F05）',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AnnotationCreateRequest' } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' }, 403: { description: '无项目权限' } },
+      },
+    },
+    '/annotations/{id}': {
+      put: { tags: ['画布标注/书签(S6)'], summary: '更新标注（requireAuth + 权限校验）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: true, content: { 'application/json': {} } }, responses: { 200: { description: 'OK' }, 403: { description: '无项目权限' } } },
+      delete: { tags: ['画布标注/书签(S6)'], summary: '删除标注（requireAuth + 权限校验）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' }, 403: { description: '无项目权限' } } },
+    },
+    '/dramas/{dramaId}/bookmarks': {
+      get: { tags: ['画布标注/书签(S6)'], summary: 'S6-T02 获取画布书签列表', parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+      post: {
+        tags: ['画布标注/书签(S6)'],
+        summary: 'S6-T02 创建画布书签（requireAuth + 项目级权限校验 S7-F04/F05）',
+        description: '保存当前视口位置(x/y/zoom)为书签，支持命名/分组/排序。前端发送 camelCase 字段(viewportX/viewportY/viewportZoom)后端自动映射为 snake_case。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/BookmarkCreateRequest' } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' }, 403: { description: '无项目权限' } },
+      },
+    },
+    '/bookmarks/{id}': {
+      delete: { tags: ['画布标注/书签(S6)'], summary: '删除书签（requireAuth + 权限校验）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' }, 403: { description: '无项目权限' } } },
+    },
+
+    // ================= 智能工作流 (S7) =================
+    '/workflows/definitions': {
+      get: {
+        tags: ['智能工作流(S7)'],
+        summary: 'S7-T03 列出工作流定义',
+        parameters: [
+          { name: 'drama_id', in: 'query', schema: { type: 'integer' }, description: '按项目筛选（含通用模板 NULL）' },
+          { name: 'is_active', in: 'query', schema: { type: 'integer' }, description: '1=启用 0=禁用' },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+      post: {
+        tags: ['智能工作流(S7)'],
+        summary: 'S7-T03 创建工作流定义（requireAuth）',
+        description: '自定义工作流编排：步骤配置数组 steps_config，每步含 type/name/need_review/max_retry/condition/params。',
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/WorkflowDefinitionRequest' } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' } },
+      },
+    },
+    '/workflows/definitions/{id}': {
+      get: { tags: ['智能工作流(S7)'], summary: '获取工作流定义详情', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' }, 404: { description: 'Not Found' } } },
+      put: { tags: ['智能工作流(S7)'], summary: '更新工作流定义（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: true, content: { 'application/json': {} } }, responses: { 200: { description: 'OK' } } },
+      delete: { tags: ['智能工作流(S7)'], summary: '删除工作流定义（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances': {
+      get: {
+        tags: ['智能工作流(S7)'],
+        summary: 'S7-T04 列出工作流执行实例',
+        parameters: [
+          { name: 'drama_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['pending', 'running', 'paused', 'completed', 'failed', 'cancelled'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
+        ],
+        responses: { 200: { description: 'OK' } },
+      },
+      post: {
+        tags: ['智能工作流(S7)'],
+        summary: 'S7-T04 创建并启动工作流实例（requireAuth，异步执行）',
+        description: '根据定义ID创建执行实例，异步启动执行循环。支持断点续传（从 current_step_index 恢复）、暂停审核（need_review）、失败重试（max_retry）。',
+        requestBody: { required: true, content: { 'application/json': { example: { definition_id: 1, drama_id: 99000, episode_id: null, context: { logline: '一个快递员获得超能力的故事' } } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' } },
+      },
+    },
+    '/workflows/instances/{id}': {
+      get: { tags: ['智能工作流(S7)'], summary: '获取实例详情（含步骤日志 step_logs）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/run': {
+      post: { tags: ['智能工作流(S7)'], summary: '恢复执行暂停的工作流（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/pause': {
+      post: { tags: ['智能工作流(S7)'], summary: '暂停运行中的工作流（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/cancel': {
+      post: { tags: ['智能工作流(S7)'], summary: '取消工作流（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/steps/{stepIndex}/skip': {
+      post: { tags: ['智能工作流(S7)'], summary: 'S7-T04 跳过指定步骤（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }, { name: 'stepIndex', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/steps/{stepIndex}/retry': {
+      post: { tags: ['智能工作流(S7)'], summary: 'S7-T04 重试指定步骤（requireAuth）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }, { name: 'stepIndex', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' } } },
+    },
+    '/workflows/instances/{id}/steps/{stepIndex}/review': {
+      post: {
+        tags: ['智能工作流(S7)'],
+        summary: 'S7-T04 审核步骤（放行/驳回，requireAuth）',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }, { name: 'stepIndex', in: 'path', required: true, schema: { type: 'integer' } }],
+        requestBody: { required: true, content: { 'application/json': { example: { approved: true, note: '审核通过' } } } },
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+
+    // ================= 智能剪辑 (S7) =================
+    '/ai/edit/auto': {
+      post: {
+        tags: ['智能剪辑(S7)'],
+        summary: 'S7-T05 智能剪辑：自动拼接 + 转场 + 节奏匹配（requireAuth）',
+        description: '根据分镜顺序自动收集图片/视频/音频片段，应用节奏匹配（配音时长→片段时长），添加转场效果，通过 ffmpeg 拼接输出最终视频。',
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AutoEditRequest' } } } },
+        responses: { 201: { description: 'Created' }, 401: { description: '未登录' } },
+      },
+    },
+    '/ai/edit/tasks': {
+      get: {
+        tags: ['智能剪辑(S7)'],
+        summary: '列出剪辑任务',
+        parameters: [{ name: 'drama_id', in: 'query', schema: { type: 'integer' } }, { name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } }],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
+    '/ai/edit/tasks/{id}': {
+      get: { tags: ['智能剪辑(S7)'], summary: '获取剪辑任务详情（含 source_clips）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK' }, 404: { description: 'Not Found' } } },
+    },
+    '/ai/edit/transitions': {
+      get: {
+        tags: ['智能剪辑(S7)'],
+        summary: 'S7-T06 列出可用转场效果（6种）',
+        description: '返回硬切/淡入淡出/叠化/滑动/缩放/旋转 6种转场效果及其 ffmpeg 滤镜参数。',
+        responses: { 200: { description: 'OK', content: { 'application/json': { example: { success: true, data: [{ key: 'fade', name: '淡入淡出', duration: 0.5 }] } } } } },
+      },
+    },
+    '/ai/edit/align': {
+      post: {
+        tags: ['智能剪辑(S7)'],
+        summary: 'S7-T08 配音与视频自动对齐（requireAuth）',
+        description: '根据台词配音时长自动调整分镜时长。支持4种策略：stretch(拉伸)/trim(裁剪)/loop(循环)/silence(静音)。',
+        requestBody: { required: true, content: { 'application/json': { example: { drama_id: 99000, episode_id: null, strategy: 'stretch' } } } },
+        responses: { 200: { description: 'OK' }, 401: { description: '未登录' } },
+      },
+    },
+    '/ai/edit/align-logs': {
+      get: {
+        tags: ['智能剪辑(S7)'],
+        summary: '获取配音对齐记录',
+        parameters: [{ name: 'drama_id', in: 'query', schema: { type: 'integer' } }, { name: 'episode_id', in: 'query', schema: { type: 'integer' } }],
+        responses: { 200: { description: 'OK' } },
+      },
+    },
   },
   components: {
     schemas: {
@@ -666,6 +854,90 @@ module.exports = {
           contentSnapshot:  { type: 'string', description: '内容快照（文本内容或图片URL）' },
           mode:             { type: 'string', enum: ['strict', 'standard', 'loose'], default: 'standard', description: '审核模式：strict(严格)/standard(标准)/loose(宽松)' },
           dramaId:          { type: 'integer', description: '项目ID' },
+        },
+      },
+      // ===== S6 模板/标注/书签 =====
+      TemplateCreateRequest: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name:               { type: 'string', description: '模板名称', example: '都市爱情模板' },
+          description:        { type: 'string', description: '模板描述' },
+          category:           { type: 'string', description: '模板分类', example: 'genre' },
+          genre_type:         { type: 'string', description: '题材类型', example: 'urban_romance' },
+          character_presets:  { type: 'array', description: '角色预设数组', items: { type: 'object' } },
+          scene_presets:      { type: 'array', description: '场景预设数组', items: { type: 'object' } },
+          storyboard_rhythm:  { type: 'object', description: '分镜节奏配置' },
+          style_config:       { type: 'object', description: '风格配置（globalStyle/colorPalette/lineWeight等）' },
+          cover_image:        { type: 'string', description: '封面图URL' },
+          is_active:          { type: 'integer', default: 1 },
+        },
+      },
+      AnnotationCreateRequest: {
+        type: 'object',
+        required: ['annotation_type', 'world_x', 'world_y'],
+        properties: {
+          annotation_type: { type: 'string', enum: ['text', 'arrow', 'rect'], description: '标注类型：文字/箭头/框选' },
+          world_x:         { type: 'number', description: '世界坐标X（画布坐标）' },
+          world_y:         { type: 'number', description: '世界坐标Y' },
+          world_x2:        { type: 'number', description: '箭头/框选终点X' },
+          world_y2:        { type: 'number', description: '箭头/框选终点Y' },
+          content:         { type: 'string', description: '标注内容（文字）' },
+          color:           { type: 'string', default: '#3b82f6', description: '颜色' },
+          font_size:        { type: 'integer', default: 14 },
+        },
+      },
+      BookmarkCreateRequest: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name:          { type: 'string', description: '书签名称', example: '第一集修改区' },
+          viewport_x:    { type: 'number', description: '视口X坐标（前端可发 viewportX）' },
+          viewport_y:    { type: 'number', description: '视口Y坐标' },
+          viewport_zoom: { type: 'number', description: '缩放比例', example: 0.75 },
+          zone_key:      { type: 'string', description: '分区标识' },
+          color:         { type: 'string', default: '#60a5fa' },
+          sort_order:    { type: 'integer', default: 0 },
+        },
+      },
+      // ===== S7 工作流/剪辑 =====
+      WorkflowDefinitionRequest: {
+        type: 'object',
+        required: ['name', 'steps_config'],
+        properties: {
+          name:         { type: 'string', description: '工作流名称', example: '全链路自动生成' },
+          description:  { type: 'string', description: '工作流描述' },
+          drama_id:     { type: 'integer', description: '关联项目ID（NULL=通用模板）' },
+          trigger_type: { type: 'string', enum: ['manual', 'auto', 'scheduled'], default: 'manual' },
+          is_active:    { type: 'integer', default: 1 },
+          steps_config: {
+            type: 'array',
+            description: '步骤配置数组',
+            items: {
+              type: 'object',
+              properties: {
+                type:        { type: 'string', enum: ['generate_outline', 'generate_characters', 'generate_episodes', 'generate_storyboard', 'generate_images', 'generate_tts', 'auto_edit'], description: '步骤类型' },
+                name:        { type: 'string', description: '步骤显示名称' },
+                need_review: { type: 'boolean', default: false, description: '是否需要人工审核' },
+                max_retry:   { type: 'integer', default: 0, description: '最大重试次数' },
+                condition:   { type: 'string', description: '条件分支表达式，如 generate_outline.success == true' },
+                params:      { type: 'object', description: '步骤参数' },
+              },
+            },
+          },
+        },
+      },
+      AutoEditRequest: {
+        type: 'object',
+        required: ['drama_id'],
+        properties: {
+          drama_id:           { type: 'integer', description: '项目ID' },
+          episode_id:         { type: 'integer', description: '分集ID（不传则处理全部分镜）' },
+          title:              { type: 'string', description: '剪辑任务名称' },
+          resolution:         { type: 'string', default: '1080x1920', description: '输出分辨率' },
+          fps:                { type: 'integer', default: 30, description: '帧率' },
+          transition_default: { type: 'string', enum: ['hard_cut', 'fade', 'dissolve', 'slide', 'zoom', 'rotate'], default: 'fade', description: '默认转场效果' },
+          beat_sync:          { type: 'boolean', default: true, description: '是否启用节奏匹配' },
         },
       },
     },

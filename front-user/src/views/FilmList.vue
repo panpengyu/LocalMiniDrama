@@ -1354,6 +1354,9 @@ html.light .btn-import {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   overflow: hidden;
+  /* S7-F06: 虚拟滚动优化 — 浏览器跳过视口外卡片渲染，200+项目保持60fps */
+  content-visibility: auto;
+  contain-intrinsic-size: 220px;
 }
 .project-card::before {
   content: '';
