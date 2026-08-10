@@ -141,8 +141,13 @@
             </div>
           </div>
         </div>
-        <!-- 分页：修复此前硬编码 page_size:50 导致项目被静默截断的 P0 Bug -->
-        <div v-if="total > 0" class="pagination-wrap">
+        <!-- 空状态：无项目时显示友好提示 -->
+        <div v-if="!loading && dramas.length === 0" class="empty">
+          <p class="empty-title">暂无短剧项目</p>
+          <p class="empty-desc">点击右上角「新建项目」或「从模板创建」开始创作</p>
+        </div>
+        <!-- 分页：始终显示，0 条时显示"共 0 条"让用户明确数据状态 -->
+        <div class="pagination-wrap">
           <el-pagination
             background
             layout="total, sizes, prev, pager, next"
