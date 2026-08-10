@@ -751,23 +751,42 @@ async function executeStep(db, log, step, context, instance) {
  *   通过 `safeMode=true` 开关保持向后兼容（默认 true → 失败时不跳过）
  */
 function evaluateCondition(condition, context, safeMode = true) {
-  if (!condition || condition === 'always' || condition === 'true') return true;
+  if (!condition || typeof condition !== 'string' || !condition.trim()) return true;
+  condition = condition.trim();
+  if (condition === 'always' || condition === 'true') return true;
   if (condition === 'false' || condition === 'never') return false;
+
+  // [边界修复] 检测复合表达式（&&/|| 或多个比较操作符）— 当前实现不支持
+  const allOps = condition.match(/==|!=|>=|<=|>|</g);
+  if (allOps && allOps.length > 1) {
+    console.log(`[WF-COND-WARN] 复合条件表达式不支持（含 ${allOps.length} 个操作符），按 safeMode=${safeMode} 处理: "${condition}"`);
+    return safeMode;
+  }
+  if (/\band\b|\bor\b|&&|\|\|/.test(condition)) {
+    console.log(`[WF-COND-WARN] 逻辑运算符(and/or/&&/||)不支持，按 safeMode=${safeMode} 处理: "${condition}"`);
+    return safeMode;
+  }
+
   try {
     const opMatch = condition.match(/(==|!=|>=|<=|>|<)/);
     if (!opMatch) {
       console.log(`[WF-COND-WARN] 条件表达式畸形（无操作符），按 safeMode=${safeMode} 处理: "${condition}"`);
-      return safeMode;  // 默认 true = 不跳过（保持原行为）
+      return safeMode;
     }
     const op = opMatch[0];
     const leftPart = condition.substring(0, opMatch.index).trim();
     const rightPart = condition.substring(opMatch.index + op.length).trim().replace(/^['"]|['"]$/g, '');
 
     if (!leftPart) {
-      console.log(`[WF-COND-WARN] 左路径为空，按 safeMode 处理: "${condition}"`);
+      console.log(`[WF-COND-WARN] 左路径为空，按 safeMode=${safeMode} 处理: "${condition}"`);
+      return safeMode;
+    }
+    if (!rightPart && rightPart !== '0') {
+      console.log(`[WF-COND-WARN] 右值 为空，按 safeMode=${safeMode} 处理: "${condition}"`);
       return safeMode;
     }
 
+    // 解析左值路径
     const leftPath = leftPart.split('.');
     let leftVal = context;
     for (const p of leftPath) {
@@ -778,21 +797,51 @@ function evaluateCondition(condition, context, safeMode = true) {
       leftVal = leftVal[p];
     }
 
-    switch (op) {
-      case '==': return String(leftVal) === rightPart;
-      case '!=': return String(leftVal) !== rightPart;
-      case '>=': return Number(leftVal) >= Number(rightPart);
-      case '<=': return Number(leftVal) <= Number(rightPart);
-      case '>': return Number(leftVal) > Number(rightPart);
-      case '<': return Number(leftVal) < Number(rightPart);
+    // [边界修复] leftVal 为 undefined/null 时记录警告
+    if (leftVal == null) {
+      console.log(`[WF-COND-WARN] 条件路径 "${leftPart}" 在 context 中不存在 (undefined/null)，按 safeMode=${safeMode} 处理: "${condition}"`, {
+        contextKeys: context ? Object.keys(context) : [],
+      });
+      return safeMode;
     }
-    return safeMode;
+
+    // [边界修复] 数值比较时 rightPart 必须可转数字
+    if (['>=', '<=', '>', '<'].includes(op)) {
+      const rightNum = Number(rightPart);
+      const leftNum = Number(leftVal);
+      if (isNaN(rightNum)) {
+        console.log(`[WF-COND-WARN] 右值 "${rightPart}" 非数字，数值比较无效，按 safeMode=${safeMode} 处理: "${condition}"`);
+        return safeMode;
+      }
+      if (isNaN(leftNum)) {
+        console.log(`[WF-COND-WARN] 左值 (${leftVal}) 非数字，数值比较无效，按 safeMode=${safeMode} 处理: "${condition}"`);
+        return safeMode;
+      }
+      console.log(`[WF-COND-EVAL] ${leftPart}=${leftNum} ${op} ${rightNum} → ${evalNum(leftNum, op, rightNum)}`);
+      return evalNum(leftNum, op, rightNum);
+    }
+
+    // 字符串比较
+    const leftStr = String(leftVal);
+    const result = op === '==' ? leftStr === rightPart : leftStr !== rightPart;
+    console.log(`[WF-COND-EVAL] ${leftPart}="${leftStr}" ${op} "${rightPart}" → ${result}`);
+    return result;
   } catch (e) {
     console.log(`[WF-COND-ERROR] 条件表达式异常，按 safeMode=${safeMode} 处理`, {
       condition,
       error: e.message,
     });
     return safeMode;
+  }
+}
+
+function evalNum(left, op, right) {
+  switch (op) {
+    case '>=': return left >= right;
+    case '<=': return left <= right;
+    case '>':  return left > right;
+    case '<':  return left < right;
+    default:   return false;
   }
 }
 

@@ -17,8 +17,8 @@
   ✅ PASS  实际使用配音表: storyboard_dubbing
   ✅ PASS  dramas 列: description_col=description genre_col=genre
   ⚠️  WARN  drama 99100 不存在，创建临时测试项目
-  ✅ PASS  临时项目创建 id=99261
-  Phase 1 耗时 433ms
+  ✅ PASS  临时项目创建 id=99262
+  Phase 1 耗时 996ms
 
 ==========================================================================================
   Phase 2: 创建工作流定义（含参数校验）
@@ -28,23 +28,23 @@
   ✅ PASS  非法 step type → WF-DEF-005
   ✅ PASS  max_retry>10 → WF-DEF-006
   ✅ PASS  trigger_type 非法 → WF-DEF-007
-  ✅ PASS  创建合法工作流成功 id=99116
+  ✅ PASS  创建合法工作流成功 id=99119
   ✅ PASS  定义列表中存在（列表共 3 条）
-  Phase 2 耗时 39ms
+  Phase 2 耗时 85ms
 
 ==========================================================================================
   Phase 3: 创建工作流实例 + 预置基础数据
 ==========================================================================================
-  ✅ PASS  创建临时分集 id=99016
+  ✅ PASS  创建临时分集 id=99017
   ✅ PASS  storyboards 列: has_drama_id=false narration_col=narration
-  ✅ PASS  预置 5 个分镜 storyboard_ids=[99131,99132,99133,99134,99135]
+  ✅ PASS  预置 5 个分镜 storyboard_ids=[99136,99137,99138,99139,99140]
   ✅ PASS  image_generations 列: has_user_id=false（image_url/status/storyboard_id 必需已存在）
   ✅ PASS  预置 5 个分镜图片 (image_generations status=completed)
   ✅ PASS  storyboard_dubbing 列: id, drama_id, episode_id, storyboard_id, character_id, character_name, dialogue_text, voice_id, emotion, audio_path, duration_ms, sort_order, status, error_message, created_at, updated_at
   ✅ PASS  预置 5 个分镜配音 (storyboard_dubbing status=completed)
-  ✅ PASS  创建工作流实例 id=15 status=pending total_steps=4
+  ✅ PASS  创建工作流实例 id=18 status=pending total_steps=4
   ✅ PASS  步骤日志预创建成功 (4/4)
-  Phase 3 耗时 516ms
+  Phase 3 耗时 1047ms
 
 ==========================================================================================
   Phase 4: 步骤级驱动 — 测试条件分支 / 审核暂停 / 进度推进 / 状态机
@@ -60,7 +60,7 @@
   ✅ PASS  4 步全部完成 → 实例 status=completed (completed)
   ✅ PASS  工作流走完 → completed ✅
   ✅ PASS  completed 实例 runInstance → WF-RUN-002 ✅
-  Phase 4 耗时 267ms
+  Phase 4 耗时 365ms
 
 ==========================================================================================
   Phase 5: 失败 → retryStep → 重置状态机
@@ -72,7 +72,7 @@
   ✅ PASS  retryStep 清除 error_message
   ✅ PASS  步骤 0 status=pending & retry_count++ (status=pending, retry=1)
   ✅ PASS  retryStep 完整重置流程 ✅
-  Phase 5 耗时 238ms
+  Phase 5 耗时 286ms
 
 ==========================================================================================
   Phase 6: evaluateCondition 边界覆盖
@@ -81,20 +81,20 @@
   ✅ PASS  新操作符 <= (2<=3→T)
   ✅ PASS  数字 0 比较
   ✅ PASS  畸形表达式 safeMode 默认 true → 返回 true（兼容旧行为），WARN 日志命中=true
-  Phase 6 耗时 1ms
+  Phase 6 耗时 0ms
 
 ==========================================================================================
   Phase 7: editService.autoEdit 智能剪辑全链路
 ==========================================================================================
-  ✅ PASS  autoEdit 返回 task_id=15 status=completed clip_count=5 simulated=false
+  ✅ PASS  autoEdit 返回 task_id=17 status=completed clip_count=5 simulated=false
   ✅ PASS  edit_tasks 落库 ID > 0
   ✅ PASS  edit_tasks 查询 status=completed (completed)
   ✅ PASS  总时长约匹配 (15.1s)
-  ✅ PASS  edit_tasks 落库 & 字段正确：progress=100 output_url=/static/edits/15/output.mp4 simulated=0
+  ✅ PASS  edit_tasks 落库 & 字段正确：progress=100 output_url=/static/edits/17/output.mp4 simulated=0
   ✅ PASS  空分镜 → EDIT-001 ✅
   ✅ PASS  非法 resolution → EDIT-000 ✅
   ✅ PASS  fps=9999 → EDIT-000 ✅
-  Phase 7 耗时 2754ms
+  Phase 7 耗时 3482ms
 
 ==========================================================================================
   Phase 8: audioAlignService.batchAlign 配音对齐
@@ -102,22 +102,22 @@
   ✅ PASS  batchAlign 返回 total=5 aligned=5 failed=0
   ✅ PASS  至少 5 条参与对齐（有预置配音）(total=5)
   ✅ PASS  至少 5 条成功 (aligned=5)
-  ✅ PASS  storyboards 表时长已更新（样例 id=99131 duration=2.5s）
+  ✅ PASS  storyboards 表时长已更新（样例 id=99136 duration=2.5s）
   ✅ PASS  audio_align_logs 写入 5 条（>=5 期望）
   ✅ PASS  日志 strategy=stretch
   ✅ PASS  对齐字段完整：strategy=stretch audio_ms=2200 adjusted_ms=2500
   ✅ PASS  非法 strategy 降级 stretch (actual=stretch)
   ✅ PASS  非法 strategy → 降级 stretch ✅
-  Phase 8 耗时 253ms
+  Phase 8 耗时 364ms
 
 ==========================================================================================
   Phase 9: 跨服务数据一致性 & 数据质量检查
 ==========================================================================================
-  ✅ PASS  数据库写入检查：定义=8 实例=2 步骤日志=6 剪辑任务=1 对齐日志=6
+  ✅ PASS  数据库写入检查：定义=10 实例=2 步骤日志=6 剪辑任务=1 对齐日志=6
   ✅ PASS  edit_tasks.source_clips 合法 JSON
   ✅ PASS  completed_steps<=total_steps 约束无违例（违例 0 条）
   ✅ PASS  步骤状态枚举合法（非法=[]）
-  Phase 9 耗时 80ms
+  Phase 9 耗时 102ms
 
 ==========================================================================================
   Phase 10: 边界异常用例 (skip / delete / pause / resume)
@@ -129,7 +129,7 @@
   ✅ PASS  有 pending 实例 delete → WF-DEL-001 ✅
   ✅ PASS  所有实例 cancelled 后删除成功
   ✅ PASS  进行中实例取消后，定义可删除 ✅
-  Phase 10 耗时 317ms
+  Phase 10 耗时 431ms
 
 ==========================================================================================
   最终报告 Sprint 7 E2E
@@ -137,12 +137,12 @@
 
   通过:   81 项
   警告:    1 项  (不影响功能，建议关注)
-  总计:  82 项  总耗时 4898ms
+  总计:  82 项  总耗时 7159ms
 
 
 ========== Sprint 7 E2E Report ==========
-时间: 2026-08-10T15:35:09.047Z
+时间: 2026-08-10T15:39:38.104Z
 环境: MySQL root@localhost:3306/localminidrama
-项目: drama_id=99261  分集: episode_id=99016  分镜: 5 条
+项目: drama_id=99262  分集: episode_id=99017  分镜: 5 条
 结果: PASS=81  WARN=1  FAIL=0  TOTAL=82
-耗时: 4898ms
+耗时: 7159ms

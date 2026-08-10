@@ -8,6 +8,78 @@
 
 ---
 
+## [1.2.9] - 2026-08-10
+
+### Sprint 7 — 智能工作流引擎 & 智能剪辑全链路
+
+#### 新增
+
+- **工作流引擎**（`workflowService.js`）：
+  - 工作流定义 CRUD（`createDefinition` / `listDefinitions` / `getDefinition` / `updateDefinition` / `deleteDefinition`），支持步骤类型校验（`generate_outline` / `generate_characters` / `generate_episodes` / `generate_images` / `auto_edit`）、`max_retry` 范围校验（1-10）、`trigger_type` 枚举校验
+  - 工作流实例全生命周期管理（`createInstance` / `runInstance` / `pauseInstance` / `resumeInstance` / `cancelInstance`），实例创建时自动预创建 `workflow_step_logs` 记录
+  - 步骤级操作：`skipStep`（跳过并推进实例进度）、`retryStep`（重置失败步骤 + 恢复实例为 paused）、`reviewStep`（人工审核通过/驳回 + 自动推进进度）
+  - 条件分支求值器 `evaluateCondition`，支持 `==` / `!=` / `>=` / `<=` / `>` / `<` 六种操作符，dot 路径解析 context
+- **智能剪辑服务**（`editService.js`）：
+  - `autoEdit` 全链路：分镜收集 → 节奏匹配 → 转场设置 → ffmpeg 命令构建 → 执行 → 落库，6 个 STAGE 分阶段日志
+  - 参数校验：`resolution` 正则校验（`\d{2,5}x\d{2,5}`）、`fps` 范围校验（1-120）
+  - ffmpeg 可用性预检测，不存在时降级为模拟模式
+  - `resolveClipInput` 输入文件解析器：支持本地文件 / HTTP URL / color lavfi fallback（`EDIT_FALLBACK_COLOR=1` 时启用占位图）
+  - `concat=v=1:a=0` 正确拼接（修复 `v=0` 导致的 ffmpeg 报错）
+- **配音对齐服务**（`audioAlignService.js`）：
+  - `alignStoryboard` 单条对齐 + `batchAlign` 批量对齐，支持 `stretch` / `trim` / `loop` / `silence` 四种策略
+  - ffprobe 可用性检测，缺失时使用原时长降级
+  - 非法 `strategy` 自动降级为 `stretch`，`audio_duration_ms` 非法时使用原时长
+- **Schema 自适应层**（`editService.js` / `audioAlignService.js`）：
+  - `probeSchema` 懒探测：自动检测 MySQL/SQLite 环境下的表结构差异
+  - 兼容 `storyboard_dubbing` ↔ `audio_generations` 双表名
+  - 兼容 `storyboards.drama_id` 列缺失（JOIN episodes 反查）
+  - 兼容 `dramas.synopsis` ↔ `dramas.description`、`dramas.genre_type` ↔ `dramas.genre`
+  - 兼容 `edit_tasks.simulated` 列缺失
+- **路由层增强**（`workflows.js` / `edit.js`）：
+  - 每条请求生成 `requestId`（`REQ#WFxxx` / `REQ#EDxxx`），记录入参、用户上下文与响应耗时
+  - 权限控制：更新/删除定义时校验 ownership（创建者或超级管理员），实例操作校验项目权限
+- **端到端测试**（`test_s7_e2e.js`）：
+  - 10 个 Phase 全链路集成测试：初始化 → 定义创建 → 实例执行 → 条件分支 → 审核暂停 → 失败重试 → 智能剪辑 → 配音对齐 → 一致性检查 → 边界异常
+  - 82 项断言，覆盖正常流程 + 非法参数 + 状态机非法跳转 + 空数据 + 权限校验
+
+#### 修复
+
+- **`skipStep` 不推进实例进度**：删除 `workflowService.js` 末尾的旧版重复定义（覆盖了增强版），保留带进度推进的版本（更新 `current_step_index` + `completed_steps`）
+- **`retryStep` 递增 retry_count 不合理**：手动重试时重置 `retry_count=1`（表示新一轮尝试），而非在已有失败次数上累加
+- **`reviewStep` 审核通过后不推进**：审核通过时更新实例 `current_step_index` + `completed_steps`，最后一步则标记实例 `completed`
+- **`concat=n=5:v=0:a=0` 参数错误**：ffmpeg concat filter 的 `v=0` 表示无视频流，改为 `v=1:a=0`（每片段一路视频、无音频）
+- **`batchAlign` 中 `episodeId` 未定义**：变量名拼写错误，修正为 `episode_id`
+- **`evaluateCondition` 边界遗漏**（5 类）：
+  - 复合表达式检测（多个操作符或 `&&` / `||` / `and` / `or`）→ WARN + safeMode
+  - `leftVal` 为 undefined/null 时 WARN（路径在 context 中不存在）
+  - 数值比较时 rightPart 非数字 → WARN + safeMode
+  - 数值比较时 leftVal 非数字 → WARN + safeMode
+  - 添加 `[WF-COND-EVAL]` 求值日志（输出解析后的左右值与比较结果）
+- **条件表达式畸形时静默返回 true**：添加 `[WF-COND-WARN]` 日志，按 `safeMode` 参数处理（默认 true 保持兼容）
+- **工作流定义删除时未检查进行中实例**：`deleteDefinition` 查询 `workflow_instances`，若存在 `running/paused/pending` 状态实例则抛出 `[WF-DEL-001]` 错误
+
+#### 日志体系
+
+- **TraceID 全链路追踪**：
+  - 工作流引擎：`WF-DEF` / `WF-INST` / `WF-RUN` / `WF-REV` / `WF-SKIP` / `WF-RETRY` / `WF-DEL` / `WF-COND`
+  - 智能剪辑：`EDITxxxx`，6 个 STAGE 分阶段输出（入参校验 → 收集片段 → 节奏匹配 → 构建命令 → ffmpeg 执行 → 写库返回）
+  - 配音对齐：`AAL-SB` / `AAL-BATCH`
+  - 路由层：`REQ#WFxxx` / `REQ#EDxxx`
+- **错误码体系**：
+  - `WF-DEF-001` ~ `WF-DEF-007`：定义创建参数校验
+  - `WF-RUN-002` / `WF-RUN-004`：实例执行状态机防护
+  - `WF-DEL-001`：删除前进行中实例检查
+  - `WF-REV-001` / `WF-REV-002`：审核状态校验
+  - `EDIT-000` ~ `EDIT-003` / `EDIT-ENOENT` / `EDIT-FFMPEG-FAIL`：剪辑参数/资源/工具校验
+  - `AAL-000` / `AAL-001` / `AAL-BATCH-000`：对齐参数校验
+
+#### 测试
+
+- 单元测试：69/69 通过（`s7WorkflowService.test.js` + `s7Edit.test.js` + `s7AudioAlign.test.js`）
+- E2E 集成测试：82 项，81 PASS / 1 WARN / 0 FAIL（`test_s7_e2e.js`，真实 MySQL）
+
+---
+
 ## [1.2.8] - 2026-07-01
 
 ### 新增
