@@ -67,17 +67,22 @@ function listDramas(db, log) {
     const status = req.query.status || '';
     const genre = req.query.genre || '';
     const keyword = req.query.keyword || '';
+    // 新增参数 expand=1 时仍调用旧版 listDramas（含完整 episodes/storyboards 嵌套）
+    // 默认调用 listDramasLite（消灭N+1，2条SQL搞定），回滚：删掉 try 里 if/else，保留 dramaService.listDramas 路径即可
     try {
-      const { dramas, total, page: p, pageSize: ps } = dramaService.listDramas(db, {
-        page,
-        page_size,
-        status,
-        genre,
-        keyword,
-      }, req.user);
+      let dramas, total, p, ps;
+      if (req.query.expand === '1' || req.query.expand === 'true') {
+        ({ dramas, total, page: p, pageSize: ps } = dramaService.listDramas(db, {
+          page, page_size, status, genre, keyword,
+        }, req.user));
+      } else {
+        ({ dramas, total, page: p, pageSize: ps } = dramaService.listDramasLite(db, {
+          page, page_size, status, genre, keyword,
+        }, req.user));
+      }
       response.successWithPagination(res, dramas, total, p, ps);
     } catch (err) {
-      log.errorw('List dramas failed', { error: err.message });
+      log.errorw('List dramas failed', { error: err.message, stack: err.stack });
       response.internalError(res, '获取列表失败');
     }
   };

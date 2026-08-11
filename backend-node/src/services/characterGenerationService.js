@@ -178,10 +178,13 @@ async function processCharacterGeneration(db, cfg, log, taskID, req) {
 
   if (req.episode_id && characters.length > 0) {
     const episodeId = Number(req.episode_id);
+    // 双数据库兼容：MySQL INSERT IGNORE vs SQLite INSERT OR IGNORE（语法不互通）
+    const insEC_sql = (db && db.type === 'mysql')
+      ? 'INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)'
+      : 'INSERT OR IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)';
+    const insEC = db.prepare(insEC_sql);
     for (const c of characters) {
-      try {
-        db.prepare('INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)').run(episodeId, c.id);
-      } catch (_) {}
+      try { insEC.run(episodeId, c.id); } catch (_) {}
     }
   }
 

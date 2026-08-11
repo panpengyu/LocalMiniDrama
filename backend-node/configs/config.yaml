@@ -59,4 +59,6 @@ queue:
   backoff_type: exponential
   backoff_delay: 5000
   concurrency: 2
+  bgm_concurrency: 4
+  merge_concurrency: 2
   enabled: true

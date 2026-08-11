@@ -206,7 +206,11 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log, us
 
   // ---- 关联角色到所有集（episode_characters） ----
   if (charNewIds.length > 0 && episodeIdList.length > 0) {
-    const insEC = db.prepare('INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)');
+    // 双数据库兼容：MySQL INSERT IGNORE vs SQLite INSERT OR IGNORE
+    const insEC_sql = (db && db.type === 'mysql')
+      ? 'INSERT IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)'
+      : 'INSERT OR IGNORE INTO episode_characters (episode_id, character_id) VALUES (?, ?)';
+    const insEC = db.prepare(insEC_sql);
     for (const charId of charNewIds) {
       if (!charId) continue;
       for (const epId of episodeIdList) {

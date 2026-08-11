@@ -152,6 +152,80 @@ class SimpleBloomFilter {
 }
 
 /* ============================================================
+ *  AsyncQueue —— 通用本地并发限流队列（FIFO Semaphore）
+ *  用于替换无界 setImmediate，防止异步任务打满 DB 连接池 / CPU / ffmpeg 子进程。
+ *  BgmAsyncQueue / MergeAsyncQueue 均基于此实现，保证限流语义一致。
+ * ============================================================ */
+class AsyncQueue {
+  /**
+   * @param {number} concurrency 允许的最大并发数（>=1）
+   * @param {string} [name] 队列名（仅用于日志标识）
+   */
+  constructor(concurrency, name = 'async-queue') {
+    const c = Number(concurrency);
+    this.concurrency = (Number.isFinite(c) && c >= 1) ? Math.floor(c) : 2;
+    this.name = name;
+    this._running = 0;
+    this._queue = []; // Array<{fn, resolve, reject, enqueuedAt}>
+    this._submitted = 0;
+    this._completed = 0;
+  }
+
+  _runNext() {
+    while (this._running < this.concurrency && this._queue.length > 0) {
+      const task = this._queue.shift();
+      this._running++;
+      const waitMs = Date.now() - task.enqueuedAt;
+      Promise.resolve()
+        .then(() => task.fn())
+        .then((r) => task.resolve(r))
+        .catch((e) => task.reject(e))
+        .finally(() => {
+          this._running--;
+          this._completed++;
+          Promise.resolve().then(() => this._runNext());
+        });
+      // 入队即打印一次排队等待时长（便于排查积压）
+      if (waitMs > 5) {
+        console.log(`[ASYNC-Q:${this.name}] 任务出队执行  waited=${waitMs}ms  running=${this._running}/${this.concurrency}  queued=${this._queue.length}`);
+      }
+    }
+  }
+
+  /**
+   * @param {() => Promise<any>} fn 实际任务
+   * @returns {Promise<any>} 任务结果
+   */
+  add(fn) {
+    this._submitted++;
+    return new Promise((resolve, reject) => {
+      this._queue.push({ fn, resolve, reject, enqueuedAt: Date.now() });
+      Promise.resolve().then(() => this._runNext());
+    });
+  }
+
+  get stats() {
+    return {
+      name: this.name,
+      concurrency: this.concurrency,
+      running: this._running,
+      queued: this._queue.length,
+      submitted: this._submitted,
+      completed: this._completed,
+    };
+  }
+
+  /** 仅用于测试，等待全部清空 */
+  _drain() {
+    const check = () => new Promise(res => {
+      if (this._running === 0 && this._queue.length === 0) return res();
+      setTimeout(() => check().then(res), 20);
+    });
+    return check();
+  }
+}
+
+/* ============================================================
  *  ObjectIdGuard —— 递归遍历的循环引用检测
  * ============================================================ */
 class ObjectIdGuard {
@@ -170,5 +244,6 @@ class ObjectIdGuard {
 module.exports = {
   Singleflight,
   SimpleBloomFilter,
+  AsyncQueue,
   ObjectIdGuard,
 };
