@@ -173,7 +173,7 @@
       <DirectorStage3D
         v-if="rawNodes.length > 0"
         ref="director3DRef"
-        :nodes="rawNodes"
+        :nodes="stage3DNodes"
         :visible="viewMode === '3d'"
         :camera-state="camera3DState"
         :layout3d="savedLayout"
@@ -184,7 +184,7 @@
         @position-change="on3DPositionChange"
         @camera-change="on3DCameraChange"
         @arrange-characters="onArrangeCharacters"
-        @toggle-scene-depth="onToggleSceneDepth"
+        @toggle-scene-depth="onToggleSceneDepthPreview"
         @toggle-timeline-3d="onToggleTimeline3D"
       />
 
@@ -326,6 +326,28 @@ const drama = ref(null)
 const rawNodes = ref([])
 const nodes = ref([])
 const edges = ref([])
+
+// S10-T04/T05: 3D 导演台节点适配
+// 2D 适配器（buildDramaCanvasGraph）输出的节点类型是 canvasAsset / canvasStoryboard，
+// 但 3D 层（ViewSyncManager 深度映射 / Node3DFactory 样式 / 站位与深度预览的类型筛选）
+// 需要的是原始类型 character / scene / prop / storyboard。
+// 这里在传入 DirectorStage3D 前做一次「类型归一化 + data 扁平化」，
+// 避免修改 2D VueFlow 的渲染逻辑。
+function normalizeStage3DNode(n) {
+  if (!n) return n
+  if (n.type === 'canvasAsset') {
+    const kind = n.data?.kind // 'character' | 'scene' | 'prop'
+    const entity = n.data?.entity || {}
+    return { ...n, type: kind || 'prop', data: { ...entity, kind } }
+  }
+  if (n.type === 'canvasStoryboard') {
+    const sb = n.data?.storyboard || n.data || {}
+    return { ...n, type: 'storyboard', data: { ...sb, ...n.data } }
+  }
+  return n
+}
+const stage3DNodes = computed(() => rawNodes.value.map(normalizeStage3DNode))
+
 const layoutCache = ref(null)
 const currentViewport = ref({ x: 0, y: 0, zoom: 0.75 })
 const canvasMainRef = ref(null)
@@ -1053,13 +1075,13 @@ function onArrangeCharacters(pattern) {
     log.warn('[3D] arrangeCharacters 失败: director3DRef 不存在')
     return
   }
-  // 从 rawNodes 中筛选出类型为 character 的节点
-  const characterNodes = rawNodes.value
+  // 从归一化后的 3D 节点中筛选出类型为 character 的节点
+  const characterNodes = stage3DNodes.value
     .filter(n => n.type === 'character')
     .map(n => ({ nodeId: n.id, data: n.data }))
   log.info('[3D] 角色站位编排', { pattern, characterCount: characterNodes.length, characters: characterNodes.map(c => c.nodeId) })
   if (characterNodes.length === 0) {
-    log.warn('[3D] 角色站位编排: 没有找到角色节点')
+    log.warn('[3D] 角色站位编排: 没有找到角色节点（当前项目分镜未引用任何角色）')
     return
   }
   const positions = director3DRef.value.arrangeCharacters(characterNodes, pattern)
@@ -1078,12 +1100,19 @@ function onToggleSceneDepthPreview(enabled) {
   }
   log.info('[3D] 场景深度预览切换', { enabled })
   const state = director3DRef.value.toggleSceneDepthPreview(enabled)
-  // 如果启用，添加当前所有场景节点到深度预览中
+  // 启用时，把当前所有场景节点构造为 sceneData 并加入深度预览
   if (state) {
-    const sceneNodes = rawNodes.value.filter(n => n.type === 'scene')
-    log.info('[3D] 加载场景到深度预览', { sceneCount: sceneNodes.length })
-    // 注意: 实际上需要根据 drama 的场景数据构造 sceneData 列表传入
-    // 这里先调用 toggle，后续的 addScenePlane 需要通过额外逻辑调用
+    const sceneNodes = stage3DNodes.value.filter(n => n.type === 'scene')
+    // 按顺序分配深度层（前景 30 / 中景 100 / 背景 200 循环），让多个场景在 Z 轴上错开
+    const DEPTH_LEVELS = [30, 100, 200]
+    const sceneDataList = sceneNodes.map((n, i) => ({
+      id: n.id,
+      name: n.data?.location || n.data?.name || `场景${i + 1}`,
+      imageUrl: n.data?.image_url || n.data?.background_url || null,
+      z: DEPTH_LEVELS[i % DEPTH_LEVELS.length],
+    }))
+    log.info('[3D] 加载场景到深度预览', { sceneCount: sceneDataList.length, scenes: sceneDataList.map(s => ({ id: s.id, z: s.z, hasImage: !!s.imageUrl })) })
+    director3DRef.value.addScenePlanes(sceneDataList)
   }
   layoutDirty.value = true
   scheduleLayoutSave()
@@ -1097,8 +1126,8 @@ function onToggleTimeline3D(enabled) {
     log.warn('[3D] toggleTimeline3D 失败: director3DRef 不存在')
     return
   }
-  // 从 rawNodes 中筛选出类型为 storyboard 的节点
-  const storyboardNodes = rawNodes.value
+  // 从归一化后的 3D 节点中筛选出类型为 storyboard 的节点
+  const storyboardNodes = stage3DNodes.value
     .filter(n => n.type === 'storyboard')
     .map(n => ({
       nodeId: n.id,

@@ -114,26 +114,35 @@ export class SceneDepthPreview {
     })
     // 已存在则先移除旧的
     if (this._sceneMap.has(id)) {
-      console.log(`[SceneDepthPreview] addScenePlane - removing existing plane for scene ${id}`)
+      console.log('[SceneDepthPreview] addScenePlane - removing existing plane for scene ' + id)
       this.removeScenePlane(id)
     }
 
     const width = sceneData.width ?? DEFAULT_PLANE_WIDTH
     const height = sceneData.height ?? DEFAULT_PLANE_HEIGHT
-    const z = sceneData.z ?? DEPTH_LAYERS.background.z
+    // Z 值校验：非有限数字时回退到背景层默认值
+    const rawZ = sceneData.z
+    const z = Number.isFinite(rawZ) ? rawZ : DEPTH_LAYERS.background.z
+    const usedFallbackZ = !Number.isFinite(rawZ)
 
     console.log(`[SceneDepthPreview] addScenePlane - resolved params`, {
       width,
       height,
       z,
-      usedFallback_z: sceneData.z === undefined,
+      rawZ,
+      usedFallback_z: usedFallbackZ,
       usedFallback_width: sceneData.width === undefined,
       usedFallback_height: sceneData.height === undefined,
     })
+    if (usedFallbackZ && rawZ !== undefined) {
+      console.warn(
+        '[SceneDepthPreview] addScenePlane - 场景 ' + id + ' 的 z 值无效: ' + rawZ + ' (type: ' + typeof rawZ + ')，已回退到背景层默认值 ' + DEPTH_LAYERS.background.z
+      )
+    }
 
     // 容器
     const group = new THREE.Group()
-    group.name = `depth_plane_${id}`
+    group.name = 'depth_plane_' + id
     group.userData = { sceneId: id, z }
 
     // 主平面：初始使用绿色半透明材质，纹理加载成功后替换
@@ -209,26 +218,64 @@ export class SceneDepthPreview {
       return
     }
     if (!Number.isFinite(newZ)) {
-      console.warn(`[SceneDepthPreview] updateSceneDepth END - invalid newZ: ${newZ} (type: ${typeof newZ})`)
+      console.warn(
+        `[SceneDepthPreview] updateSceneDepth END - invalid newZ: ${newZ} (type: ${typeof newZ})\n` +
+        `  深度调整已跳过，当前场景保留原Z值: ${oldZ ?? 'unknown'}。请传入有效的数字值。`
+      )
       return
+    }
+
+    // Z 值范围限制：限制在 0~300 之间，避免超出深度标尺范围导致渲染异常
+    const DEPTH_MIN = 0
+    const DEPTH_MAX = 300
+    let clampedZ = newZ
+    let wasClamped = false
+    if (newZ < DEPTH_MIN) {
+      clampedZ = DEPTH_MIN
+      wasClamped = true
+    } else if (newZ > DEPTH_MAX) {
+      clampedZ = DEPTH_MAX
+      wasClamped = true
+    }
+    if (wasClamped) {
+      console.warn(
+        `[SceneDepthPreview] updateSceneDepth - Z值已限制范围: ${newZ} → ${clampedZ}\n` +
+        `  有效深度范围为 ${DEPTH_MIN}~${DEPTH_MAX}，超出范围的值将被自动限制到边界。`
+      )
     }
 
     const { mesh, label, data } = entry
 
-    // 更新平面 Z 位置
-    mesh.position.z = newZ
+    // 检查当前是否仍在使用回退材质（图片加载失败/未加载时）
+    // 注意：Z 值计算与纹理状态完全解耦——即使图片加载失败，深度调整仍正常执行，
+    // 平面保持绿色半透明回退材质。此处 mesh/material 的存在性判断做了防御，
+    // 避免材质被意外销毁时在深度更新路径抛出异常导致预览崩溃。
+    const isUsingFallback = !mesh?.material || mesh.material.map == null
+    if (isUsingFallback) {
+      console.log(
+        `[SceneDepthPreview] updateSceneDepth - 注意: 场景 ${sceneId} 当前使用回退材质（图片未加载或加载失败），` +
+        `深度调整仍将正常执行，平面将以绿色半透明形式显示。`
+      )
+    }
+
+    // 更新平面 Z 位置（mesh/label 存在性防御，避免结构异常时抛错）
+    if (mesh?.position) mesh.position.z = clampedZ
     // 同步标签 Z 位置与文字
-    label.position.z = newZ
-    const newLabelText = `${data.name || '场景'} | Z=${newZ}`
+    if (label?.position) label.position.z = clampedZ
+    const newLabelText = `${data?.name || '场景'} | Z=${clampedZ}`
     this._updateLabelText(label, newLabelText)
 
     // 同步缓存数据
-    entry.data.z = newZ
-    entry.group.userData.z = newZ
+    entry.data.z = clampedZ
+    entry.group.userData.z = clampedZ
 
     console.log(`[SceneDepthPreview] updateSceneDepth END`, {
       sceneId,
-      deltaZ: (newZ - (oldZ ?? 0)).toFixed(3),
+      requestedZ: newZ,
+      clampedZ,
+      wasClamped,
+      isUsingFallbackMaterial: isUsingFallback,
+      deltaZ: (clampedZ - (oldZ ?? 0)).toFixed(3),
       finalMeshZ: mesh.position.z.toFixed(3),
       finalLabelZ: label.position.z.toFixed(3),
       finalDataZ: entry.data.z,
@@ -381,10 +428,26 @@ export class SceneDepthPreview {
    * @param {THREE.Mesh} mesh - 主平面网格
    */
   _loadSceneTexture(imageUrl, mesh) {
-    if (!imageUrl) return
+    if (!imageUrl) {
+      console.log(
+        `[SceneDepthPreview] _loadSceneTexture - 图片URL为空，直接使用回退材质（绿色半透明）。\n` +
+        `  深度预览功能不受影响，场景平面将以纯色形式显示。`
+      )
+      return
+    }
+
+    // 简单 URL 格式校验
+    if (typeof imageUrl !== 'string' || (!imageUrl.startsWith('http') && !imageUrl.startsWith('/') && !imageUrl.startsWith('data:'))) {
+      console.warn(
+        `[SceneDepthPreview] _loadSceneTexture - 图片URL格式无效: "${imageUrl}"\n` +
+        `  将使用回退材质（绿色半透明）。深度预览功能不受影响。`
+      )
+      return
+    }
 
     // 命中缓存直接应用
     if (this._textureCache.has(imageUrl)) {
+      console.log(`[SceneDepthPreview] _loadSceneTexture - 命中缓存: ${imageUrl.substring(0, 60)}`)
       this._applySceneTexture(mesh, this._textureCache.get(imageUrl))
       return
     }
@@ -397,16 +460,19 @@ export class SceneDepthPreview {
         // 网格可能已被销毁/移除，应用前检查父节点是否存在
         if (mesh.parent) {
           this._applySceneTexture(mesh, texture)
+          console.log(`[SceneDepthPreview] _loadSceneTexture - 纹理加载成功并已应用`)
         } else {
           texture.dispose()
+          console.log(`[SceneDepthPreview] _loadSceneTexture - 纹理加载成功但mesh已销毁，释放纹理`)
         }
       },
       undefined,
       (error) => {
         // 加载失败时保持绿色半透明材质（已在创建时设置）
         console.warn(
-          `[SceneDepthPreview] 纹理加载失败，使用回退材质: ${imageUrl}`,
-          error
+          `[SceneDepthPreview] _loadSceneTexture - 纹理加载失败，使用回退材质: ${imageUrl}\n` +
+          `  错误信息: ${error?.message || error}\n` +
+          `  深度预览功能不受影响，场景平面将以绿色半透明形式显示。`
         )
       }
     )

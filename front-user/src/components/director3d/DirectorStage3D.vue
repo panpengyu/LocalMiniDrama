@@ -818,6 +818,18 @@ function toggleSceneDepthPreview(enabled) {
 }
 
 /**
+ * S10-T05: 批量添加场景平面到深度预览
+ * @param {Array} sceneDataList - [{ id, name, imageUrl, z, width?, height? }]
+ */
+function addScenePlanes(sceneDataList = []) {
+  if (!sceneDepthPreview) return
+  console.log(`[DIR-3D] addScenePlanes`, { count: sceneDataList.length })
+  for (const sceneData of sceneDataList) {
+    sceneDepthPreview.addScenePlane(sceneData)
+  }
+}
+
+/**
  * S10-T06: 时间轴3D化开关
  * @param {Boolean} enabled
  * @param {Array} storyboards - 分镜节点列表 [{ nodeId, storyboard_number, layer }]
@@ -930,6 +942,7 @@ defineExpose({
   arrangeCharacters,
   // S10-T05: 场景深度预览
   toggleSceneDepthPreview,
+  addScenePlanes,
   // S10-T06: 时间轴3D化
   toggleTimeline3D,
 })

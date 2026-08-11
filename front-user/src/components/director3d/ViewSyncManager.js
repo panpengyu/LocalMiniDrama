@@ -101,6 +101,17 @@ export class ViewSyncManager {
   on2DNodeAdded(node) {
     if (this.syncing) return
     if (this.nodeMap.has(node.id)) return
+    this._addNodeInternal(node)
+  }
+
+  /**
+   * 内部方法：实际将节点添加到 nodeMap（无 syncing 守卫）
+   * 供 on2DNodeAdded（外部调用，需守卫）和 rebuildFrom2D（重建，已持 syncing 锁）共用
+   * @param {Object} node - Vue Flow 节点对象 { id, type, position, data }
+   * @returns {Object|null} 已添加的 entry，若 node.id 已存在则返回 null
+   */
+  _addNodeInternal(node) {
+    if (this.nodeMap.has(node.id)) return null
 
     const position3D = this._compute3DPosition(node.type, node.position)
     const entry = {
@@ -125,6 +136,7 @@ export class ViewSyncManager {
     }
 
     this.nodeMap.set(node.id, entry)
+    return entry
   }
 
   /**
@@ -373,11 +385,11 @@ export class ViewSyncManager {
     this.dirty2D = false
     this.dirty3D = false
 
-    // 从2D节点列表重建
+    // 从2D节点列表重建（直接调用 _addNodeInternal，绕过 syncing 守卫）
     let added = 0
     for (const node of nodes) {
-      this.on2DNodeAdded(node)
-      added++
+      const entry = this._addNodeInternal(node)
+      if (entry) added++
     }
 
     // 按节点类型分组统计（输出侧）

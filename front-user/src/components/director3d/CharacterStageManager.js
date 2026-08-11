@@ -93,6 +93,37 @@ export class CharacterStageManager {
       },
     })
 
+    // 角色数量不足时的友好提示
+    if (count < 2) {
+      const patternName = pattern || this.pattern
+      if (count === 0) {
+        console.warn(
+          `[CharacterStageManager] arrange SKIP — 无法进行站位编排：当前没有可编排的角色节点（角色数量 = 0）。\n` +
+          `  · 原因：画布中不存在 type='character' 的节点。\n` +
+          `  · 说明：角色节点只有在被分镜（storyboard）引用后才会出现在 3D 舞台上。\n` +
+          `  · 解决：请先在项目中创建角色，并让至少一个分镜引用这些角色，然后重试「${patternName}」站位编排。`
+        )
+        return []
+      }
+
+      // count === 1
+      console.warn(
+        `[CharacterStageManager] arrange SKIP — 无法进行站位编排：仅有 1 个角色节点（角色数量 = 1）。\n` +
+        `  · 原因：站位编排需要在多个角色之间计算相对位置，「${patternName}」模式至少需要 2 个角色才能展现排列效果。\n` +
+        `  · 当前角色：${list[0].nodeId}（已单独放置到舞台中心，但未执行排列）。\n` +
+        `  · 解决：请再添加至少 1 个角色节点（并确保被分镜引用）后重试。`
+      )
+      // 单个角色仍然设置位置（放在中心点），但不执行排列逻辑
+      const singlePos = { x: options.centerX ?? 0, y: options.centerY ?? 0, z: options.centerZ ?? 0 }
+      const entry = this.nodeMap.get(list[0].nodeId)
+      if (entry) {
+        entry.position3D = { ...singlePos }
+        if (entry.mesh) entry.mesh.position.set(singlePos.x, singlePos.y, singlePos.z)
+      }
+      this.lastPositions = new Map([[list[0].nodeId, { ...singlePos }]])
+      return [{ nodeId: list[0].nodeId, position: singlePos }]
+    }
+
     // 更新排列参数（若调用方提供则覆盖实例默认值）
     if (pattern) this.pattern = pattern
     if (typeof options.spacing === 'number') this.spacing = options.spacing
