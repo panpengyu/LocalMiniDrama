@@ -5,6 +5,24 @@ const { resolveStylePreset } = require('../constants/generationStylePresets');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 
 /**
+ * R3: 懒加载 cacheService 通知器（避免循环require；加载失败就跳过，功能不依赖它）
+ *    新建/更新/删除drama后调用 → 同步更新 Bloom过滤器 + 失效相关缓存
+ */
+function _cacheSvcNotifier() {
+  try {
+    const cs = require('./cacheService');
+    return cs || null;
+  } catch (e) {
+    // 只在第一次失败时warn一次
+    if (!_cacheSvcNotifier._warned) {
+      _cacheSvcNotifier._warned = true;
+      console.log(`[DRAMA-SVC] cacheService 不可用 → 跳过 Bloom更新/缓存失效  err=${e.message}`);
+    }
+    return null;
+  }
+}
+
+/**
  * 清理 image_url：如果数据库中存储的是 base64 data URL，则返回 null。
  * 图片应通过 local_path → /static/{local_path} 访问，base64 不应通过 API 透传（会严重膨胀响应体）。
  */
@@ -24,7 +42,7 @@ function parseJsonColumn(value) {
   }
 }
 
-function createDrama(db, log, req, user = null) {
+async function createDrama(db, log, req, user = null) {
   const now = new Date().toISOString();
   let meta = {};
   if (req.metadata) {
@@ -59,6 +77,13 @@ function createDrama(db, log, req, user = null) {
   );
   const id = info.lastInsertRowid;
   log.info('Drama created', { drama_id: id, created_by: user ? user.id : null });
+  // R3: 通知 cacheService → 把新id加入布隆过滤器 + 失效列表缓存（否则列表页仍显示旧缓存，详情页被Bloom误判404）
+  const cs = _cacheSvcNotifier();
+  if (cs && typeof cs.notifyDramaCreated === 'function') {
+    await cs.notifyDramaCreated(id).catch(err =>
+      log.warn && log.warn('[DRAMA-SVC] notifyDramaCreated 失败:', err.message)
+    );
+  }
   return getDramaById(db, id);
 }
 
@@ -252,7 +277,7 @@ function listDramas(db, query, user = null) {
   return { dramas, total, page, pageSize };
 }
 
-function updateDrama(db, log, dramaId, req) {
+async function updateDrama(db, log, dramaId, req) {
   const drama = getDramaById(db, Number(dramaId));
   if (!drama) return null;
   const updates = [];
@@ -279,6 +304,13 @@ function updateDrama(db, log, dramaId, req) {
     'UPDATE dramas SET ' + updates.join(', ') + ', updated_at = ? WHERE id = ?'
   ).run(...params);
   log.info('Drama updated', { drama_id: dramaId });
+  // R3: 通知cacheService → 失效该drama相关缓存
+  const cs = _cacheSvcNotifier();
+  if (cs && typeof cs.notifyDramaUpdated === 'function') {
+    await cs.notifyDramaUpdated(dramaId).catch(err =>
+      log.warn && log.warn('[DRAMA-SVC] notifyDramaUpdated 失败:', err.message)
+    );
+  }
   return getDramaById(db, dramaId);
 }
 
@@ -302,13 +334,20 @@ function generateStoryboard(db, log, episodeId, options, cfg) {
   );
 }
 
-function deleteDrama(db, log, dramaId) {
+async function deleteDrama(db, log, dramaId) {
   const result = db.prepare('UPDATE dramas SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(
     new Date().toISOString(),
     Number(dramaId)
   );
   if (result.changes === 0) return false;
   log.info('Drama deleted', { drama_id: dramaId });
+  // R3: 通知cacheService → 失效相关缓存（Bloom不支持单条删除，保留不影响正确性）
+  const cs = _cacheSvcNotifier();
+  if (cs && typeof cs.notifyDramaDeleted === 'function') {
+    await cs.notifyDramaDeleted(dramaId).catch(err =>
+      log.warn && log.warn('[DRAMA-SVC] notifyDramaDeleted 失败:', err.message)
+    );
+  }
   return true;
 }
 

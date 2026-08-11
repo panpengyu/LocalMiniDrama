@@ -70,8 +70,57 @@ function createApp() {
     log.warn('[Sprint1] screenwriterWorker module not available, skip:', e.message);
   }
 
+  // ========== Sprint 8 P0-R4: 缓存层初始化 (Redis连接 + Bloom预加载) ==========
+  //  注意：不要用await阻塞主线程启动（Redis连不上应自动降级到内存LRU），用 .then/.catch 异步启动
+  let dramaBloom = null;
+  let cacheServiceRef = null;
+  try {
+    cacheServiceRef = require('./services/cacheService');
+    // R4-a: 初始化 Redis（若未配置则自动降级到 MemoryLRU）
+    cacheServiceRef.initRedis().then((redisOk) => {
+      const stats = cacheServiceRef.getStats();
+      log.info(`[CACHE] initRedis completed: redisOk=${redisOk}, backend=${stats.backend}, maxSize=${stats.maxSize}`);
+    }).catch(err => {
+      log.warn('[CACHE] initRedis error (non-fatal, using memory fallback):', err.message);
+    });
+    // R4-b: 布隆过滤器 + 从DB预加载所有存在过的drama_id（防止缓存穿透）
+    dramaBloom = cacheServiceRef.createDramaBloom(200000);
+    try {
+      const n = cacheServiceRef.preloadDramaIdsIntoBloom(db, dramaBloom);
+      if (n > 0) log.info(`[CACHE] dramaId BloomFilter preloaded: ${n} entries, fillRate=${dramaBloom.fillRate}`);
+    } catch (e) {
+      log.warn('[CACHE] Bloom preload failed (non-fatal, just no bloom guard):', e.message);
+    }
+    // R3/R4-c: 注册 bloom 到 cacheService 的写操作通知器，保证新建/更新/删除drama后同步更新Bloom+失效缓存
+    if (typeof cacheServiceRef.registerDramaBloomForUpdates === 'function') {
+      try { cacheServiceRef.registerDramaBloomForUpdates(dramaBloom); }
+      catch (e2) { log.warn('[CACHE] registerDramaBloomForUpdates 失败:', e2.message); }
+    }
+  } catch (e) {
+    log.warn('[CACHE] cacheService module missing (non-fatal, no caching applied):', e.message);
+  }
+
   // 创建 Express 应用实例
   const app = express();
+
+  // ========== Sprint 8 P0-R4-c: 对高频 GET 路由挂载 cacheMiddleware ==========
+  //  在 setupRouter 之前挂载，确保业务handler前被触发。
+  //  作用范围仅限 /api/v1/dramas 开头的 GET，其他路由完全不受影响 → 可一键注释撤回
+  if (cacheServiceRef && typeof cacheServiceRef.cacheMiddleware === 'function') {
+    const midDramasList = cacheServiceRef.cacheMiddleware('dramas', 300, { bloomFilter: dramaBloom });
+    const midDramaDetail = cacheServiceRef.cacheMiddleware('drama_detail', 300, { bloomFilter: dramaBloom });
+    const midChars = cacheServiceRef.cacheMiddleware('characters', 240, { bloomFilter: dramaBloom });
+    const midScenes = cacheServiceRef.cacheMiddleware('scenes', 240, { bloomFilter: dramaBloom });
+    const midSb = cacheServiceRef.cacheMiddleware('storyboards', 180, { bloomFilter: dramaBloom });
+    // 精确匹配路径模式（Express路径匹配）
+    app.get('/api/v1/dramas', midDramasList);
+    app.get('/api/v1/dramas/:id', midDramaDetail);
+    app.get('/api/v1/dramas/:dramaId/characters', midChars);
+    app.get('/api/v1/dramas/:dramaId/scenes', midScenes);
+    app.get('/api/v1/dramas/:dramaId/storyboards', midSb);
+    // 日志提示，便于确认是否生效
+    log.info('[CACHE] cacheMiddleware mounted: dramas(5m)/drama_detail(5m)/characters(4m)/scenes(4m)/storyboards(3m), bloom=' + (!!dramaBloom));
+  }
   
   // 解析 JSON 请求体，最大 10MB
   app.use(express.json({ limit: '10mb' }));
@@ -431,8 +480,18 @@ function createApp() {
 
   // 全局错误处理中间件
   app.use((err, req, res, next) => {
-    log.errorw('Unhandled error', { error: err.message, path: req.path });
-    
+    const stackSnippet = err?.stack
+      ? err.stack.split('\n').slice(0, 15).join('\n')
+      : '(no stack)';
+    log.errorw('Unhandled error', {
+      error: err.message,
+      err_code: err.code || null,
+      path: req.path,
+      method: req.method,
+      stack: stackSnippet,
+    });
+    // 额外用 stderr 打印完整堆栈（终端排查更直观）
+    console.error(`\n========== UNHANDLED ERROR ==========\n${err && err.stack ? err.stack : err}\n=======================================\n`);
     // 如果响应还未发送，返回错误响应
     if (!res.headersSent) {
       // 判断是否为文件过大错误

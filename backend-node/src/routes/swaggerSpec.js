@@ -27,6 +27,9 @@ module.exports = {
     { name: '画布标注/书签(S6)', description: 'S6-T02/T03 画布标注与书签 CRUD（项目级权限校验）' },
     { name: '智能工作流(S7)', description: 'S7-T01~T04 工作流引擎：定义CRUD + 实例执行 + 暂停/继续/跳过/重试/审核' },
     { name: '智能剪辑(S7)', description: 'S7-T05~T08 智能剪辑：自动拼接 + 转场效果 + 节奏匹配 + 配音对齐' },
+    { name: '风格配置(S8)', description: 'Sprint 8 — 项目级风格配置管理' },
+    { name: 'BGM生成(S8)', description: 'Sprint 8 — AI背景音乐生成' },
+    { name: '缓存与CDN(S8)', description: 'Sprint 8 — API缓存与CDN管理' },
   ],
   paths: {
 
@@ -788,6 +791,132 @@ module.exports = {
         summary: '获取配音对齐记录',
         parameters: [{ name: 'drama_id', in: 'query', schema: { type: 'integer' } }, { name: 'episode_id', in: 'query', schema: { type: 'integer' } }],
         responses: { 200: { description: 'OK' } },
+      },
+    },
+
+    // ================= 风格配置 (S8) =================
+    '/dramas/{dramaId}/style': {
+      get: {
+        tags: ['风格配置(S8)'],
+        summary: '获取项目风格配置',
+        description: '获取指定项目的风格配置（globalStyle/colorPalette/lineWeight等）。数据存于 dramas.style_config 或 project_style_configs 表。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' }],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目或风格配置不存在' }, 500: { description: '服务器错误' } },
+      },
+      post: {
+        tags: ['风格配置(S8)'],
+        summary: '创建风格配置',
+        description: '为指定项目创建风格配置（含全局风格/色彩/线宽/字体等）。若已存在则提示冲突。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' }],
+        requestBody: { required: true, content: { 'application/json': { example: { globalStyle: 'cinematic', colorPalette: ['#3b82f6', '#ef4444'], lineWeight: 'medium', fontFamily: 'Noto Sans SC' } } } },
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目不存在' }, 500: { description: '服务器错误' } },
+      },
+      put: {
+        tags: ['风格配置(S8)'],
+        summary: '更新风格配置',
+        description: '更新指定项目的风格配置，支持增量更新（仅更新传入字段）。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' }],
+        requestBody: { required: true, content: { 'application/json': { example: { globalStyle: 'anime_jp', lineWeight: 'thin' } } } },
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目或风格配置不存在' }, 500: { description: '服务器错误' } },
+      },
+      delete: {
+        tags: ['风格配置(S8)'],
+        summary: '删除风格配置',
+        description: '删除指定项目的风格配置，恢复默认风格。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' }],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目或风格配置不存在' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/dramas/{dramaId}/style/summary': {
+      get: {
+        tags: ['风格配置(S8)'],
+        summary: '获取风格概要',
+        description: '返回项目风格概要信息（风格名称/主色调/线宽等关键字段），用于列表展示。',
+        parameters: [{ name: 'dramaId', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' }],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目或风格配置不存在' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/styles/presets': {
+      get: {
+        tags: ['风格配置(S8)'],
+        summary: '获取风格预设列表',
+        description: '返回系统内置风格预设列表（cinematic/vertical_916/anime_jp/noir_mood等），含样式参数。',
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '未找到预设' }, 500: { description: '服务器错误' } },
+      },
+    },
+
+    // ================= BGM生成 (S8) =================
+    '/ai/bgm': {
+      post: {
+        tags: ['BGM生成(S8)'],
+        summary: '创建BGM生成任务',
+        description: '根据情绪/风格/时长等参数调用AI生成背景音乐，返回任务ID，异步生成。生成结果落库 ai_bgm_tracks。',
+        requestBody: { required: true, content: { 'application/json': { example: { dramaId: 1, mood: 'tense', style: 'orchestral', duration: 30, title: '紧张氛围BGM' } } } },
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '项目不存在' }, 500: { description: '服务器错误' } },
+      },
+      get: {
+        tags: ['BGM生成(S8)'],
+        summary: '列出BGM曲目',
+        description: '分页返回BGM曲目列表，支持按项目/情绪/风格筛选。',
+        parameters: [
+          { name: 'dramaId', in: 'query', schema: { type: 'integer' }, description: '按项目过滤' },
+          { name: 'mood', in: 'query', schema: { type: 'string' }, description: '按情绪过滤' },
+          { name: 'style', in: 'query', schema: { type: 'string' }, description: '按风格过滤' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
+        ],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '未找到记录' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/ai/bgm/{id}': {
+      get: {
+        tags: ['BGM生成(S8)'],
+        summary: '获取BGM详情',
+        description: '返回指定BGM曲目的详细信息（含音频URL/时长/情绪/风格/生成参数）。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: 'BGM曲目ID' }],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: 'BGM曲目不存在' }, 500: { description: '服务器错误' } },
+      },
+      delete: {
+        tags: ['BGM生成(S8)'],
+        summary: '删除BGM曲目',
+        description: '删除指定BGM曲目及其关联音频文件。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: 'BGM曲目ID' }],
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: 'BGM曲目不存在' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/ai/bgm/match': {
+      post: {
+        tags: ['BGM生成(S8)'],
+        summary: '按情绪匹配BGM',
+        description: '根据场景情绪/能量值自动匹配最合适的已有BGM曲目，返回推荐列表。',
+        requestBody: { required: true, content: { 'application/json': { example: { mood: 'tense', energy: 0.8, dramaId: 1, limit: 5 } } } },
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '未找到匹配BGM' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/ai/bgm/moods': {
+      get: {
+        tags: ['BGM生成(S8)'],
+        summary: '获取情绪列表',
+        description: '返回BGM支持的情绪字典（neutral/happy/sad/angry/tense/epic/warm/romantic等）。',
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '未找到情绪列表' }, 500: { description: '服务器错误' } },
+      },
+    },
+
+    // ================= 缓存与CDN (S8) =================
+    '/cache/stats': {
+      get: {
+        tags: ['缓存与CDN(S8)'],
+        summary: '获取缓存统计',
+        description: '返回API缓存统计信息（命中率/缓存数量/内存占用/各路由缓存分布）。',
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: '统计信息不存在' }, 500: { description: '服务器错误' } },
+      },
+    },
+    '/cdn/status': {
+      get: {
+        tags: ['缓存与CDN(S8)'],
+        summary: '获取CDN状态',
+        description: '返回CDN节点状态/回源率/带宽使用/缓存刷新记录等。',
+        responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: 'CDN状态信息不存在' }, 500: { description: '服务器错误' } },
       },
     },
   },

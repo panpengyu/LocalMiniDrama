@@ -44,6 +44,8 @@ const moderationRoutes = require('./moderation');
 const modelRoutingRoutes = require('./modelRouting');
 const workflowRoutes = require('./workflows');
 const editRoutes = require('./edit');
+const styleRoutes = require('./styles');
+const bgmRoutes = require('./bgm');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -422,6 +424,24 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 智能剪辑模块（Sprint 7: S7-T05~T08） ----------
   r.use('/ai/edit', editRoutes(db, log));
+
+  // ---------- 风格配置模块（Sprint 8: S8-T01/T03） ----------
+  r.use('/', styleRoutes(db, log));
+
+  // ---------- BGM生成模块（Sprint 8: S8-T04） ----------
+  r.use('/ai/bgm', bgmRoutes(db, log));
+
+  // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
+  r.get('/cdn/status', (req, res) => {
+    const cdnService = require('../services/cdnService');
+    response.success(res, cdnService.getStatus());
+  });
+
+  // ---------- 缓存统计查询（Sprint 8: S8-T07） ----------
+  r.get('/cache/stats', (req, res) => {
+    const cacheService = require('../services/cacheService');
+    response.success(res, cacheService.getStats());
+  });
 
   // 启动时将已有的覆盖加载到 promptI18n 内存缓存
   try {

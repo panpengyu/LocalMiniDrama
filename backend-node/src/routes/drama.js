@@ -23,13 +23,13 @@ const dramaImportService = require('../services/dramaImportService');
  * @returns {function} Express 路由处理函数
  */
 function createDrama(db, log) {
-  return (req, res) => {
+  return async (req, res) => {
     const body = req.body || {};
     if (!body.title || String(body.title).trim() === '') {
       return response.badRequest(res, '标题不能为空');
     }
     try {
-      const drama = dramaService.createDrama(db, log, body, req.user);
+      const drama = await dramaService.createDrama(db, log, body, req.user);
       response.created(res, drama);
     } catch (err) {
       log.error('Create drama failed', { error: err.message, stack: err.stack });
@@ -91,8 +91,8 @@ function listDramas(db, log) {
  * @returns {function} Express 路由处理函数
  */
 function updateDrama(db, log) {
-  return (req, res) => {
-    const drama = dramaService.updateDrama(db, log, req.params.id, req.body || {});
+  return async (req, res) => {
+    const drama = await dramaService.updateDrama(db, log, req.params.id, req.body || {});
     if (!drama) return response.notFound(res, '剧本不存在');
     response.success(res, drama);
   };
@@ -106,8 +106,8 @@ function updateDrama(db, log) {
  * @returns {function} Express 路由处理函数
  */
 function deleteDrama(db, log) {
-  return (req, res) => {
-    const ok = dramaService.deleteDrama(db, log, req.params.id);
+  return async (req, res) => {
+    const ok = await dramaService.deleteDrama(db, log, req.params.id);
     if (!ok) return response.notFound(res, '剧本不存在');
     response.success(res, { message: '删除成功' });
   };

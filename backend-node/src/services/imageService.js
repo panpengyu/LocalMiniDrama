@@ -1389,6 +1389,34 @@ async function processImageGeneration(db, log, imageGenId) {
       });
     }
 
+    // ── S8-T02: 风格统一引擎 — 自动注入项目级风格参数 ──────────────────
+    try {
+      const styleService = require('./styleService');
+      const styleConfig = styleService.getStyleConfig(db, row.drama_id);
+      if (styleConfig && styleConfig.is_active) {
+        const originalLen = finalPrompt.length;
+        finalPrompt = styleService.injectStyleToPrompt(db, row.drama_id, finalPrompt, {
+          characterId: row.character_id,
+          sceneId: row.scene_id,
+        });
+        // 风格统一负面提示词
+        const styledNegative = styleService.buildNegativePrompt(db, row.drama_id, row.negative_prompt);
+        if (styledNegative !== row.negative_prompt) {
+          row.negative_prompt = styledNegative;
+        }
+        log.info('[图生] S8-T02 风格注入完成', {
+          id: imageGenId,
+          drama_id: row.drama_id,
+          style: styleConfig.global_style,
+          original_len: originalLen,
+          injected_len: finalPrompt.length,
+          elapsed: elapsed(),
+        });
+      }
+    } catch (styleErr) {
+      log.warn('[图生] S8-T02 风格注入失败（跳过，不影响生成）', { id: imageGenId, error: styleErr.message });
+    }
+
     const result = await imageClient.callImageApi(db, log, {
       prompt: finalPrompt,
       model: row.model,

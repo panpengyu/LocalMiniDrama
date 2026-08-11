@@ -751,15 +751,41 @@ async function executeStep(db, log, step, context, instance) {
  *   通过 `safeMode=true` 开关保持向后兼容（默认 true → 失败时不跳过）
  */
 function evaluateCondition(condition, context, safeMode = true) {
+  // [边界+日志#1] context 非对象（null / 原始类型）→ 明确WARN
+  if (context === undefined || context === null || typeof context !== 'object') {
+    console.log(`[WF-COND-WARN] context 非对象（type=${context === null ? 'null' : typeof context}），无法解析任何左路径，按 safeMode=${safeMode} 处理: condition="${condition}"`);
+    if (condition === 'always' || condition === 'true') return true;
+    if (condition === 'false' || condition === 'never') return false;
+    return safeMode;
+  }
   if (!condition || typeof condition !== 'string' || !condition.trim()) return true;
-  condition = condition.trim();
+
+  // [边界+日志#2] 预处理：去除首尾括号包裹（如 "(count>=3)"）、零宽字符、全角符号标准化
+  let raw = condition;
+  condition = condition
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')  // 零宽空格/拼接/不连/零宽非断
+    .replace(/\u3000/g, ' ')                   // 全角空格 → 半角
+    .replace(/＝/g, '=').replace(/！/g, '!').replace(/＞/g, '>').replace(/＜/g, '<') // 全角操作符
+    .trim();
+  // 剥一层括号 (允许一次嵌套，比如 "(x==1)" 或 "((x==1))")
+  for (let i = 0; i < 2; i++) {
+    if (condition.startsWith('(') && condition.endsWith(')')) {
+      condition = condition.slice(1, -1).trim();
+    }
+  }
+  // 统一 === → ==、 !== → !=（弱类型语义等价，但更严格）
+  condition = condition.replace(/===/g, '==').replace(/!==/g, '!=');
+
+  if (raw !== condition) {
+    console.log(`[WF-COND-DEBUG] 表达式预处理: 原始="${raw}" → 规范化="${condition}"`);
+  }
   if (condition === 'always' || condition === 'true') return true;
   if (condition === 'false' || condition === 'never') return false;
 
   // [边界修复] 检测复合表达式（&&/|| 或多个比较操作符）— 当前实现不支持
   const allOps = condition.match(/==|!=|>=|<=|>|</g);
   if (allOps && allOps.length > 1) {
-    console.log(`[WF-COND-WARN] 复合条件表达式不支持（含 ${allOps.length} 个操作符），按 safeMode=${safeMode} 处理: "${condition}"`);
+    console.log(`[WF-COND-WARN] 复合条件表达式不支持（含 ${allOps.length} 个操作符=${allOps.join(',')}），按 safeMode=${safeMode} 处理: "${condition}"`);
     return safeMode;
   }
   if (/\band\b|\bor\b|&&|\|\|/.test(condition)) {
@@ -770,7 +796,7 @@ function evaluateCondition(condition, context, safeMode = true) {
   try {
     const opMatch = condition.match(/(==|!=|>=|<=|>|<)/);
     if (!opMatch) {
-      console.log(`[WF-COND-WARN] 条件表达式畸形（无操作符），按 safeMode=${safeMode} 处理: "${condition}"`);
+      console.log(`[WF-COND-WARN] 条件表达式畸形（无合法操作符），按 safeMode=${safeMode} 处理: "${condition}"`);
       return safeMode;
     }
     const op = opMatch[0];
@@ -781,55 +807,97 @@ function evaluateCondition(condition, context, safeMode = true) {
       console.log(`[WF-COND-WARN] 左路径为空，按 safeMode=${safeMode} 处理: "${condition}"`);
       return safeMode;
     }
+    // 左路径字符校验：只允许 字母数字_$ 与 .分隔
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z0-9_$]+)*$/.test(leftPart)) {
+      console.log(`[WF-COND-WARN] 左路径含非法字符（仅支持"ident.ident..."），按 safeMode=${safeMode} 处理: leftPart="${leftPart}" | condition="${condition}"`);
+      return safeMode;
+    }
     if (!rightPart && rightPart !== '0') {
       console.log(`[WF-COND-WARN] 右值 为空，按 safeMode=${safeMode} 处理: "${condition}"`);
       return safeMode;
     }
 
-    // 解析左值路径
+    // 解析左值路径 + 详细定位"哪一级没找到"（用于排查字段名拼写）
     const leftPath = leftPart.split('.');
     let leftVal = context;
-    for (const p of leftPath) {
+    let walked = '';
+    for (let i = 0; i < leftPath.length; i++) {
+      const p = leftPath[i];
       if (leftVal == null || typeof leftVal !== 'object') {
+        const upTo = leftPath.slice(0, i).join('.');
+        console.log(`[WF-COND-WARN] 条件路径 "${leftPart}" 在第${i}级 "${upTo}" 处已是 ${leftVal===null?'null':typeof leftVal}（非对象），无法继续取 "${p}"，按 safeMode=${safeMode} 处理。条件="${condition}"  context.topKeys=${JSON.stringify(Object.keys(context||{}))}`);
+        leftVal = undefined;
+        break;
+      }
+      if (!Object.prototype.hasOwnProperty.call(leftVal, p) && !(p in leftVal)) {
+        const upTo = leftPath.slice(0, i).join('.');
+        console.log(`[WF-COND-WARN] 条件路径 "${leftPart}" 到 "${upTo||'(根)'}" 时没有属性 "${p}"（可用keys=${JSON.stringify(Object.keys(leftVal||{}))}），按 safeMode=${safeMode} 处理。条件="${condition}"`);
         leftVal = undefined;
         break;
       }
       leftVal = leftVal[p];
+      walked = leftPath.slice(0, i + 1).join('.');
     }
 
-    // [边界修复] leftVal 为 undefined/null 时记录警告
+    // [边界修复] leftVal 为 undefined/null 时记录警告（上面细分过了，此处兜底记录最终类型）
     if (leftVal == null) {
-      console.log(`[WF-COND-WARN] 条件路径 "${leftPart}" 在 context 中不存在 (undefined/null)，按 safeMode=${safeMode} 处理: "${condition}"`, {
-        contextKeys: context ? Object.keys(context) : [],
-      });
+      console.log(`[WF-COND-WARN] 左值最终为 ${leftVal === null ? 'null' : 'undefined'}，按 safeMode=${safeMode} 处理: "${condition}"`);
       return safeMode;
     }
 
-    // [边界修复] 数值比较时 rightPart 必须可转数字
+    // [边界+日志#5] 数值比较分支
     if (['>=', '<=', '>', '<'].includes(op)) {
       const rightNum = Number(rightPart);
       const leftNum = Number(leftVal);
+      // Infinity/-Infinity 允许，但显式打日志（排查超大值）
+      if (!Number.isFinite(rightNum) && !Number.isNaN(rightNum)) {
+        console.log(`[WF-COND-WARN] 右值 "${rightPart}" 转成非有限数（${rightNum}），仍将参与比较，请注意语义正确性: "${condition}"`);
+      }
+      if (!Number.isFinite(leftNum) && !Number.isNaN(leftNum)) {
+        console.log(`[WF-COND-WARN] 左值 "${leftVal}"(${typeof leftVal}) 转成非有限数（${leftNum}），仍将参与比较，请注意语义正确性: "${condition}"`);
+      }
       if (isNaN(rightNum)) {
         console.log(`[WF-COND-WARN] 右值 "${rightPart}" 非数字，数值比较无效，按 safeMode=${safeMode} 处理: "${condition}"`);
         return safeMode;
       }
       if (isNaN(leftNum)) {
-        console.log(`[WF-COND-WARN] 左值 (${leftVal}) 非数字，数值比较无效，按 safeMode=${safeMode} 处理: "${condition}"`);
+        console.log(`[WF-COND-WARN] 左值 (${leftVal}, type=${typeof leftVal}) 非数字，数值比较无效，按 safeMode=${safeMode} 处理: "${condition}"`);
         return safeMode;
       }
-      console.log(`[WF-COND-EVAL] ${leftPart}=${leftNum} ${op} ${rightNum} → ${evalNum(leftNum, op, rightNum)}`);
-      return evalNum(leftNum, op, rightNum);
+      const r = evalNum(leftNum, op, rightNum);
+      console.log(`[WF-COND-EVAL] 数值 ${leftPart}=${leftNum} (orig=${JSON.stringify(leftVal)}) ${op} ${rightNum} (orig="${rightPart}") → ${r}`);
+      return r;
     }
 
-    // 字符串比较
+    // [边界+日志#6] == / != 字符串/布尔 智能比较（布尔 vs "true"/"false"/1/0 做等值映射）
+    const leftType = typeof leftVal;
+    let leftForEq;
+    let rightForEq = rightPart;
+    if (leftType === 'boolean') {
+      leftForEq = leftVal;
+      // 把常见字符串右值 → 布尔：1/0, true/false, yes/no
+      const rl = rightPart.toLowerCase();
+      const map = { '1': true, '0': false, 'true': true, 'false': false, 'yes': true, 'no': false, 'on': true, 'off': false, '': false };
+      if (Object.prototype.hasOwnProperty.call(map, rl)) {
+        rightForEq = map[rl];
+      } else if (!isNaN(Number(rightPart))) {
+        rightForEq = Boolean(Number(rightPart));
+      }
+      const r = op === '==' ? (leftForEq === rightForEq) : (leftForEq !== rightForEq);
+      console.log(`[WF-COND-EVAL] BOOL比较 ${leftPart}=${leftVal}(bool) ${op} "${rightPart}"→映射→${rightForEq}(type=${typeof rightForEq}) → ${r}  | 条件="${condition}"`);
+      return r;
+    }
+    // 默认字符串比较（左值转字符串）
     const leftStr = String(leftVal);
     const result = op === '==' ? leftStr === rightPart : leftStr !== rightPart;
-    console.log(`[WF-COND-EVAL] ${leftPart}="${leftStr}" ${op} "${rightPart}" → ${result}`);
+    console.log(`[WF-COND-EVAL] 字符串比较 ${leftPart}=${JSON.stringify(leftStr)} (origType=${leftType}) ${op} ${JSON.stringify(rightPart)} → ${result}`);
     return result;
   } catch (e) {
     console.log(`[WF-COND-ERROR] 条件表达式异常，按 safeMode=${safeMode} 处理`, {
-      condition,
+      condition: raw,
+      normalized: condition,
       error: e.message,
+      stack: e.stack && e.stack.split('\n').slice(0, 3).join(' | '),
     });
     return safeMode;
   }
