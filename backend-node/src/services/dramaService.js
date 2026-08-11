@@ -880,7 +880,8 @@ const S9_VALID_CAMERA_PRESETS = new Set([
  * @returns {object} { view_mode, camera_3d, camera_preset, nodes_3d } 规范化后的 3D 字段
  */
 function validate3DFields(layout) {
-  const result = { view_mode: null, camera_3d: null, camera_preset: null, nodes_3d: null };
+  const result = { view_mode: null, camera_3d: null, camera_preset: null, nodes_3d: null,
+                   character_stage: null, scene_depth: null, timeline_3d: null };
 
   // view_mode 校验
   if (layout.view_mode != null) {
@@ -942,6 +943,36 @@ function validate3DFields(layout) {
     result.nodes_3d = layout.nodes_3d;
   }
 
+  // S10-T04: character_stage 校验（可选）
+  if (layout.character_stage != null) {
+    if (typeof layout.character_stage !== 'object' || Array.isArray(layout.character_stage)) {
+      const err = new Error('character_stage 必须为对象');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.character_stage = layout.character_stage;
+  }
+
+  // S10-T05: scene_depth 校验（可选）
+  if (layout.scene_depth != null) {
+    if (typeof layout.scene_depth !== 'object' || Array.isArray(layout.scene_depth)) {
+      const err = new Error('scene_depth 必须为对象');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.scene_depth = layout.scene_depth;
+  }
+
+  // S10-T06: timeline_3d 校验（可选）
+  if (layout.timeline_3d != null) {
+    if (typeof layout.timeline_3d !== 'object' || Array.isArray(layout.timeline_3d)) {
+      const err = new Error('timeline_3d 必须为对象');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.timeline_3d = layout.timeline_3d;
+  }
+
   return result;
 }
 
@@ -964,23 +995,32 @@ function sync3DFieldsToTable(db, dramaId, layout, log) {
   const nodesJson = layout.nodes ? JSON.stringify(layout.nodes) : null;
   const zoneCollapsedJson = layout.zone_collapsed ? JSON.stringify(layout.zone_collapsed) : null;
   const metaJson = layout.meta ? JSON.stringify(layout.meta) : null;
+  // S10-T04/T05/T06: 新增 JSON 字段
+  const characterStageJson = layout.character_stage ? JSON.stringify(layout.character_stage) : null;
+  const sceneDepthJson = layout.scene_depth ? JSON.stringify(layout.scene_depth) : null;
+  const timeline3DJson = layout.timeline_3d ? JSON.stringify(layout.timeline_3d) : null;
 
   try {
     // 先尝试 UPDATE（兼容 SQLite 和 MySQL）
     const updateResult = db.prepare(`
       UPDATE canvas_layouts
       SET viewport = ?, nodes = ?, zone_collapsed = ?, view_mode = ?,
-          camera_3d = ?, camera_preset = ?, meta = ?, updated_at = CURRENT_TIMESTAMP
+          camera_3d = ?, camera_preset = ?, meta = ?,
+          character_stage = ?, scene_depth = ?, timeline_3d = ?,
+          updated_at = CURRENT_TIMESTAMP
       WHERE drama_id = ?
-    `).run(viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson, dramaId);
+    `).run(viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson,
+          characterStageJson, sceneDepthJson, timeline3DJson, dramaId);
 
     // 如果没有命中行，执行 INSERT
     if (updateResult.changes === 0) {
       db.prepare(`
         INSERT INTO canvas_layouts
-          (drama_id, viewport, nodes, zone_collapsed, view_mode, camera_3d, camera_preset, meta, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(dramaId, viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson);
+          (drama_id, viewport, nodes, zone_collapsed, view_mode, camera_3d, camera_preset, meta,
+           character_stage, scene_depth, timeline_3d, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(dramaId, viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson,
+            characterStageJson, sceneDepthJson, timeline3DJson);
     }
   } catch (err) {
     // canvas_layouts 表写入失败不阻塞主流程（metadata JSON 是主存储）

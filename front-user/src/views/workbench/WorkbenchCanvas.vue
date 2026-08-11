@@ -183,6 +183,9 @@
         @node-drag="on3DNodeDrag"
         @position-change="on3DPositionChange"
         @camera-change="on3DCameraChange"
+        @arrange-characters="onArrangeCharacters"
+        @toggle-scene-depth="onToggleSceneDepth"
+        @toggle-timeline-3d="onToggleTimeline3D"
       />
 
       <!-- S6-T03 画布标注层（SVG overlay，标注模式下捕获鼠标） -->
@@ -1040,6 +1043,72 @@ function on3DCameraChange(cameraState) {
   camera3DState.value = cameraState
   savedCameraPreset.value = cameraState?.preset || 'free'
   log.debug('[3D] 摄像机状态变更', { preset: cameraState?.preset })
+}
+
+/**
+ * S10-T04: 角色站位编排 — 从 rawNodes 中提取角色节点并调用 3D 组件的站位方法
+ */
+function onArrangeCharacters(pattern) {
+  if (!director3DRef.value) {
+    log.warn('[3D] arrangeCharacters 失败: director3DRef 不存在')
+    return
+  }
+  // 从 rawNodes 中筛选出类型为 character 的节点
+  const characterNodes = rawNodes.value
+    .filter(n => n.type === 'character')
+    .map(n => ({ nodeId: n.id, data: n.data }))
+  log.info('[3D] 角色站位编排', { pattern, characterCount: characterNodes.length, characters: characterNodes.map(c => c.nodeId) })
+  if (characterNodes.length === 0) {
+    log.warn('[3D] 角色站位编排: 没有找到角色节点')
+    return
+  }
+  const positions = director3DRef.value.arrangeCharacters(characterNodes, pattern)
+  log.info('[3D] 角色站位编排完成', { positionsCount: positions?.length ?? 0 })
+  layoutDirty.value = true
+  scheduleLayoutSave()
+}
+
+/**
+ * S10-T05: 场景深度预览开关 — 收集场景节点信息并调用 3D 组件方法
+ */
+function onToggleSceneDepthPreview(enabled) {
+  if (!director3DRef.value) {
+    log.warn('[3D] toggleSceneDepthPreview 失败: director3DRef 不存在')
+    return
+  }
+  log.info('[3D] 场景深度预览切换', { enabled })
+  const state = director3DRef.value.toggleSceneDepthPreview(enabled)
+  // 如果启用，添加当前所有场景节点到深度预览中
+  if (state) {
+    const sceneNodes = rawNodes.value.filter(n => n.type === 'scene')
+    log.info('[3D] 加载场景到深度预览', { sceneCount: sceneNodes.length })
+    // 注意: 实际上需要根据 drama 的场景数据构造 sceneData 列表传入
+    // 这里先调用 toggle，后续的 addScenePlane 需要通过额外逻辑调用
+  }
+  layoutDirty.value = true
+  scheduleLayoutSave()
+}
+
+/**
+ * S10-T06: 时间轴3D化开关 — 收集分镜节点并调用 3D 组件方法
+ */
+function onToggleTimeline3D(enabled) {
+  if (!director3DRef.value) {
+    log.warn('[3D] toggleTimeline3D 失败: director3DRef 不存在')
+    return
+  }
+  // 从 rawNodes 中筛选出类型为 storyboard 的节点
+  const storyboardNodes = rawNodes.value
+    .filter(n => n.type === 'storyboard')
+    .map(n => ({
+      nodeId: n.id,
+      storyboard_number: n.data?.storyboard_number,
+      layer: n.data?.layer || 'main',
+    }))
+  log.info('[3D] 时间轴3D化切换', { enabled, storyboardCount: storyboardNodes.length })
+  director3DRef.value.toggleTimeline3D(enabled, storyboardNodes)
+  layoutDirty.value = true
+  scheduleLayoutSave()
 }
 
 /* ===================== 布局保存 ===================== */

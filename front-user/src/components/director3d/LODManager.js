@@ -14,10 +14,14 @@
  *
  * 此外，无论距离如何，不在摄像机视锥体内的节点直接降级为 HIDDEN。
  *
+ * S10-T02 增强：视口剔除使用 Frustum.intersectsSphere（包围球检测），
+ * 替代 Sprint 9 的 containsPoint（点检测），避免节点在屏幕边缘闪现/消失。
+ * 每个节点维护一个 BoundingSphere，半径按节点类型配置，覆盖平面最大边长。
+ *
  * 性能优化：
  * - LOD 评估每 100ms 执行一次（而非每帧），通过 requestAnimationFrame 节流
  * - 距离计算使用平方距离（避免开方运算）
- * - 视锥体剔除使用 Three.js Frustum.intersectsObject
+ * - 视锥体剔除使用 Three.js Frustum.intersectsSphere（S10-T02 增强）
  * - 同一 LOD 级别的节点不重复更新（避免不必要的材质切换）
  */
 
@@ -51,6 +55,18 @@ const TYPE_COLORS = {
 
 // 默认颜色
 const DEFAULT_COLOR = 0x6b7280
+
+// S10-T02: 节点类型对应的包围球半径（覆盖平面最大边长的一半 + 余量）
+const NODE_BOUNDING_RADIUS = {
+  storyboard: 2.5,   // 4×2.25 → max=4, radius≈2.5
+  character: 2.0,    // 2.25×3 → max=3, radius≈2.0
+  scene: 3.5,        // 6×3.375 → max=6, radius≈3.5
+  prop: 1.2,         // 1.5×1.5 → max=1.5, radius≈1.2
+  script: 1.5,       // 2×2 → max=2, radius≈1.5
+  episode: 2.8,      // 5×1.25 → max=5, radius≈2.8
+  canvasLabel: 1.0,  // 1.5×0.6 → max=1.5, radius≈1.0
+}
+const DEFAULT_BOUNDING_RADIUS = 2.0
 
 export class LODManager {
   /**
@@ -108,6 +124,11 @@ export class LODManager {
       cachedPosition: new THREE.Vector3(),
       // 标记位置是否需要更新缓存
       positionDirty: true,
+      // S10-T02: 包围球（用于精确视锥体剔除）
+      boundingSphere: new THREE.Sphere(
+        new THREE.Vector3(),
+        NODE_BOUNDING_RADIUS[nodeType] ?? DEFAULT_BOUNDING_RADIUS
+      ),
     }
 
     // 初始应用 HIGH 级别
@@ -181,10 +202,14 @@ export class LODManager {
 
       const pos = entry.cachedPosition
 
-      // Step 1: 视锥体剔除 — 不在视锥体内的节点直接隐藏
-      if (!this._frustum.containsPoint(pos)) {
-        // 视锥体外，但需要检查是否完全在后面
-        // 使用球体检测更准确
+      // S10-T02: 同步包围球中心到节点位置
+      entry.boundingSphere.center.copy(pos)
+
+      // Step 1: 视锥体剔除 — 使用包围球检测（比 containsPoint 更精确）
+      // 包围球与视锥体相交 → 至少部分在屏幕内 → 保持渲染
+      // 包围球完全在视锥体外 → 降级处理
+      if (!this._frustum.intersectsSphere(entry.boundingSphere)) {
+        // 视锥体外，距离很远则直接隐藏
         const distToCamera = pos.distanceToSquared(cameraPos)
         if (distToCamera > LOD_DIST_SQ.LOW_TO_HIDDEN) {
           this._setLOD(entry, LOD_LEVEL.HIDDEN)

@@ -299,6 +299,19 @@ export function merge3DFieldsIntoPayload(payload, layout3D) {
     merged.nodes_3d = { ...(merged.nodes_3d || {}), ...layout3D.nodes_3d }
   }
 
+  // S10-T04: 合并角色站位编排数据
+  if (layout3D.character_stage && typeof layout3D.character_stage === 'object') {
+    merged.character_stage = layout3D.character_stage
+  }
+  // S10-T05: 合并场景深度预览数据
+  if (layout3D.scene_depth && typeof layout3D.scene_depth === 'object') {
+    merged.scene_depth = layout3D.scene_depth
+  }
+  // S10-T06: 合并3D时间轴数据
+  if (layout3D.timeline_3d && typeof layout3D.timeline_3d === 'object') {
+    merged.timeline_3d = layout3D.timeline_3d
+  }
+
   return merged
 }
 

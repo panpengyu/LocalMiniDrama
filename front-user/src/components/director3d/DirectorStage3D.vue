@@ -82,6 +82,27 @@
           切换到2D画布
         </button>
       </div>
+
+      <!-- S10-T04/T05/T06: 站位/深度/时间轴 -->
+      <div class="toolbar-group">
+        <el-dropdown trigger="click" @command="(cmd) => $emit('arrange-characters', cmd)">
+          <button class="movement-btn">角色站位</button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="line">一字排开</el-dropdown-item>
+              <el-dropdown-item command="arc">弧形站位</el-dropdown-item>
+              <el-dropdown-item command="circle">环形站位</el-dropdown-item>
+              <el-dropdown-item command="facing">面对面</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-tooltip content="场景深度预览" placement="bottom">
+          <button class="preset-btn" :class="{ active: sceneDepthEnabled }" @click="$emit('toggle-scene-depth', !sceneDepthEnabled)">深度</button>
+        </el-tooltip>
+        <el-tooltip content="3D时间轴" placement="bottom">
+          <button class="preset-btn" :class="{ active: timeline3DEnabled }" @click="$emit('toggle-timeline-3d', !timeline3DEnabled)">时间轴</button>
+        </el-tooltip>
+      </div>
     </div>
 
     <!-- 底部状态栏 -->
@@ -100,6 +121,10 @@ import ViewSyncManager from './ViewSyncManager.js'
 import LODManager from './LODManager.js'
 import Node3DFactory from './Node3DFactory.js'
 import CameraController, { CAMERA_PRESETS } from './CameraController.js'
+// S10-T04/T05/T06: 新增模块
+import CharacterStageManager, { STAGE_PATTERNS } from './CharacterStageManager.js'
+import SceneDepthPreview from './SceneDepthPreview.js'
+import Timeline3DLayout from './Timeline3DLayout.js'
 
 // ===========================================================================
 // Props & Emits
@@ -121,9 +146,14 @@ const props = defineProps({
 const emit = defineEmits([
   'node-click',      // 3D节点点击事件
   'node-drag',       // 3D节点拖拽事件 (nodeId, position3D)
+  'node-dblclick',   // S10-T03: 节点双击事件（进入2D精编）
   'view-change',     // 视图模式切换
   'position-change', // 节点位置变更 (需要同步回2D)
   'camera-change',   // 摄像机状态变更
+  // S10-T04/T05/T06: 新增事件
+  'arrange-characters',   // 角色站位编排请求
+  'toggle-scene-depth',   // 场景深度预览开关
+  'toggle-timeline-3d',   // 3D时间轴开关
 ])
 
 // ===========================================================================
@@ -136,6 +166,9 @@ const movementActive = ref(false)
 const nodeCount = ref(0)
 const fps = ref(60)
 const lodStats = ref({ high: 0, medium: 0, low: 0, hidden: 0 })
+// S10-T05/T06: 功能开关状态
+const sceneDepthEnabled = ref(false)
+const timeline3DEnabled = ref(false)
 
 // ===========================================================================
 // Three.js 核心对象（非响应式）
@@ -152,6 +185,10 @@ let viewSyncManager = null
 let lodManager = null
 let nodeFactory = null
 let cameraController = null
+// S10-T04/T05/T06: 新增管理器
+let characterStageManager = null
+let sceneDepthPreview = null
+let timeline3DLayout = null
 
 // 性能监控
 let frameCount = 0
@@ -164,6 +201,14 @@ let dragPlane = new THREE.Plane()
 let dragOffset = new THREE.Vector3()
 let raycaster = new THREE.Raycaster()
 let mouse = new THREE.Vector2()
+
+// S10-T03: 选中状态 + 轴约束拖拽
+let selectedNode = null           // 当前选中的节点 Group
+let selectedOutline = null         // 选中高亮边框 LineSegments
+let dragAxis = null               // 拖拽轴约束: 'x' | 'y' | 'z' | null (null=自由拖拽)
+let pointerDownTime = 0           // 按下时间戳（用于区分点击/双击）
+let lastClickTime = 0             // 上次点击时间
+const DOUBLE_CLICK_MS = 350       // 双击间隔阈值
 
 // ===========================================================================
 // 初始化
@@ -355,6 +400,25 @@ function initManagers() {
   if (viewSyncManager) {
     viewSyncManager.validateAgainstDrama(props.drama)
   }
+
+  // S10-T04: 角色站位编排管理器
+  characterStageManager = new CharacterStageManager({
+    scene,
+    nodeMap: viewSyncManager.nodeMap,
+  })
+
+  // S10-T05: 场景深度预览管理器
+  sceneDepthPreview = new SceneDepthPreview({
+    scene,
+    camera,
+    textureLoader: new THREE.TextureLoader(),
+  })
+
+  // S10-T06: 时间轴3D化管理器
+  timeline3DLayout = new Timeline3DLayout({
+    scene,
+    nodeMap: viewSyncManager.nodeMap,
+  })
 }
 
 // ===========================================================================
@@ -384,6 +448,7 @@ function onPointerDown(event) {
   if (!props.visible) return
 
   updateMousePosition(event)
+  pointerDownTime = performance.now()
 
   // 射线检测
   raycaster.setFromCamera(mouse, camera)
@@ -411,6 +476,9 @@ function onPointerDown(event) {
     if (target?.userData?.nodeId) {
       dragTarget = target
 
+      // S10-T03: 选中高亮
+      selectNode(target)
+
       // 设置拖拽平面（垂直于摄像机方向，经过节点位置）
       const cameraDirection = new THREE.Vector3()
       camera.getWorldDirection(cameraDirection)
@@ -424,12 +492,25 @@ function onPointerDown(event) {
       // 禁用 OrbitControls（拖拽节点时不旋转视角）
       cameraController.controls.enabled = false
 
+      // S10-T03: 双击检测 — 进入2D精编模式
+      const now = performance.now()
+      if (now - lastClickTime < DOUBLE_CLICK_MS) {
+        console.log(`[DIR-3D] 双击节点 → 请求进入2D精编`, { nodeId: target.userData.nodeId })
+        emit('node-dblclick', { nodeId: target.userData.nodeId })
+        lastClickTime = 0
+      } else {
+        lastClickTime = now
+      }
+
       console.log(`[DIR-3D] onPointerDown node=${target.userData.nodeId}`, {
         hitPoint: `(${intersectPoint.x.toFixed(1)},${intersectPoint.y.toFixed(1)},${intersectPoint.z.toFixed(1)})`,
       })
 
       emit('node-click', { nodeId: target.userData.nodeId })
     }
+  } else {
+    // S10-T03: 点击空白处取消选中
+    clearSelection()
   }
 }
 
@@ -445,12 +526,25 @@ function onPointerMove(event) {
   // 应用偏移
   intersectPoint.sub(dragOffset)
 
-  // 更新3D位置
-  const nodeId = dragTarget.userData.nodeId
-  const newPosition = {
-    x: intersectPoint.x,
-    y: intersectPoint.y,
-    z: intersectPoint.z,
+  // S10-T03: 轴约束拖拽 — 只移动选定轴的分量
+  const originalPos = dragTarget.position
+  let newPosition
+  if (dragAxis === 'x') {
+    newPosition = { x: intersectPoint.x, y: originalPos.y, z: originalPos.z }
+  } else if (dragAxis === 'y') {
+    newPosition = { x: originalPos.x, y: intersectPoint.y, z: originalPos.z }
+  } else if (dragAxis === 'z') {
+    newPosition = { x: originalPos.x, y: originalPos.y, z: intersectPoint.z }
+  } else {
+    // 自由拖拽（无轴约束）
+    newPosition = { x: intersectPoint.x, y: intersectPoint.y, z: intersectPoint.z }
+  }
+
+  // 从 dragTarget 获取 nodeId（修复：之前使用了未定义变量 nodeId）
+  const nodeId = dragTarget.userData?.nodeId
+  if (!nodeId) {
+    console.warn(`[DIR-3D] onPointerMove - dragTarget has no nodeId in userData`, { userData: dragTarget.userData })
+    return
   }
 
   // 通知 ViewSyncManager（3D→2D同步）
@@ -468,11 +562,64 @@ function onPointerUp() {
     // 恢复 OrbitControls
     cameraController.controls.enabled = true
     dragTarget = null
+    dragAxis = null
   }
+}
+
+// S10-T03: 选中节点高亮
+function selectNode(target) {
+  // 先清除之前选中
+  clearSelection()
+
+  selectedNode = target
+
+  // 创建高亮边框（比节点稍大的线框）
+  const config = target.userData
+  const nodeType = config.nodeType
+  const sizeMap = { storyboard: 4.5, character: 3, scene: 6.5, prop: 2, script: 2.5, episode: 5.5, canvasLabel: 1.8 }
+  const w = (sizeMap[nodeType] || 2.5) / 2 + 0.3
+  const h = w * 0.6 + 0.3
+
+  const points = [
+    new THREE.Vector3(-w, -h, 0.1), new THREE.Vector3(w, -h, 0.1),
+    new THREE.Vector3(w, -h, 0.1),  new THREE.Vector3(w, h, 0.1),
+    new THREE.Vector3(w, h, 0.1),   new THREE.Vector3(-w, h, 0.1),
+    new THREE.Vector3(-w, h, 0.1),  new THREE.Vector3(-w, -h, 0.1),
+  ]
+  const geo = new THREE.BufferGeometry().setFromPoints(points)
+  const mat = new THREE.LineBasicMaterial({ color: 0x00ff88, linewidth: 2, transparent: true, opacity: 0.9 })
+  selectedOutline = new THREE.LineSegments(geo, mat)
+  selectedOutline.name = 'selection_outline'
+  target.add(selectedOutline)
+
+  console.log(`[DIR-3D] selectNode`, { nodeId: target.userData.nodeId, nodeType })
+}
+
+// S10-T03: 取消选中
+function clearSelection() {
+  if (selectedOutline && selectedOutline.parent) {
+    selectedOutline.parent.remove(selectedOutline)
+    selectedOutline.geometry.dispose()
+    selectedOutline.material.dispose()
+  }
+  selectedOutline = null
+  selectedNode = null
+}
+
+// S10-T03: 设置拖拽轴约束
+function setDragAxis(axis) {
+  dragAxis = axis
+  console.log(`[DIR-3D] setDragAxis`, { axis })
 }
 
 function onKeyDown(event) {
   if (!props.visible) return
+
+  // S10-T03: 轴约束拖拽快捷键（仅在选中节点并拖拽时生效）
+  if (event.key === 'x' || event.key === 'X') { setDragAxis('x'); return }
+  if (event.key === 'y' || event.key === 'Y') { setDragAxis('y'); return }
+  if (event.key === 'z' || event.key === 'Z') { setDragAxis('z'); return }
+  if (event.key === 'Escape') { clearSelection(); setDragAxis(null); return }
 
   // 数字键切换机位
   switch (event.key) {
@@ -623,10 +770,67 @@ function focusOnNode(nodeId) {
  * 获取3D布局数据（用于持久化）
  */
 function get3DLayout() {
-  return {
+  const layout = {
     ...viewSyncManager.serialize3DLayout(),
     camera_3d: cameraController.getState(),
     view_mode: '3d',
+  }
+  // S10-T04: 合并角色站位编排数据
+  if (characterStageManager) {
+    layout.character_stage = characterStageManager.serialize()
+  }
+  // S10-T05: 合并场景深度预览数据
+  if (sceneDepthPreview) {
+    layout.scene_depth = sceneDepthPreview.serialize()
+  }
+  // S10-T06: 合并时间轴3D数据
+  if (timeline3DLayout) {
+    layout.timeline_3d = timeline3DLayout.serialize()
+  }
+  return layout
+}
+
+/**
+ * S10-T04: 角色站位编排
+ * @param {Array} characters - 角色节点列表 [{ nodeId, data }]
+ * @param {String} pattern - 站位模式 (line/arc/circle/facing)
+ * @param {Object} options - 排列参数
+ */
+function arrangeCharacters(characters, pattern = STAGE_PATTERNS.LINE, options = {}) {
+  if (!characterStageManager) return
+  console.log(`[DIR-3D] arrangeCharacters`, { count: characters.length, pattern })
+  const positions = characterStageManager.arrange(characters, pattern, options)
+  // 标记 LOD 位置脏
+  for (const pos of positions) {
+    lodManager.markPositionDirty(pos.nodeId)
+  }
+  return positions
+}
+
+/**
+ * S10-T05: 场景深度预览开关
+ */
+function toggleSceneDepthPreview(enabled) {
+  if (!sceneDepthPreview) return
+  const state = sceneDepthPreview.toggle(enabled)
+  console.log(`[DIR-3D] toggleSceneDepthPreview`, { enabled: state })
+  return state
+}
+
+/**
+ * S10-T06: 时间轴3D化开关
+ * @param {Boolean} enabled
+ * @param {Array} storyboards - 分镜节点列表 [{ nodeId, storyboard_number, layer }]
+ */
+function toggleTimeline3D(enabled, storyboards = []) {
+  if (!timeline3DLayout) return
+  console.log(`[DIR-3D] toggleTimeline3D`, { enabled, storyboardCount: storyboards.length })
+  timeline3DLayout.toggle(enabled, storyboards)
+  // 标记所有节点位置脏
+  for (const entry of viewSyncManager.nodeMap.values()) {
+    if (entry.mesh) {
+      lodManager.markPositionDirty(entry.nodeId || entry.mesh.userData?.nodeId)
+    }
   }
 }
 
@@ -635,6 +839,7 @@ function get3DLayout() {
  */
 function destroy() {
   stopAnimationLoop()
+  clearSelection()
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('resize', onResize)
 
@@ -647,6 +852,10 @@ function destroy() {
   viewSyncManager?.destroy()
   lodManager?.destroy()
   cameraController?.destroy()
+  // S10-T04/T05/T06: 销毁新模块
+  characterStageManager?.destroy()
+  sceneDepthPreview?.destroy()
+  timeline3DLayout?.destroy()
 
   if (renderer) {
     renderer.dispose()
@@ -714,6 +923,15 @@ defineExpose({
   get3DLayout,
   startCameraMovement,
   stopCameraMovement,
+  // S10-T03: 选中/轴约束
+  clearSelection,
+  setDragAxis,
+  // S10-T04: 角色站位编排
+  arrangeCharacters,
+  // S10-T05: 场景深度预览
+  toggleSceneDepthPreview,
+  // S10-T06: 时间轴3D化
+  toggleTimeline3D,
 })
 </script>
 

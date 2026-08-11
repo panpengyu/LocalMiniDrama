@@ -152,7 +152,7 @@ describe('A. validate3DFields 3D字段校验', () => {
 function _createCanvasLayoutsTestDb() {
   const db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
-  // 模拟 canvas_layouts 表结构（与 MySQL migration 42 一致）
+  // 模拟 canvas_layouts 表结构（与 MySQL migration 42 + 43 一致）
   db.exec(`
     CREATE TABLE canvas_layouts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +163,9 @@ function _createCanvasLayoutsTestDb() {
       view_mode TEXT NOT NULL DEFAULT '2d',
       camera_3d TEXT,
       camera_preset TEXT,
+      character_stage TEXT,
+      scene_depth TEXT,
+      timeline_3d TEXT,
       meta TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -284,6 +287,9 @@ function _createDramaTestDb() {
       view_mode TEXT NOT NULL DEFAULT '2d',
       camera_3d TEXT,
       camera_preset TEXT,
+      character_stage TEXT,
+      scene_depth TEXT,
+      timeline_3d TEXT,
       meta TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
