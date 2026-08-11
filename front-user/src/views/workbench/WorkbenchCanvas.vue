@@ -107,6 +107,20 @@
           视图: {{ viewModeTag(zoomModes.viewMode.value).label }}
         </el-tag>
         <span v-if="zoomModes" class="wct-zoom">{{ Math.round(zoomModes.zoomRatio.value * 100) }}%</span>
+
+        <el-divider direction="vertical" />
+
+        <!-- S9-T08: 2D/3D 视图切换 -->
+        <el-tooltip :content="viewMode === '2d' ? '切换到3D导演台' : '切换到2D画布'" placement="bottom">
+          <el-button
+            size="small"
+            :type="viewMode === '3d' ? 'primary' : ''"
+            @click="toggleViewMode"
+          >
+            <el-icon><Box /></el-icon>
+            {{ viewMode === '2d' ? '3D' : '2D' }}
+          </el-button>
+        </el-tooltip>
       </div>
     </div>
 
@@ -114,6 +128,7 @@
       <!-- S5-T05 分区背景层（在 VueFlow 外层，绝对定位 + 自己做 world->screen 变换） -->
       <CanvasZones
         v-if="rawNodes.length > 0 && canvasZones"
+        v-show="viewMode === '2d'"
         :zones="canvasZones.zones.value"
         :viewport="viewportForZones"
         :canvas-rect="canvasRect"
@@ -123,6 +138,7 @@
 
       <VueFlow
         v-if="rawNodes.length"
+        v-show="viewMode === '2d'"
         v-model:nodes="nodes"
         v-model:edges="edges"
         :node-types="nodeTypes"
@@ -153,9 +169,26 @@
         </Controls>
       </VueFlow>
 
+      <!-- S9-T08: 3D 导演台（2D/3D 视图切换，visible 由 viewMode 控制） -->
+      <DirectorStage3D
+        v-if="rawNodes.length > 0"
+        ref="director3DRef"
+        :nodes="rawNodes"
+        :visible="viewMode === '3d'"
+        :camera-state="camera3DState"
+        :layout3d="savedLayout"
+        :drama="drama"
+        @view-change="on3DViewChange"
+        @node-click="on3DNodeClick"
+        @node-drag="on3DNodeDrag"
+        @position-change="on3DPositionChange"
+        @camera-change="on3DCameraChange"
+      />
+
       <!-- S6-T03 画布标注层（SVG overlay，标注模式下捕获鼠标） -->
       <CanvasAnnotations
         v-if="rawNodes.length > 0"
+        v-show="viewMode === '2d'"
         :drama-id="dramaId"
         :viewport="currentViewport"
         :canvas-rect="canvasRect"
@@ -170,6 +203,7 @@
       <!-- S5-T04 自定义小地图（Canvas2D + 视口框 + 点击跳转） -->
       <CanvasMinimap
         v-if="rawNodes.length > 0"
+        v-show="viewMode === '2d'"
         :nodes="rawNodes"
         :viewport="currentViewport"
         :canvas-rect="canvasRect"
@@ -215,7 +249,7 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } f
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { ZoomIn, ZoomOut, FullScreen, Grid, CollectionTag, EditPen, Delete } from '@element-plus/icons-vue'
+import { ZoomIn, ZoomOut, FullScreen, Grid, CollectionTag, EditPen, Delete, Box } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import '@vue-flow/core/dist/style.css'
@@ -234,10 +268,19 @@ import {
   parseCanvasLayout,
   resolveViewport,
   resolveZoneCollapsed,
+  resolveViewMode,
+  resolveCamera3D,
+  resolveCameraPreset,
+  merge3DFieldsIntoPayload,
+  VIEW_MODE,
 } from '@/utils/canvasLayout'
 import { storyboardIdFromNodeId } from '@/utils/canvasWorkflow'
+import { unwrapDramaResponse, estimateNodeCount } from '@/utils/dramaData'
 import { useCanvasStoryboardMedia } from '@/composables/useCanvasStoryboardMedia'
 import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
+
+// S9-T08: 3D 导演台组件
+import DirectorStage3D from '@/components/director3d/DirectorStage3D.vue'
 
 import CanvasLabelNode from '@/components/dramaCanvas/CanvasLabelNode.vue'
 import CanvasDramaHeaderNode from '@/components/dramaCanvas/CanvasDramaHeaderNode.vue'
@@ -288,6 +331,12 @@ const canvasRect = ref({ w: 0, h: 0 })
 const selectedStoryboardIds = ref([])
 const selectedIdsSet = computed(() => new Set(selectedStoryboardIds.value.map(String)))
 const { imagesBySbId, videosBySbId, loadForDrama } = useCanvasStoryboardMedia()
+
+// S9-T08: 2D/3D 视图模式切换
+const viewMode = ref(VIEW_MODE.MODE_2D) // '2d' | '3d'
+const director3DRef = ref(null) // DirectorStage3D 组件实例引用
+const camera3DState = ref(null) // 保存的3D摄像机状态
+const savedCameraPreset = ref('free') // 保存的预设机位
 
 const nodeTypes = {
   canvasLabel: markRaw(CanvasLabelNode),
@@ -343,6 +392,22 @@ function initSprint5() {
   }
   // S6-T03：加载画布标注
   loadAnnotations()
+
+  // S9-T08: 从 savedLayout 恢复 3D 视图状态（不自动切换到3D，仅恢复摄像机状态供下次使用）
+  const layout = savedLayout.value
+  if (layout) {
+    const cam3D = resolveCamera3D(layout)
+    if (cam3D) {
+      camera3DState.value = cam3D
+      savedCameraPreset.value = resolveCameraPreset(layout, cam3D.preset || 'free')
+    }
+    // 恢复视图模式（默认2D，仅当明确保存为3D时恢复）
+    const savedViewMode = resolveViewMode(layout, VIEW_MODE.MODE_2D)
+    if (savedViewMode === VIEW_MODE.MODE_3D) {
+      viewMode.value = VIEW_MODE.MODE_3D
+      log.info('[ViewMode] 从已保存布局恢复3D视图模式', { dramaId: Number(props.dramaId) })
+    }
+  }
 }
 
 const viewportForZones = computed(() => currentViewport.value)
@@ -377,16 +442,15 @@ async function loadDrama(force = false) {
       loading.value = true
       log.info('开始加载项目数据', { dramaId: Number(props.dramaId), force: !!force })
       const res = await dramaAPI.get(props.dramaId)
-      drama.value = res?.data || null
-      const nodeCount = drama.value?.characters?.length + (drama.value?.scenes?.length || 0)
-        + (drama.value?.props?.length || 0)
-        + (drama.value?.episodes || []).reduce((s, e) => s + (e.storyboards || []).length, 0)
+      drama.value = unwrapDramaResponse(res)
+      const nodeCount = estimateNodeCount(drama.value)
       log.info('项目数据 HTTP 返回成功', {
         dramaId: Number(props.dramaId),
         title: drama.value?.title || '',
         episodes: (drama.value?.episodes || []).length,
         characters: (drama.value?.characters || []).length,
-        scenes: (drama.value?.scenes?.length || 0),
+        scenes: (drama.value?.scenes || []).length,
+        props: (drama.value?.props || []).length,
         estNodeCount: nodeCount,
       })
       layoutCache.value = parseCanvasLayout(drama.value?.metadata)
@@ -891,6 +955,93 @@ function onAnnotationClose() {
   annotationActive.value = false
 }
 
+/* ===================== S9-T08: 2D/3D 视图切换 ===================== */
+
+/**
+ * 切换 2D / 3D 视图模式
+ * 切换前保存当前视图状态，切换后恢复目标视图状态
+ */
+function toggleViewMode() {
+  if (viewMode.value === VIEW_MODE.MODE_2D) {
+    // 2D → 3D：切换前先保存2D布局
+    scheduleLayoutSave(true)
+    viewMode.value = VIEW_MODE.MODE_3D
+    log.info('[ViewMode] 切换到3D导演台', { dramaId: Number(props.dramaId) })
+  } else {
+    // 3D → 2D：切换前先保存3D摄像机状态
+    save3DStateBeforeSwitch()
+    viewMode.value = VIEW_MODE.MODE_2D
+    log.info('[ViewMode] 切换到2D画布', { dramaId: Number(props.dramaId) })
+    // 切换回2D后触发一次布局保存（包含3D字段）
+    nextTick(() => scheduleLayoutSave(true))
+  }
+}
+
+/**
+ * 在切换回2D前保存3D摄像机状态和节点位置
+ */
+function save3DStateBeforeSwitch() {
+  if (director3DRef.value) {
+    const layout3D = director3DRef.value.get3DLayout()
+    if (layout3D) {
+      camera3DState.value = layout3D.camera_3d || null
+      savedCameraPreset.value = layout3D.camera_preset || 'free'
+    }
+  }
+}
+
+/**
+ * 3D组件请求切换回2D视图（点击"切换到2D画布"按钮）
+ */
+function on3DViewChange(mode) {
+  if (mode === '2d') {
+    toggleViewMode()
+  }
+}
+
+/**
+ * 3D节点点击 — 复用2D节点点击逻辑
+ */
+function on3DNodeClick({ nodeId }) {
+  log.debug('[3D] 节点点击', { nodeId })
+  // 转换为2D节点点击事件
+  const node = rawNodes.value.find(n => n.id === nodeId)
+  if (node) {
+    onNodeClick({ node })
+  }
+}
+
+/**
+ * 3D节点拖拽 — 位置变更需要同步回2D
+ */
+function on3DNodeDrag({ nodeId, position3D }) {
+  log.debug('[3D] 节点拖拽', { nodeId, x: position3D.x, y: position3D.y })
+}
+
+/**
+ * 3D节点位置变更（同步回2D画布）
+ * ViewSyncManager 通过此回调将3D拖拽位置反推为2D坐标
+ */
+function on3DPositionChange({ nodeId, x, y }) {
+  // 更新 rawNodes 中对应节点的2D位置
+  const node = rawNodes.value.find(n => n.id === nodeId)
+  if (node && node.position) {
+    node.position.x = x
+    node.position.y = y
+  }
+  // 标记布局为脏，触发防抖保存
+  layoutDirty.value = true
+}
+
+/**
+ * 3D摄像机状态变更（机位切换/运镜时触发）
+ */
+function on3DCameraChange(cameraState) {
+  camera3DState.value = cameraState
+  savedCameraPreset.value = cameraState?.preset || 'free'
+  log.debug('[3D] 摄像机状态变更', { preset: cameraState?.preset })
+}
+
 /* ===================== 布局保存 ===================== */
 let _lastScheduleAt = 0
 const layoutDirty = ref(false)
@@ -906,12 +1057,40 @@ async function flushLayoutSave() {
       savedLayout.value || drama.value?.metadata?.canvas_layout || null,
       { zoneCollapsed: zc, meta: (savedLayout.value?.meta || {}) }
     )
-    const nodeCount = payload?.nodes ? Object.keys(payload.nodes).length : 0
+
+    // S9-T07: 合并 3D 布局字段（view_mode / camera_3d / camera_preset / nodes_3d）
+    const existingLayout = savedLayout.value || drama.value?.metadata?.canvas_layout || null
+    const layout3D = {}
+    // 写入当前视图模式
+    layout3D.view_mode = viewMode.value
+    // 写入3D摄像机状态
+    if (camera3DState.value) {
+      layout3D.camera_3d = camera3DState.value
+      layout3D.camera_preset = camera3DState.value.preset || savedCameraPreset.value
+    } else if (savedCameraPreset.value && savedCameraPreset.value !== 'free') {
+      layout3D.camera_preset = savedCameraPreset.value
+    }
+    // 从 DirectorStage3D 获取3D节点位置
+    if (director3DRef.value && viewMode.value === VIEW_MODE.MODE_3D) {
+      const d3Layout = director3DRef.value.get3DLayout()
+      if (d3Layout?.nodes) {
+        layout3D.nodes_3d = d3Layout.nodes
+      }
+    } else if (existingLayout?.nodes_3d) {
+      // 保留已保存的3D节点位置
+      layout3D.nodes_3d = existingLayout.nodes_3d
+    }
+    const mergedPayload = merge3DFieldsIntoPayload(payload, layout3D)
+
+    const nodeCount = mergedPayload?.nodes ? Object.keys(mergedPayload.nodes).length : 0
+    const nodes3DCount = mergedPayload?.nodes_3d ? Object.keys(mergedPayload.nodes_3d).length : 0
     log.info('[LayoutSave] 开始保存画布布局到后端', {
-      dramaId: drama.value.id, nodes: nodeCount, hasViewport: !!payload?.viewport,
+      dramaId: drama.value.id, nodes: nodeCount, hasViewport: !!mergedPayload?.viewport,
+      viewMode: mergedPayload?.view_mode, cameraPreset: mergedPayload?.camera_preset,
+      nodes3D: nodes3DCount,
       debounceMs: Date.now() - _lastScheduleAt,
     })
-    await dramaAPI.saveCanvasLayout(drama.value.id, payload, undefined)
+    await dramaAPI.saveCanvasLayout(drama.value.id, mergedPayload, undefined)
     const ms = Date.now() - t0
     log.info('[LayoutSave] 画布布局保存成功', { dramaId: drama.value.id, nodes: nodeCount, totalMs: ms })
     layoutDirty.value = false
@@ -919,7 +1098,7 @@ async function flushLayoutSave() {
   } catch (e) {
     const ms = Date.now() - t0
     log.error('[LayoutSave] 画布布局保存失败（下次拖动将重新触发）', e, {
-      dramaId: Number(drama.value?.id), nodes: rawNodes.value.length, totalMs: ms,
+      dramaId: drama.value?.id ?? null, nodes: rawNodes.value.length, totalMs: ms,
     })
   }
 }
@@ -933,7 +1112,7 @@ function scheduleLayoutSave(immediate) {
     return
   }
   saveTimer = setTimeout(() => {
-    log.info('[LayoutSave] 防抖触发 flushLayoutSave', { dramaId: Number(drama.value?.id), debounceMs: Date.now() - _lastScheduleAt })
+    log.info('[LayoutSave] 防抖触发 flushLayoutSave', { dramaId: drama.value?.id ?? null, debounceMs: Date.now() - _lastScheduleAt })
     flushLayoutSave()
   }, 900)
 }
@@ -954,6 +1133,11 @@ defineExpose({
   canvasBookmarks: () => canvasBookmarks,
   annotations: () => annotations.value,
   toggleAnnotation,
+  // S9 扩展：2D/3D 视图切换
+  getViewMode: () => viewMode.value,
+  setViewMode: (m) => { if (m === '2d' || m === '3d') { viewMode.value = m } },
+  toggleViewMode,
+  getDirector3D: () => director3DRef.value,
 })
 
 onMounted(() => { loadDrama() })

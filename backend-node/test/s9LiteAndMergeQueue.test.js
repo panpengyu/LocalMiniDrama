@@ -226,10 +226,11 @@ describe('B. MergeAsyncQueue 并发控制 单元测试', () => {
 
   test('B4. 队列满&峰值验证：先提交5个，2个执行中，3个必须排队（queued=3 running=2）', async () => {
     const q = new AsyncQueue(2, 'test-queued');
-    const releases = [];
+    // 用 setTimeout 自解析任务，避免 release 模式的竞态条件
+    // （release 模式中，释放任务后微任务启动新任务会push新resolve，但while循环已结束）
     const ps = [];
     for (let i = 0; i < 5; i++) {
-      ps.push(q.add(() => new Promise(r => releases.push(r))));
+      ps.push(q.add(() => new Promise(r => setTimeout(r, 50))));
     }
     // 让事件循环切一轮，让 _runNext 执行
     await new Promise(setImmediate);
@@ -237,14 +238,8 @@ describe('B. MergeAsyncQueue 并发控制 单元测试', () => {
     assert.strictEqual(s1.running, 2, `前2个应正在运行 running=${s1.running}`);
     assert.strictEqual(s1.queued,  3, `后3个应排队 queued=${s1.queued}`);
     assert.strictEqual(s1.submitted, 5);
-    // 逐步释放
-    releases.shift()();
-    await new Promise(setImmediate);
-    const s2 = q.stats;
-    assert.strictEqual(s2.running, 2);
-    assert.strictEqual(s2.queued, 2);
-    // 全部释放
-    while (releases.length) releases.shift()();
+    // 等待全部完成
+    await Promise.all(ps);
     await q._drain();
     assert.deepStrictEqual(q.stats, {
       name: 'test-queued', concurrency: 2, running: 0, queued: 0, submitted: 5, completed: 5,

@@ -114,6 +114,8 @@ const props = defineProps({
   cameraState: { type: Object, default: null },
   // 保存的3D布局数据
   layout3D: { type: Object, default: null },
+  // drama 项目数据对象（供 ViewSyncManager 节点数校验用，不会在此加载）
+  drama: { type: Object, default: null },
 })
 
 const emit = defineEmits([
@@ -154,6 +156,7 @@ let cameraController = null
 // 性能监控
 let frameCount = 0
 let lastFpsTime = 0
+let fpsDropLogTime = 0
 
 // 拖拽状态
 let dragTarget = null
@@ -340,12 +343,17 @@ function initManagers() {
     },
   })
 
-  // 从2D节点列表重建3D场景
-  viewSyncManager.rebuildFrom2D(props.nodes)
+  // 从2D节点列表重建3D场景（透传 drama 参数用于节点数校验日志）
+  viewSyncManager.rebuildFrom2D(props.nodes, { drama: props.drama })
 
   // 恢复3D布局
   if (props.layout3D) {
     viewSyncManager.restore3DLayout(props.layout3D, props.nodes)
+  }
+
+  // 重建后做一次 2D/3D 节点完整性校验
+  if (viewSyncManager) {
+    viewSyncManager.validateAgainstDrama(props.drama)
   }
 }
 
@@ -415,6 +423,10 @@ function onPointerDown(event) {
 
       // 禁用 OrbitControls（拖拽节点时不旋转视角）
       cameraController.controls.enabled = false
+
+      console.log(`[DIR-3D] onPointerDown node=${target.userData.nodeId}`, {
+        hitPoint: `(${intersectPoint.x.toFixed(1)},${intersectPoint.y.toFixed(1)},${intersectPoint.z.toFixed(1)})`,
+      })
 
       emit('node-click', { nodeId: target.userData.nodeId })
     }
@@ -497,6 +509,7 @@ function startAnimationLoop() {
 
   lastFpsTime = performance.now()
   frameCount = 0
+  fpsDropLogTime = 0
 
   function animate() {
     animationId = requestAnimationFrame(animate)
@@ -522,10 +535,24 @@ function startAnimationLoop() {
     // 渲染
     renderer.render(scene, camera)
 
-    // FPS计算
+    // FPS计算 + 卡顿监控
     frameCount++
     if (currentTime - lastFpsTime >= 1000) {
-      fps.value = Math.round((frameCount * 1000) / (currentTime - lastFpsTime))
+      const currentFps = Math.round((frameCount * 1000) / (currentTime - lastFpsTime))
+      fps.value = currentFps
+
+      if (currentFps < 20 && currentTime - fpsDropLogTime > 3000) {
+        fpsDropLogTime = currentTime
+        const pos = cameraController.camera.position
+        console.warn(`[DIR-3D] FPS LOW=${currentFps}`, {
+          pos: `(${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)})`,
+          preset: cameraController.currentPreset,
+          transitioning: cameraController._transitioning,
+          movement: cameraController._movementType || null,
+          lodStats: { high: stats.high, medium: stats.medium, low: stats.low, hidden: stats.hidden },
+        })
+      }
+
       frameCount = 0
       lastFpsTime = currentTime
     }
@@ -549,6 +576,11 @@ function stopAnimationLoop() {
  * 切换机位
  */
 function switchPreset(presetName) {
+  console.log(`[DIR-3D] switchPreset UI->3D`, {
+    target: presetName,
+    previous: currentPreset.value,
+    fps: fps.value,
+  })
   cameraController.switchToPreset(presetName, true)
   currentPreset.value = presetName
   emit('camera-change', cameraController.getState())
@@ -558,6 +590,10 @@ function switchPreset(presetName) {
  * 开始镜头运动
  */
 function startCameraMovement(movementType) {
+  console.log(`[DIR-3D] startCameraMovement UI->3D`, {
+    type: movementType,
+    fps: fps.value,
+  })
   cameraController.startMovement(movementType, 0, 0.3)
   movementActive.value = true
 }
@@ -566,6 +602,9 @@ function startCameraMovement(movementType) {
  * 停止镜头运动
  */
 function stopCameraMovement() {
+  console.log(`[DIR-3D] stopCameraMovement UI->3D`, {
+    fps: fps.value,
+  })
   cameraController.stopMovement()
   movementActive.value = false
 }

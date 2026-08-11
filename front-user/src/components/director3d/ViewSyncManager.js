@@ -13,6 +13,8 @@
  *   如果 dirty2D 为真时收到 3D 变更，忽略该 3D 变更（因为它是 2D 同步触发的）
  */
 
+import { estimateNodeCount } from '../../utils/dramaData.js'
+
 // 节点类型到 3D 深度(Z轴)的映射
 const NODE_DEPTH_MAP = {
   scene: 200,          // 场景节点 → 背景层
@@ -337,9 +339,31 @@ export class ViewSyncManager {
 
   /**
    * 全量重建映射表（切换到3D模式时调用）
-   * @param {Array} nodes - 全部2D节点列表
+   * @param {Array} nodes - 全部2D节点列表（可为 null/undefined，内部兜底为 []）
    */
-  rebuildFrom2D(nodes) {
+  rebuildFrom2D(nodes, opts) {
+    nodes = nodes || []
+    const t0 = performance.now()
+    const rawCount = nodes.length
+    const prevSize = this.nodeMap.size
+    const drama = opts?.drama ?? null
+
+    // 按节点类型分组统计（输入侧）
+    const typeIn = {}
+    for (const n of nodes) { typeIn[n.type] = (typeIn[n.type] || 0) + 1 }
+
+    const expected = estimateNodeCount(drama)
+    console.log(`[DIR-3D] rebuildFrom2D START`, {
+      rawNodeCount: rawCount,
+      prevNodeMapSize: prevSize,
+      expectedEstimate: expected,
+      typesIn: typeIn,
+      hasDrama: !!drama,
+      dramaId: drama?.id ?? null,
+      inputNodesNull: nodes === null,
+      performanceMark: 'before-clear',
+    })
+
     this.syncing = true
 
     // 清空现有映射
@@ -350,8 +374,37 @@ export class ViewSyncManager {
     this.dirty3D = false
 
     // 从2D节点列表重建
+    let added = 0
     for (const node of nodes) {
       this.on2DNodeAdded(node)
+      added++
+    }
+
+    // 按节点类型分组统计（输出侧）
+    const typeOut = {}
+    for (const entry of this.nodeMap.values()) {
+      typeOut[entry.type] = (typeOut[entry.type] || 0) + 1
+    }
+    const actual = this.nodeMap.size
+    const diff = expected - actual
+    const match = expected === 0 || expected === actual
+
+    console.log(`[DIR-3D] rebuildFrom2D DONE`, {
+      added,
+      actualSize: actual,
+      expectedEstimate: expected,
+      diff: diff,
+      match,
+      typesOut: typeOut,
+      durationMs: Math.round((performance.now() - t0) * 1000) / 1000,
+      pending2D: this._pending2DChanges.size,
+      pending3D: this._pending3DChanges.size,
+    })
+    if (diff !== 0 && expected !== 0) {
+      console.warn(`[DIR-3D] rebuildFrom2D 节点数不匹配: expected=${expected} actual=${actual} diff=${diff}`, {
+        typesIn: typeIn,
+        typesOut: typeOut,
+      })
     }
 
     this.syncing = false
@@ -380,22 +433,82 @@ export class ViewSyncManager {
    * @param {Array} currentNodes - 当前2D节点列表
    */
   restore3DLayout(layout3D, currentNodes) {
-    if (!layout3D?.nodes) return
+    const t0 = performance.now()
+    const hasLayoutNodes = !!(layout3D?.nodes)
+    currentNodes = currentNodes || []
+    const savedCount = hasLayoutNodes ? Object.keys(layout3D.nodes).length : 0
+    const currentNodeCount = currentNodes.length
+
+    console.log(`[DIR-3D] restore3DLayout START`, {
+      hasLayoutNodes,
+      savedNodeCount: savedCount,
+      currentNodeCount,
+      preNodeMapSize: this.nodeMap.size,
+      hasViewport: !!layout3D?.viewport,
+      hasCamera3d: !!layout3D?.camera_3d,
+    })
+
+    if (!hasLayoutNodes) {
+      console.log(`[DIR-3D] restore3DLayout SKIP (no layout3D.nodes)`, { durationMs: performance.now() - t0 })
+      return
+    }
 
     this.syncing = true
 
+    let restored = 0
+    let skippedNotFound = 0
+    const layers = { set: 0, inherit: 0 }
     for (const node of currentNodes) {
       const saved = layout3D.nodes[node.id]
       if (saved) {
         const entry = this.nodeMap.get(node.id)
         if (entry) {
           entry.position3D = { x: saved.x, y: saved.y, z: saved.z }
-          entry.layer = saved.layer || entry.layer
+          if (saved.layer) { entry.layer = saved.layer; layers.set++ } else { layers.inherit++ }
+          restored++
+        } else {
+          skippedNotFound++
         }
       }
     }
 
+    console.log(`[DIR-3D] restore3DLayout DONE`, {
+      restored,
+      skippedNotFound,
+      layers,
+      postNodeMapSize: this.nodeMap.size,
+      durationMs: Math.round((performance.now() - t0) * 1000) / 1000,
+    })
+    if (skippedNotFound > 0) {
+      console.warn(`[DIR-3D] restore3DLayout 有 ${skippedNotFound} 条节点在 nodeMap 中未找到（可能 rebuildFrom2D 阶段未被正确加入）`)
+    }
+
     this.syncing = false
+  }
+
+  /**
+   * 校验 3D 场景节点数与 drama 估算节点数是否一致（用于 2D/3D 同步完整性检查）
+   * @param {object|null} drama - drama 对象（可为 null）
+   * @returns {{ expected: number, actual: number, match: boolean }}
+   */
+  validateAgainstDrama(drama) {
+    const expected = estimateNodeCount(drama)
+    const actual = this.nodeMap.size
+    const match = expected === 0 || expected === actual
+    if (!match) {
+      console.warn(`[DIR-3D] validateAgainstDrama MISMATCH`, {
+        expected, actual, diff: expected - actual,
+        dramaId: drama?.id ?? null,
+        hasDrama: !!drama,
+      })
+    } else {
+      console.log(`[DIR-3D] validateAgainstDrama OK`, {
+        expected, actual,
+        dramaId: drama?.id ?? null,
+        hasDrama: !!drama,
+      })
+    }
+    return { expected, actual, match }
   }
 
   /**

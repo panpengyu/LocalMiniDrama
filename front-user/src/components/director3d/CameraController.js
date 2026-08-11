@@ -103,6 +103,36 @@ export class CameraController {
     this._movementActive = false
     this._movementType = null
     this._movementSpeed = 0.5
+
+    // 日志：累计统计
+    this._logCounter = {
+      switchPreset: 0,
+      transitionComplete: 0,
+      startMovement: 0,
+      stopMovement: 0,
+      frameUpdate: 0,
+    }
+    this._lastTransitionProgressLog = -1
+    this._lastMovementLogTime = 0
+  }
+
+  // =========================================================================
+  // 日志辅助方法
+  // =========================================================================
+
+  _logCamera(event, detail = {}) {
+    const pos = this.camera.position
+    const tgt = this.controls.target
+    const entry = {
+      ...detail,
+      pos: `(${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)})`,
+      target: `(${tgt.x.toFixed(1)},${tgt.y.toFixed(1)},${tgt.z.toFixed(1)})`,
+      fov: this.camera.fov,
+      preset: this.currentPreset,
+      transitioning: this._transitioning,
+      movement: this._movementType || null,
+    }
+    console.log(`[CAM-3D] ${event}`, entry)
   }
 
   /**
@@ -113,15 +143,26 @@ export class CameraController {
   switchToPreset(presetName, animate = true) {
     const preset = CAMERA_PRESETS[presetName]
     if (!preset) {
-      console.warn(`[CameraController] 未知机位: ${presetName}`)
+      console.warn(`[CAM-3D] 未知机位: ${presetName}`)
       return
     }
+
+    // 前置状态日志
+    const beforePos = this.camera.position
+    const beforePreset = this.currentPreset
+    this._logCounter.switchPreset++
+    console.log(`[CAM-3D] switchToPreset START #${this._logCounter.switchPreset}`, {
+      target: presetName, animate, from: beforePreset,
+      fromPos: `(${beforePos.x.toFixed(1)},${beforePos.y.toFixed(1)},${beforePos.z.toFixed(1)})`,
+      fromFov: this.camera.fov,
+    })
 
     this.currentPreset = presetName
 
     if (!animate) {
       // 直接设置，无动画
       this._applyPreset(preset)
+      this._logCamera('switchToPreset INSTANT', { target: presetName, duration: 0 })
       return
     }
 
@@ -162,6 +203,18 @@ export class CameraController {
     }
 
     this._transitionStart = performance.now()
+    this._lastTransitionProgressLog = -1
+
+    console.log(`[CAM-3D] _startTransition`, {
+      targetPreset: this.currentPreset,
+      duration: this.transitionDuration,
+      fromPos: `(${this._transitionFrom.position.x.toFixed(1)},${this._transitionFrom.position.y.toFixed(1)},${this._transitionFrom.position.z.toFixed(1)})`,
+      toPos: `(${this._transitionTo.position.x.toFixed(1)},${this._transitionTo.position.y.toFixed(1)},${this._transitionTo.position.z.toFixed(1)})`,
+      fromTarget: `(${this._transitionFrom.target.x.toFixed(1)},${this._transitionFrom.target.y.toFixed(1)},${this._transitionFrom.target.z.toFixed(1)})`,
+      toTarget: `(${this._transitionTo.target.x.toFixed(1)},${this._transitionTo.target.y.toFixed(1)},${this._transitionTo.target.z.toFixed(1)})`,
+      fromFov: this._transitionFrom.fov,
+      toFov: this._transitionTo.fov,
+    })
   }
 
   /**
@@ -190,6 +243,17 @@ export class CameraController {
   _updateTransition(currentTime) {
     const elapsed = currentTime - this._transitionStart
     const progress = Math.min(elapsed / this.transitionDuration, 1)
+
+    // 每25%进度打一次日志（避免刷屏）
+    const progressPct = Math.floor(progress * 4) // 0-4
+    if (progressPct !== this._lastTransitionProgressLog) {
+      this._lastTransitionProgressLog = progressPct
+      this._logCounter.frameUpdate++
+      console.log(`[CAM-3D] _updateTransition progress=${(progress * 100).toFixed(0)}% elapsed=${elapsed.toFixed(0)}ms`, {
+        easing: progress < 0.5 ? (4 * progress * progress * progress).toFixed(3) : (1 - Math.pow(-2 * progress + 2, 3) / 2).toFixed(3),
+        pos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+      })
+    }
 
     // 缓动函数：easeInOutCubic
     const eased = progress < 0.5
@@ -222,6 +286,14 @@ export class CameraController {
     if (progress >= 1) {
       this._transitioning = false
       this.controls.enabled = true // 恢复手动控制
+      this._logCounter.transitionComplete++
+      const totalMs = currentTime - this._transitionStart
+      console.log(`[CAM-3D] _updateTransition COMPLETE #${this._logCounter.transitionComplete}`, {
+        totalDurationMs: totalMs,
+        targetPreset: this.currentPreset,
+        finalPos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+        finalFov: this.camera.fov,
+      })
     }
   }
 
@@ -232,9 +304,15 @@ export class CameraController {
    * @param {Number} speed - 运动速度
    */
   startMovement(movementType, duration = 0, speed = 0.5) {
+    this._logCounter.startMovement++
+    console.log(`[CAM-3D] startMovement #${this._logCounter.startMovement}`, {
+      type: movementType, duration, speed,
+      pos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+    })
     this._movementActive = true
     this._movementType = movementType
     this._movementSpeed = speed
+    this._lastMovementLogTime = 0
 
     if (duration > 0) {
       setTimeout(() => this.stopMovement(), duration)
@@ -245,6 +323,12 @@ export class CameraController {
    * 停止镜头运动
    */
   stopMovement() {
+    if (!this._movementActive) return
+    this._logCounter.stopMovement++
+    console.log(`[CAM-3D] stopMovement #${this._logCounter.stopMovement}`, {
+      lastType: this._movementType,
+      pos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+    })
     this._movementActive = false
     this._movementType = null
   }
@@ -294,6 +378,17 @@ export class CameraController {
     // 同时移动摄像机和焦点（保持相对位置）
     this.camera.position.add(moveVector)
     this.controls.target.add(moveVector)
+
+    // 每500ms打一次运动日志
+    const now = performance.now()
+    if (now - this._lastMovementLogTime > 500) {
+      this._lastMovementLogTime = now
+      console.log(`[CAM-3D] _updateMovement type=${this._movementType}`, {
+        delta: `(${moveVector.x.toFixed(3)},${moveVector.y.toFixed(3)},${moveVector.z.toFixed(3)})`,
+        pos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+        target: `(${this.controls.target.x.toFixed(1)},${this.controls.target.y.toFixed(1)},${this.controls.target.z.toFixed(1)})`,
+      })
+    }
   }
 
   /**
@@ -302,6 +397,11 @@ export class CameraController {
    * @param {Number} distance - 摄像机与节点的距离
    */
   focusOn(nodePosition, distance = 10) {
+    console.log(`[CAM-3D] focusOn`, {
+      nodePos: `(${nodePosition.x.toFixed(1)},${nodePosition.y.toFixed(1)},${nodePosition.z.toFixed(1)})`,
+      distance,
+      currentPos: `(${this.camera.position.x.toFixed(1)},${this.camera.position.y.toFixed(1)},${this.camera.position.z.toFixed(1)})`,
+    })
     this._transitioning = true
     this.controls.enabled = false
 
@@ -323,6 +423,7 @@ export class CameraController {
     }
 
     this._transitionStart = performance.now()
+    this._lastTransitionProgressLog = -1
   }
 
   /**
@@ -352,6 +453,12 @@ export class CameraController {
    */
   restoreState(state) {
     if (!state) return
+    console.log(`[CAM-3D] restoreState`, {
+      preset: state.preset,
+      pos: `(${state.position?.x ?? 0},${state.position?.y ?? 0},${state.position?.z ?? 0})`,
+      target: `(${state.target?.x ?? 0},${state.target?.y ?? 0},${state.target?.z ?? 0})`,
+      fov: state.fov,
+    })
 
     this.camera.position.set(state.position.x, state.position.y, state.position.z)
     this.controls.target.set(state.target.x, state.target.y, state.target.z)
@@ -362,6 +469,8 @@ export class CameraController {
     if (state.preset && CAMERA_PRESETS[state.preset]) {
       this.currentPreset = state.preset
     }
+
+    this._logCamera('restoreState COMPLETE')
   }
 
   /**
@@ -382,6 +491,7 @@ export class CameraController {
     this.camera.fov = preset.fov
     this.camera.updateProjectionMatrix()
     this.controls.update()
+    this._logCamera('_applyPreset', { preset: this.currentPreset, duration: 0 })
   }
 
   /**

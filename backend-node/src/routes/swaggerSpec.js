@@ -30,6 +30,7 @@ module.exports = {
     { name: '风格配置(S8)', description: 'Sprint 8 — 项目级风格配置管理' },
     { name: 'BGM生成(S8)', description: 'Sprint 8 — AI背景音乐生成' },
     { name: '缓存与CDN(S8)', description: 'Sprint 8 — API缓存与CDN管理' },
+    { name: '3D导演台(S9)', description: 'Sprint 9 — 3D导演台：2D/3D画布布局持久化、视图模式切换、虚拟摄像机状态' },
   ],
   paths: {
 
@@ -919,6 +920,68 @@ module.exports = {
         responses: { 200: { description: 'OK' }, 400: { description: '参数错误' }, 404: { description: 'CDN状态信息不存在' }, 500: { description: '服务器错误' } },
       },
     },
+
+    // ================= 3D导演台 (S9) =================
+    '/dramas/{id}/canvas-layout': {
+      put: {
+        tags: ['3D导演台(S9)'],
+        summary: 'S9-T07 保存画布布局（含3D字段）',
+        description: [
+          'Sprint 9 3D导演台核心接口。保存画布布局数据，支持2D/3D视图模式持久化。',
+          '',
+          '**3D扩展字段（S9-T07）：**',
+          '- `view_mode`: 视图模式，\'2d\' 或 \'3d\'，默认 \'2d\'',
+          '- `camera_3d`: 3D摄像机状态 { position:{x,y,z}, target:{x,y,z}, fov, preset }',
+          '- `camera_preset`: 预设机位名称 front/side/top/free/close_up/bird_view',
+          '- `nodes_3d`: 3D节点位置表 { [nodeId]: { x, y, z, layer } }',
+          '',
+          '**数据存储：**',
+          '- 主存储：dramas.metadata.canvas_layout (JSON)',
+          '- 辅助存储：canvas_layouts 表（便于独立查询，含 view_mode/camera_3d/camera_preset 列）',
+          '',
+          '**校验规则：**',
+          '- view_mode 必须为 \'2d\' 或 \'3d\'，否则返回 400 BAD_REQUEST',
+          '- camera_preset 必须为合法枚举值',
+          '- camera_3d.position/target 的 x/y/z 必须为有限数值',
+        ].join('\n'),
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '项目ID' },
+        ],
+        requestBody: {
+          required: true,
+          content: { 'application/json': {
+            schema: { $ref: '#/components/schemas/CanvasLayout3DRequest' },
+            example: {
+              canvas_layout: {
+                version: 2,
+                viewport: { x: 0, y: 0, zoom: 0.75 },
+                nodes: { 'sb_1': { x: 100, y: 200 } },
+                zone_collapsed: { background: false, midground: false, foreground: false },
+                view_mode: '3d',
+                camera_3d: {
+                  position: { x: 15, y: 10, z: 20 },
+                  target: { x: 0, y: 0, z: 0 },
+                  fov: 50,
+                  preset: 'free',
+                },
+                camera_preset: 'free',
+                nodes_3d: {
+                  'sb_1': { x: 100, y: 200, z: 100, layer: 'midground' },
+                  'char_1': { x: 300, y: 150, z: 80, layer: 'midground' },
+                  'scene_1': { x: 50, y: 50, z: 200, layer: 'background' },
+                },
+              },
+            },
+          } },
+        },
+        responses: {
+          200: { description: '保存成功，返回更新后的项目数据' },
+          400: { description: '参数错误（view_mode/camera_preset/camera_3d 校验失败）' },
+          404: { description: '项目不存在' },
+          500: { description: '服务器错误' },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -1067,6 +1130,35 @@ module.exports = {
           fps:                { type: 'integer', default: 30, description: '帧率' },
           transition_default: { type: 'string', enum: ['hard_cut', 'fade', 'dissolve', 'slide', 'zoom', 'rotate'], default: 'fade', description: '默认转场效果' },
           beat_sync:          { type: 'boolean', default: true, description: '是否启用节奏匹配' },
+        },
+      },
+      // ===== S9 3D导演台 =====
+      CanvasLayout3DRequest: {
+        type: 'object',
+        required: ['canvas_layout'],
+        properties: {
+          canvas_layout: {
+            type: 'object',
+            description: '画布布局数据（含3D扩展字段）',
+            properties: {
+              version:       { type: 'integer', description: '布局版本号', example: 2 },
+              viewport:      { type: 'object', description: '2D视口状态 { x, y, zoom }' },
+              nodes:         { type: 'object', description: '2D节点位置表 { [nodeId]: { x, y } }' },
+              zone_collapsed:{ type: 'object', description: '分区折叠状态 { background, midground, foreground }' },
+              view_mode:     { type: 'string', enum: ['2d', '3d'], default: '2d', description: 'S9: 视图模式' },
+              camera_3d:     { type: 'object', description: 'S9: 3D摄像机状态', properties: {
+                position: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
+                target:   { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
+                fov:      { type: 'number', default: 50, description: '视野角度' },
+                preset:   { type: 'string', enum: ['front', 'side', 'top', 'free', 'close_up', 'bird_view'] },
+              } },
+              camera_preset: { type: 'string', enum: ['front', 'side', 'top', 'free', 'close_up', 'bird_view'], description: 'S9: 当前预设机位' },
+              nodes_3d:      { type: 'object', description: 'S9: 3D节点位置表 { [nodeId]: { x, y, z, layer } }', additionalProperties: { type: 'object', properties: {
+                x:     { type: 'number' }, y: { type: 'number' }, z: { type: 'number' },
+                layer: { type: 'string', enum: ['background', 'midground', 'foreground'] },
+              } } },
+            },
+          },
         },
       },
     },

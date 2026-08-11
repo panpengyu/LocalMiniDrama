@@ -868,6 +868,128 @@ function saveProgress(db, log, dramaId, req) {
   return true;
 }
 
+// S9-T07: 合法视图模式与预设机位集合（与前端 canvasLayout.js 保持一致）
+const S9_VALID_VIEW_MODES = new Set(['2d', '3d']);
+const S9_VALID_CAMERA_PRESETS = new Set([
+  'front', 'side', 'top', 'free', 'close_up', 'bird_view',
+]);
+
+/**
+ * S9-T07: 校验 canvas_layout 中的 3D 字段，返回规范化后的片段
+ * @param {object} layout - canvas_layout 对象
+ * @returns {object} { view_mode, camera_3d, camera_preset, nodes_3d } 规范化后的 3D 字段
+ */
+function validate3DFields(layout) {
+  const result = { view_mode: null, camera_3d: null, camera_preset: null, nodes_3d: null };
+
+  // view_mode 校验
+  if (layout.view_mode != null) {
+    if (!S9_VALID_VIEW_MODES.has(layout.view_mode)) {
+      const err = new Error(`view_mode 必须为 '2d' 或 '3d'，收到: ${layout.view_mode}`);
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.view_mode = layout.view_mode;
+  }
+
+  // camera_preset 校验
+  if (layout.camera_preset != null) {
+    if (!S9_VALID_CAMERA_PRESETS.has(layout.camera_preset)) {
+      const err = new Error(`camera_preset 不合法: ${layout.camera_preset}`);
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.camera_preset = layout.camera_preset;
+  }
+
+  // camera_3d 结构校验
+  if (layout.camera_3d != null) {
+    const cam = layout.camera_3d;
+    if (typeof cam !== 'object' || Array.isArray(cam)) {
+      const err = new Error('camera_3d 必须为对象');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    const pos = cam.position;
+    const tgt = cam.target;
+    if (!pos || !tgt) {
+      const err = new Error('camera_3d 必须包含 position 和 target');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    for (const axis of ['x', 'y', 'z']) {
+      if (!Number.isFinite(pos[axis]) || !Number.isFinite(tgt[axis])) {
+        const err = new Error(`camera_3d.position.${axis} / target.${axis} 必须为有限数值`);
+        err.code = 'BAD_REQUEST';
+        throw err;
+      }
+    }
+    result.camera_3d = {
+      position: { x: pos.x, y: pos.y, z: pos.z },
+      target: { x: tgt.x, y: tgt.y, z: tgt.z },
+      fov: Number.isFinite(cam.fov) ? cam.fov : 50,
+      preset: S9_VALID_CAMERA_PRESETS.has(cam.preset) ? cam.preset : 'free',
+    };
+  }
+
+  // nodes_3d 结构校验（可选）
+  if (layout.nodes_3d != null) {
+    if (typeof layout.nodes_3d !== 'object' || Array.isArray(layout.nodes_3d)) {
+      const err = new Error('nodes_3d 必须为对象');
+      err.code = 'BAD_REQUEST';
+      throw err;
+    }
+    result.nodes_3d = layout.nodes_3d;
+  }
+
+  return result;
+}
+
+/**
+ * S9-T07: 将 3D 字段同步到 canvas_layouts 表（便于独立查询）
+ * 兼容 SQLite 和 MySQL：先尝试 UPDATE，无命中则 INSERT
+ * @param {object} db - 数据库连接
+ * @param {number} dramaId - 项目ID
+ * @param {object} layout - canvas_layout 对象（含 3D 字段）
+ * @param {object} [log] - 日志对象（可选，写入失败时记录警告）
+ */
+function sync3DFieldsToTable(db, dramaId, layout, log) {
+  const viewMode = S9_VALID_VIEW_MODES.has(layout.view_mode) ? layout.view_mode : '2d';
+  const camera3D = layout.camera_3d ? JSON.stringify(layout.camera_3d) : null;
+  const cameraPreset = S9_VALID_CAMERA_PRESETS.has(layout.camera_preset)
+    ? layout.camera_preset
+    : (layout.camera_3d?.preset && S9_VALID_CAMERA_PRESETS.has(layout.camera_3d.preset)
+        ? layout.camera_3d.preset : null);
+  const viewportJson = layout.viewport ? JSON.stringify(layout.viewport) : null;
+  const nodesJson = layout.nodes ? JSON.stringify(layout.nodes) : null;
+  const zoneCollapsedJson = layout.zone_collapsed ? JSON.stringify(layout.zone_collapsed) : null;
+  const metaJson = layout.meta ? JSON.stringify(layout.meta) : null;
+
+  try {
+    // 先尝试 UPDATE（兼容 SQLite 和 MySQL）
+    const updateResult = db.prepare(`
+      UPDATE canvas_layouts
+      SET viewport = ?, nodes = ?, zone_collapsed = ?, view_mode = ?,
+          camera_3d = ?, camera_preset = ?, meta = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE drama_id = ?
+    `).run(viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson, dramaId);
+
+    // 如果没有命中行，执行 INSERT
+    if (updateResult.changes === 0) {
+      db.prepare(`
+        INSERT INTO canvas_layouts
+          (drama_id, viewport, nodes, zone_collapsed, view_mode, camera_3d, camera_preset, meta, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(dramaId, viewportJson, nodesJson, zoneCollapsedJson, viewMode, camera3D, cameraPreset, metaJson);
+    }
+  } catch (err) {
+    // canvas_layouts 表写入失败不阻塞主流程（metadata JSON 是主存储）
+    if (log && typeof log.warn === 'function') {
+      log.warn('Sync 3D fields to canvas_layouts table failed', { drama_id: dramaId, error: err.message });
+    }
+  }
+}
+
 /** 保存画布布局 / 工作流组到 metadata（合并现有 metadata） */
 function saveCanvasLayout(db, log, dramaId, req) {
   const drama = getDramaById(db, Number(dramaId));
@@ -892,15 +1014,32 @@ function saveCanvasLayout(db, log, dramaId, req) {
     err.code = 'BAD_REQUEST';
     throw err;
   }
+
+  // S9-T07: 校验 3D 字段（view_mode / camera_3d / camera_preset / nodes_3d）
+  let validated3D = null;
+  if (layout) {
+    validated3D = validate3DFields(layout);
+  }
+
   const meta = storageLayout.parseMetadata(drama.metadata);
   if (layout) meta.canvas_layout = layout;
   if (workflowGroups !== undefined) meta.workflow_groups = workflowGroups;
   const now = new Date().toISOString();
   db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(meta), now, dramaId);
+
+  // S9-T07: 同步 3D 字段到 canvas_layouts 表（便于独立查询，失败不阻塞）
+  if (layout) {
+    sync3DFieldsToTable(db, Number(dramaId), layout, log);
+  }
+
   log.info('Canvas state saved', {
     drama_id: dramaId,
     node_count: layout ? Object.keys(layout.nodes || {}).length : undefined,
     workflow_group_count: workflowGroups ? workflowGroups.length : undefined,
+    view_mode: validated3D?.view_mode || undefined,
+    camera_preset: validated3D?.camera_preset || validated3D?.camera_3d?.preset || undefined,
+    has_camera_3d: !!validated3D?.camera_3d,
+    nodes_3d_count: validated3D?.nodes_3d ? Object.keys(validated3D.nodes_3d).length : undefined,
   });
   return getDrama(db, dramaId);
 }
@@ -1050,4 +1189,9 @@ module.exports = {
   _mergeQueueStats: () => ({ ...MergeAsyncQueue.stats }),
   _mergeQueueDrain: () => MergeAsyncQueue._drain(),
   _MergeAsyncQueue: MergeAsyncQueue,
+  // S9-T07: 暴露3D字段校验与同步函数（测试用）
+  _validate3DFields: validate3DFields,
+  _sync3DFieldsToTable: sync3DFieldsToTable,
+  _S9_VALID_VIEW_MODES: S9_VALID_VIEW_MODES,
+  _S9_VALID_CAMERA_PRESETS: S9_VALID_CAMERA_PRESETS,
 };
