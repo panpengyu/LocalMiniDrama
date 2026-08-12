@@ -63,6 +63,17 @@
           <el-icon><VideoCamera /></el-icon>
           智能剪辑
         </el-button>
+        <!-- S11: 团队协作 + 版本管理入口 -->
+        <el-badge :value="collabUnread" :hidden="collabUnread === 0" class="wb-collab-badge">
+          <el-button size="small" type="primary" plain @click="collabPanelVisible = true">
+            <el-icon><UserFilled /></el-icon>
+            协作<span v-if="collabOnline.length > 1" class="wb-online-count">·{{ collabOnline.length }}人在线</span>
+          </el-button>
+        </el-badge>
+        <el-button size="small" type="info" plain @click="versionPanelVisible = true">
+          <el-icon><Clock /></el-icon>
+          版本
+        </el-button>
         <el-button size="small" @click="toggleTheme" class="wb-theme-btn">
           <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
           {{ isDark ? '浅色' : '暗色' }}
@@ -514,13 +525,33 @@
       :drama-id="dramaId"
       @edit-completed="onEditCompleted"
     />
+
+    <!-- ============== S11: 团队协作面板（成员/锁/通知/评论/审计） ============== -->
+    <CollaborationPanel
+      ref="collabPanelRef"
+      v-model="collabPanelVisible"
+      :drama-id="dramaId"
+      :connected="collabConnected"
+      :my-role-tag="collabRoleTag"
+      :online="collabOnline"
+      :locks="collabLocks"
+      :live-comments="collabComments"
+      @send-comment="onCollabSendComment"
+    />
+
+    <!-- ============== S11: 版本管理（列表/对比/回退） ============== -->
+    <VersionManagerPanel
+      v-model="versionPanelVisible"
+      :drama-id="dramaId"
+      @rolled-back="onVersionRolledBack"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera } from '@element-plus/icons-vue'
+import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera, UserFilled, Clock } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ProjectNavTree from './ProjectNavTree.vue'
@@ -532,6 +563,10 @@ import CharacterConsistencyPanel from './CharacterConsistencyPanel.vue'
 import WorkflowOrchestrator from '@/components/workbench/WorkflowOrchestrator.vue'
 import WorkflowMonitor from '@/components/workbench/WorkflowMonitor.vue'
 import SmartEditTimeline from '@/components/workbench/SmartEditTimeline.vue'
+// S11: 团队协作 + 版本管理组件
+import CollaborationPanel from '@/components/workbench/CollaborationPanel.vue'
+import VersionManagerPanel from '@/components/workbench/VersionManagerPanel.vue'
+import { useCollaboration } from '@/composables/useCollaboration'
 
 import { dramaAPI } from '@/api/drama'
 import { characterAPI } from '@/api/characters'
@@ -998,6 +1033,8 @@ onBeforeUnmount(() => {
   // 收尾：可能仍在拖动中 → 取消；解绑窗口事件；持久化最终布局
   if (_winResizeTimer) clearTimeout(_winResizeTimer)
   _onResizeEnd()
+  // S11-T01: 断开协作连接（释放本端持有的节点锁）
+  try { collab.disconnect() } catch (_) { /* ignore */ }
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', _onWindowResize)
     window.removeEventListener('orientationchange', _onWindowResize)
@@ -1186,6 +1223,8 @@ async function onTimelineAlignDuration(result) {
 
 function onDramaLoaded(d) {
   drama.value = d
+  // S11-T01: 画布数据就绪后建立协作连接（加入项目房间）
+  ensureCollabConnected()
   // 默认选中第一集（若有）
   if (!drama.value?.episodes?.length) return
   filterEpisodeId.value = drama.value.episodes[0]?.id || 'all'
@@ -1315,11 +1354,114 @@ function onCanvasLayoutSaved(p) {
   })
   layoutState.value = 'saved'
   setTimeout(() => (layoutState.value = 'idle'), 1500)
+  // S11-T03: 本端画布保存后，向同房间协作者广播布局变更，触发对端刷新同步
+  try {
+    collab.sendCanvasOp({ action: 'layout_save', data: { nodes: p?.nodes ?? null } })
+  } catch (_) { /* 未连接时静默 */ }
 }
 function onCanvasSelectionChange(ids) {
   log.debug('[Canvas→Workbench] 选区变更（预留回调）', {
     count: ids?.length ?? 0, sampleIds: (ids || []).slice(0, 5),
   })
+}
+
+/* ============================================================
+   S11: 团队协作 + 版本管理集成
+   - S11-T01/T03/T04/T05: 通过 useCollaboration 建立 Socket.io 连接、
+     加入项目房间、接收/广播画布操作、锁事件、成员/评论通知。
+   - S11-T07: 版本管理面板 + 回退后刷新画布。
+   ============================================================ */
+const collabPanelVisible = ref(false)
+const versionPanelVisible = ref(false)
+const collabPanelRef = ref(null)
+const collabComments = ref([])       // 实时评论流（传给 CollaborationPanel 展示）
+const collabUnread = ref(0)          // 未读通知角标（header 徽标）
+
+const collab = useCollaboration()
+const collabConnected = collab.connected
+const collabRoleTag = collab.myRoleTag
+const collabOnline = collab.online
+const collabLocks = collab.locks
+
+// 注册实时事件回调
+collab.on('onCanvasOp', (data) => {
+  // S11-T03: 其他协作者的画布操作 → 局部刷新画布，保证多端一致
+  log.info('[S11-T03] 收到协作者画布操作', {
+    action: data?.op?.action, nodeKey: data?.op?.nodeKey, actor: data?.actorName,
+  })
+  // 采用轻量刷新策略：拉取最新画布布局重绘（避免自行合并复杂 diff）
+  scheduleCanvasRefresh()
+})
+collab.on('onMemberJoined', (data) => {
+  ElMessage.success(`${data.username} 加入了协作（${data.roleTag || 'viewer'}）`)
+  collabPanelRef.value?.refreshNotifications?.()
+  bumpUnread()
+})
+collab.on('onMemberLeft', (data) => {
+  log.info('[S11-T05] 协作成员离开', { username: data?.username })
+})
+collab.on('onNodeLocked', (data) => {
+  log.debug('[S11-T04] 节点被锁定', { nodeKey: data?.nodeKey, by: data?.lockedByName })
+  collabPanelRef.value?.refreshLocks?.()
+})
+collab.on('onNodeUnlocked', (data) => {
+  log.debug('[S11-T04] 节点解锁', { nodeKey: data?.nodeKey })
+  collabPanelRef.value?.refreshLocks?.()
+})
+collab.on('onLocksReleased', () => {
+  collabPanelRef.value?.refreshLocks?.()
+})
+collab.on('onComment', (data) => {
+  // S11-T05: 收到协作评论 → 追加到评论流 + 未读角标
+  collabComments.value = [...collabComments.value, {
+    actorName: data.actorName, text: data.text, at: data.at, nodeKey: data.nodeKey,
+  }]
+  bumpUnread()
+})
+collab.on('onConnectError', (err) => {
+  log.warn('[S11-T01] 协作连接失败', { msg: err?.message })
+})
+
+function bumpUnread() {
+  collabUnread.value += 1
+}
+
+// 画布刷新节流（多次协作操作合并为一次刷新）
+let _canvasRefreshTimer = null
+function scheduleCanvasRefresh() {
+  if (_canvasRefreshTimer) clearTimeout(_canvasRefreshTimer)
+  _canvasRefreshTimer = setTimeout(() => {
+    wbCanvasRef.value?.refresh?.()
+  }, 400)
+}
+
+// 打开协作面板时清空未读角标
+watch(collabPanelVisible, (open) => {
+  if (open) collabUnread.value = 0
+})
+
+// S11-T05: 发送协作评论
+async function onCollabSendComment(text) {
+  const resp = await collab.sendComment(text)
+  if (!resp?.ok) ElMessage.warning('评论发送失败（未连接或无权限）')
+}
+
+// S11-T07: 版本回退成功后 → 刷新画布
+async function onVersionRolledBack(result) {
+  log.info('[S11-T07] 版本已回退，刷新画布', { restored: result?.restored_version })
+  ElMessage.success(`已回退到版本 v${result?.restored_version ?? '?'}`)
+  await wbCanvasRef.value?.refresh?.()
+}
+
+// 建立协作连接（在 dramaId 可用后）
+function ensureCollabConnected() {
+  if (!dramaId.value) return
+  try {
+    collab.connect(dramaId.value)
+    log.info('[S11-T01] 发起协作连接', { dramaId: dramaId.value })
+  } catch (e) {
+    log.warn('[S11-T01] 协作连接异常', { msg: e?.message })
+  }
 }
 
 /* ==================== 内嵌 Drawer 工具函数：从 nodeId 中提取数据库数字 ID ==================== */

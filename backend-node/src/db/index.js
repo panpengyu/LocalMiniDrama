@@ -121,16 +121,24 @@ function getDb(config) {
             const params = args.length > 0 && Array.isArray(args[0]) ? args[0] : args;
             const formattedParams = params.map(formatDate);
             const result = formattedParams.length > 0 ? conn.query(sql, formattedParams) : conn.query(sql);
-            // sync-mysql 在 UPDATE/DELETE 后可通过 SELECT ROW_COUNT() 拿受影响行数
+            // 影响行数优先取本次查询结果对象的 affectedRows：
+            //   sync-mysql 内部可能对每条查询使用连接池中的不同连接，因此再单独执行
+            //   SELECT ROW_COUNT() 可能落到另一条连接上而返回 0（会话级函数）。
+            //   result.affectedRows 与本条 UPDATE/DELETE 同属一次查询结果，才是可靠来源。
             let changes = 0;
-            try {
-              const rc = conn.query('SELECT ROW_COUNT() AS rc');
-              if (rc && rc.length) changes = Number(rc[0].rc || 0);
-            } catch (_) { /* ignore */ }
+            if (result && typeof result.affectedRows === 'number') {
+              changes = Number(result.affectedRows || 0);
+            } else {
+              // 兜底：极少数驱动不返回 affectedRows 时再尝试 ROW_COUNT()
+              try {
+                const rc = conn.query('SELECT ROW_COUNT() AS rc');
+                if (rc && rc.length) changes = Number(rc[0].rc || 0);
+              } catch (_) { /* ignore */ }
+            }
             return {
               lastInsertRowid: result.insertId || 0,
               insertId: result.insertId || 0,
-              changedRows: result.changedRows || changes,
+              changedRows: result.changedRows != null ? result.changedRows : changes,
               changes
             };
           }

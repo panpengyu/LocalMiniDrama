@@ -227,7 +227,7 @@ function saveProgress(db, log) {
 function saveCanvasLayout(db, log) {
   return (req, res) => {
     try {
-      const updated = dramaService.saveCanvasLayout(db, log, req.params.id, req.body || {});
+      const updated = dramaService.saveCanvasLayout(db, log, req.params.id, req.body || {}, req.user);
       if (!updated) return response.notFound(res, '剧本不存在');
       response.success(res, updated);
     } catch (err) {

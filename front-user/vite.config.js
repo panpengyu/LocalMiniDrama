@@ -22,6 +22,12 @@ export default defineConfig({
       '/static': {
         target: 'http://127.0.0.1:5679',
         changeOrigin: true
+      },
+      // Sprint 11 - S11-T01: 协作实时通信 WebSocket 代理到后端 Socket.io
+      '/socket.io': {
+        target: 'http://127.0.0.1:5679',
+        changeOrigin: true,
+        ws: true
       }
     }
   }

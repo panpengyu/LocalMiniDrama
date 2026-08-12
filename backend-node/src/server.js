@@ -32,7 +32,7 @@ const { closeDb } = require('./db/index.js');
 const logger = require('./logger.js');
 
 // 创建 Express 应用实例并获取配置
-const { app, config } = createApp();
+const { app, config, db } = createApp();
 
 // 确定服务端口：优先使用环境变量 PORT，其次使用配置文件，默认 5679
 const port = Number(process.env.PORT) || config.server?.port || 5679;
@@ -49,6 +49,18 @@ const server = app.listen(port, host, () => {
   logger.info('Server is ready!');
 });
 
+// ========== Sprint 11 - S11-T01: 团队协作实时通信网关（Socket.io） ==========
+// 挂载到同一 HTTP server，复用端口 5679，路径 /socket.io
+let collaborationIo = null;
+try {
+  const { initCollaborationGateway } = require('./realtime/collaborationGateway.js');
+  collaborationIo = initCollaborationGateway(server, db, logger, {
+    corsOrigins: config.server?.cors_origins,
+  });
+} catch (e) {
+  logger.warn('[S11-T01] 协作网关启动失败(非致命，实时协作不可用):', e.message);
+}
+
 /**
  * 优雅关闭服务器函数
  * 
@@ -61,6 +73,10 @@ const server = app.listen(port, host, () => {
  */
 function shutdown() {
   logger.info('Shutting down server...');
+  // S11-T01: 先关闭协作网关（断开所有 socket 连接）
+  if (collaborationIo) {
+    try { collaborationIo.close(); } catch (_) {}
+  }
   server.close(() => {
     closeDb();
     logger.info('Server exited');

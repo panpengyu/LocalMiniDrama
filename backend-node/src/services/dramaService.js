@@ -1031,7 +1031,7 @@ function sync3DFieldsToTable(db, dramaId, layout, log) {
 }
 
 /** 保存画布布局 / 工作流组到 metadata（合并现有 metadata） */
-function saveCanvasLayout(db, log, dramaId, req) {
+function saveCanvasLayout(db, log, dramaId, req, operator) {
   const drama = getDramaById(db, Number(dramaId));
   if (!drama) return null;
   const layout = req?.canvas_layout;
@@ -1070,6 +1070,22 @@ function saveCanvasLayout(db, log, dramaId, req) {
   // S9-T07: 同步 3D 字段到 canvas_layouts 表（便于独立查询，失败不阻塞）
   if (layout) {
     sync3DFieldsToTable(db, Number(dramaId), layout, log);
+  }
+
+  // S11-T06: 画布保存自动创建版本快照（失败不阻塞主流程）
+  if (layout) {
+    try {
+      const versionService = require('./versionService');
+      versionService.createSnapshot(db, log, Number(dramaId), layout, {
+        operatorId: operator?.id,
+        operatorName: operator?.username || operator?.name,
+        source: 'save',
+      });
+    } catch (err) {
+      if (log && typeof log.warn === 'function') {
+        log.warn('S11-T06 版本快照创建失败(非致命)', { drama_id: dramaId, error: err.message });
+      }
+    }
   }
 
   log.info('Canvas state saved', {

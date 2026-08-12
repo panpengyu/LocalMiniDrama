@@ -431,6 +431,10 @@ function setupRouter(cfg, db, log) {
   // ---------- BGM生成模块（Sprint 8: S8-T04） ----------
   r.use('/ai/bgm', bgmRoutes(db, log));
 
+  // ---------- 团队协作 + 版本管理模块（Sprint 11: S11-T02/T04/T05/T06/T07/T08） ----------
+  const collaborationRoutes = require('./collaboration');
+  r.use('/', collaborationRoutes(db, log));
+
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (req, res) => {
     const cdnService = require('../services/cdnService');
