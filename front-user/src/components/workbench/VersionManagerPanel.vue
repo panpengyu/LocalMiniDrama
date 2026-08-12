@@ -59,7 +59,8 @@
               size="small"
               text
               type="primary"
-              :disabled="v.version_no === latestVersionNo"
+              :disabled="v.version_no === latestVersionNo || rollingBack"
+              :loading="rollingBack"
               @click="handleRollback(v)"
             >
               回退到此版本
@@ -127,6 +128,8 @@ const visible = computed({
 })
 
 const loading = ref(false)
+// 前端防重提交：回退进行中标记，避免 confirm 弹窗等待期间重复触发并发回退
+const rollingBack = ref(false)
 const versions = ref([])
 const compareSelection = ref([])
 const diffVisible = ref(false)
@@ -168,6 +171,7 @@ function toggleCompare(versionNo, checked) {
 }
 
 async function handleCompare() {
+  if (!props.dramaId) return ElMessage.warning('未指定项目，无法对比版本')
   if (compareSelection.value.length !== 2) return
   const [a, b] = [...compareSelection.value].sort((x, y) => x - y)
   loading.value = true
@@ -183,6 +187,7 @@ async function handleCompare() {
 }
 
 async function handleSnapshot() {
+  if (!props.dramaId) return ElMessage.warning('未指定项目，无法创建快照')
   try {
     await collaborationAPI.createSnapshot(props.dramaId, '手动创建快照')
     ElMessage.success('已创建版本快照')
@@ -193,25 +198,50 @@ async function handleSnapshot() {
 }
 
 async function handleRollback(v) {
-  try {
-    await ElMessageBox.confirm(
-      `确定回退到版本 v${v.version_no} 吗？当前状态将作为新版本保留，可再次回退。`,
-      '一键回退',
-      { type: 'warning', confirmButtonText: '确认回退', cancelButtonText: '取消' }
-    )
-  } catch (_) {
-    return
+  // 边界守卫：缺少项目上下文
+  if (!props.dramaId) return ElMessage.warning('未指定项目，无法回退版本')
+  // 边界守卫：目标版本非法（防止空/无效版本号）
+  if (!v || v.version_no == null) return ElMessage.warning('目标版本无效，无法回退')
+  // 边界守卫：已是当前（最新）版本，无需回退（防止程序化调用绕过按钮禁用态）
+  if (v.version_no === latestVersionNo.value) {
+    return ElMessage.info(`v${v.version_no} 已是当前版本，无需回退`)
   }
-  loading.value = true
+  // 防重提交守卫：回退进行中（含 confirm 等待期）直接拒绝，避免多次触发并发回退
+  if (rollingBack.value) {
+    return ElMessage.warning('已有回退操作进行中，请稍候…')
+  }
+  rollingBack.value = true
   try {
-    const res = await collaborationAPI.rollback(props.dramaId, v.version_no)
-    ElMessage.success(`已回退到 v${v.version_no}`)
-    emit('rolled-back', res?.data || res)
-    await loadVersions()
-  } catch (err) {
-    ElMessage.error('回退失败：' + (err?.message || err))
+    try {
+      await ElMessageBox.confirm(
+        `确定回退到版本 v${v.version_no} 吗？当前状态将作为新版本保留，可再次回退。`,
+        '一键回退',
+        { type: 'warning', confirmButtonText: '确认回退', cancelButtonText: '取消' }
+      )
+    } catch (_) {
+      return
+    }
+    loading.value = true
+    try {
+      const res = await collaborationAPI.rollback(props.dramaId, v.version_no)
+      ElMessage.success(`已回退到 v${v.version_no}`)
+      emit('rolled-back', res?.data || res)
+      await loadVersions()
+    } catch (err) {
+      // 后端并发乐观锁冲突（HTTP 409）：提示刷新后重试，并刷新版本列表
+      const code = err?.response?.data?.error?.code || err?.code
+      const msg = err?.response?.data?.error?.message || err?.message || err
+      if (code === 'CONFLICT' || err?.response?.status === 409) {
+        ElMessage.warning('画布在回退期间已被其他成员修改，已为你刷新版本列表，请确认后重试')
+        await loadVersions()
+      } else {
+        ElMessage.error('回退失败：' + msg)
+      }
+    } finally {
+      loading.value = false
+    }
   } finally {
-    loading.value = false
+    rollingBack.value = false
   }
 }
 

@@ -119,6 +119,18 @@ function forbidden(res, message) {
 }
 
 /**
+ * 资源冲突响应（HTTP 409）
+ *
+ * 用于并发写冲突（如乐观锁 CAS 失败），提示客户端刷新后重试。
+ *
+ * @param {object} res - Express Response 对象
+ * @param {string} message - 错误消息（默认：资源冲突）
+ */
+function conflict(res, message) {
+  error(res, 409, 'CONFLICT', message || '资源冲突，请刷新后重试');
+}
+
+/**
  * 未授权响应（HTTP 401）
  * 
  * @param {object} res - Express Response 对象
@@ -147,6 +159,7 @@ module.exports = {
   badRequest,
   notFound,
   forbidden,
+  conflict,
   unauthorized,
   internalError,
 };

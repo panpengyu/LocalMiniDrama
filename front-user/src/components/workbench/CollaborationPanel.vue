@@ -185,7 +185,32 @@
                 :value="m.user_id"
               />
             </el-select>
+            <el-select
+              v-model="auditFilter.sinceMinutes"
+              size="small"
+              clearable
+              placeholder="时间范围"
+              style="width: 120px"
+              @change="loadActivities"
+            >
+              <el-option
+                v-for="opt in TIME_RANGE_OPTIONS"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
             <el-button size="small" :icon="Search" @click="loadActivities">查询</el-button>
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :icon="Download"
+              :loading="exportingAudit"
+              @click="exportRecentActivities"
+            >
+              导出最近5分钟
+            </el-button>
           </div>
           <el-table :data="activities" size="small" v-loading="loadingAudit" max-height="360" empty-text="暂无操作记录">
             <el-table-column label="时间" width="140">
@@ -228,7 +253,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search, Download } from '@element-plus/icons-vue'
 import collaborationAPI from '@/api/collaboration'
 
 const props = defineProps({
@@ -265,6 +290,14 @@ const ACTION_LABELS = {
   comment: '评论', version_rollback: '版本回退'
 }
 
+// 审计时间范围快捷选项（值为分钟数），默认「最近5分钟」
+const TIME_RANGE_OPTIONS = [
+  { label: '最近5分钟', value: 5 },
+  { label: '最近15分钟', value: 15 },
+  { label: '最近1小时', value: 60 },
+  { label: '最近24小时', value: 1440 }
+]
+
 const activeTab = ref('members')
 
 const members = ref([])
@@ -273,6 +306,8 @@ const notifications = ref([])
 const loadingNotif = ref(false)
 const activities = ref([])
 const loadingAudit = ref(false)
+// 审计导出进行中标记（防重复点击）
+const exportingAudit = ref(false)
 const loadingLocks = ref(false)
 const lockRowsLocal = ref([])
 const comments = ref([])
@@ -281,7 +316,7 @@ const commentStreamRef = ref(null)
 
 const addMemberVisible = ref(false)
 const addForm = reactive({ userId: '', roleTag: 'viewer' })
-const auditFilter = reactive({ actionType: '', userId: '' })
+const auditFilter = reactive({ actionType: '', userId: '', sinceMinutes: null })
 
 const canManage = computed(() => props.myRoleTag === 'owner')
 const unreadCount = computed(() => notifications.value.filter((n) => !n.is_read).length)
@@ -307,6 +342,13 @@ function formatTime(t) {
 }
 
 function unwrap(res) { return res?.data !== undefined ? res.data : res }
+
+// 将 Date 转为 MySQL 本地时区的 'YYYY-MM-DD HH:MM:SS' 字符串（会话时区=SYSTEM，故用本地时间）
+function toMysqlDateTime(d) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
 async function loadMembers() {
   if (!props.dramaId) return
@@ -350,11 +392,93 @@ async function loadActivities() {
     const params = {}
     if (auditFilter.actionType) params.actionType = auditFilter.actionType
     if (auditFilter.userId) params.userId = auditFilter.userId
+    // 时间范围过滤：仅查看最近 N 分钟内的操作记录
+    if (auditFilter.sinceMinutes) {
+      params.startTime = toMysqlDateTime(new Date(Date.now() - auditFilter.sinceMinutes * 60 * 1000))
+    }
     activities.value = unwrap(await collaborationAPI.listActivities(props.dramaId, params)) || []
   } catch (err) {
     ElMessage.error('查询审计失败：' + (err?.message || err))
   } finally {
     loadingAudit.value = false
+  }
+}
+
+// CSV 单元格转义：含逗号/引号/换行时用双引号包裹并转义内部引号
+function csvCell(value) {
+  if (value == null) return ''
+  const s = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"'
+  return s
+}
+
+// 将 detail 字段安全转为可读字符串（后端可能存 JSON 字符串或对象）
+function formatDetail(detail) {
+  if (detail == null || detail === '') return ''
+  if (typeof detail === 'object') return JSON.stringify(detail)
+  // 尝试解析 JSON 字符串，失败则原样返回
+  try {
+    const obj = JSON.parse(detail)
+    return typeof obj === 'object' ? JSON.stringify(obj) : String(detail)
+  } catch (_) {
+    return String(detail)
+  }
+}
+
+/**
+ * 导出最近 5 分钟的操作记录为 CSV 文件，方便生成测试报告。
+ * - 独立于当前时间范围下拉：固定拉取最近 5 分钟窗口
+ * - 仍然沿用当前的「操作类型 / 成员」过滤条件，便于聚焦特定操作
+ * - CSV 列：时间 / 操作者 / 操作类型(中文) / 操作类型(原始) / 目标节点 / 详情
+ * - 带 UTF-8 BOM，保证 Excel 打开中文不乱码
+ */
+async function exportRecentActivities() {
+  if (!props.dramaId) return ElMessage.warning('未指定项目，无法导出')
+  if (exportingAudit.value) return
+  exportingAudit.value = true
+  try {
+    const WINDOW_MINUTES = 5
+    const since = new Date(Date.now() - WINDOW_MINUTES * 60 * 1000)
+    const params = { startTime: toMysqlDateTime(since), limit: 1000 }
+    if (auditFilter.actionType) params.actionType = auditFilter.actionType
+    if (auditFilter.userId) params.userId = auditFilter.userId
+
+    const rows = unwrap(await collaborationAPI.listActivities(props.dramaId, params)) || []
+    if (!rows.length) {
+      ElMessage.info('最近 5 分钟内暂无操作记录，无需导出')
+      return
+    }
+
+    const header = ['时间', '操作者', '操作类型', '操作类型(原始)', '目标节点', '详情']
+    const lines = [header.map(csvCell).join(',')]
+    for (const r of rows) {
+      lines.push([
+        csvCell(r.created_at),
+        csvCell(r.user_name || (r.user_id != null ? '用户#' + r.user_id : '')),
+        csvCell(actionLabel(r.action_type)),
+        csvCell(r.action_type),
+        csvCell(r.target_key),
+        csvCell(formatDetail(r.detail)),
+      ].join(','))
+    }
+    // UTF-8 BOM + CRLF 行尾，兼容 Excel
+    const csv = '\uFEFF' + lines.join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = toMysqlDateTime(new Date()).replace(/[: ]/g, '-')
+    a.href = url
+    a.download = `审计记录_最近5分钟_项目${props.dramaId}_${ts}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // 释放对象 URL（延迟以确保下载已触发）
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    ElMessage.success(`已导出最近 5 分钟共 ${rows.length} 条操作记录`)
+  } catch (err) {
+    ElMessage.error('导出失败：' + (err?.message || err))
+  } finally {
+    exportingAudit.value = false
   }
 }
 

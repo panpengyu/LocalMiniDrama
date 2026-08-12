@@ -1421,6 +1421,14 @@ collab.on('onComment', (data) => {
 collab.on('onConnectError', (err) => {
   log.warn('[S11-T01] 协作连接失败', { msg: err?.message })
 })
+collab.on('onReconnect', () => {
+  // S11-T01: socket 断线重连成功 → 锁快照已由 useCollaboration._joinRoom 自动重建；
+  // 这里补齐通知与锁行的 REST 重刷，确保协作面板在重连后状态完整同步。
+  log.info('[S11-T01] 协作已重连，同步锁状态与通知')
+  ElMessage.success('实时协作已恢复连接')
+  collabPanelRef.value?.refreshLocks?.()
+  collabPanelRef.value?.refreshNotifications?.()
+})
 
 function bumpUnread() {
   collabUnread.value += 1

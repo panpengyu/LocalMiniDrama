@@ -117,12 +117,13 @@ function collaborationRoutes(db, log) {
     }
   });
 
-  router.post('/dramas/:id/versions/:versionNo/rollback', requireAuth, (req, res) => {
+  router.post('/dramas/:id/versions/:versionNo/rollback', requireAuth, async (req, res) => {
     const dramaId = Number(req.params.id);
     // 回退是高危操作，要求 manage 能力（owner / super_admin）
     if (!ensureCapability(req, res, dramaId, 'manage')) return;
     try {
-      const result = versionService.rollback(db, log, dramaId, Number(req.params.versionNo), {
+      // rollback 现返回 Promise（内部经 per-drama 队列串行化 + updated_at 乐观锁 CAS）
+      const result = await versionService.rollback(db, log, dramaId, Number(req.params.versionNo), {
         operatorId: req.user.id,
         operatorName: req.user.username || req.user.name,
       });
@@ -140,6 +141,8 @@ function collaborationRoutes(db, log) {
       response.success(res, result);
     } catch (err) {
       if (err.code === 'NOT_FOUND') return response.notFound(res, err.message);
+      // 并发回退乐观锁冲突：返回 409，前端提示刷新重试
+      if (err.code === 'CONFLICT') return response.conflict(res, err.message);
       log.error('[S11-T06] 版本回退失败', { error: err.message });
       response.internalError(res, err.message);
     }

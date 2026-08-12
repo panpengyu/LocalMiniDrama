@@ -37,11 +37,15 @@ export function useCollaboration() {
     onMemberLeft: null,
     onComment: null,
     onLocksReleased: null,
-    onConnectError: null
+    onConnectError: null,
+    // 断线重连成功后触发（首次连接不触发），供上层重刷通知等非锁状态
+    onReconnect: null
   }
 
   let renewTimer = null
   const myLockedKeys = new Set()
+  // 标记是否已完成过首次连接，用于区分「首连」与「重连」
+  let hasConnectedOnce = false
 
   function on(event, fn) {
     if (event in handlers) handlers[event] = fn
@@ -65,6 +69,8 @@ export function useCollaboration() {
   function connect(dramaId) {
     if (socket.value) disconnect()
     currentDramaId.value = Number(dramaId)
+    // 全新连接会话：重置「首连」标记，避免把首个 connect 误判为重连
+    hasConnectedOnce = false
     const token = localStorage.getItem(TOKEN_KEY) || ''
 
     const s = io('/', {
@@ -81,6 +87,11 @@ export function useCollaboration() {
     s.on('connect', () => {
       connected.value = true
       _joinRoom()
+      // 首次连接由上层 onOpen 初始化；断线重连时通知上层重刷锁/通知等非锁快照
+      if (hasConnectedOnce) {
+        if (handlers.onReconnect) handlers.onReconnect()
+      }
+      hasConnectedOnce = true
     })
 
     s.on('connect_error', (err) => {

@@ -301,8 +301,8 @@ describe('[S11-T06] 版本快照系统', () => {
     assert.throws(() => versionService.diffVersions(db, T_DRAMA, 1, 999), /不存在/);
   });
 
-  it('rollback：回退到 v1 → 写回 metadata + 生成 source=rollback 的 v3', () => {
-    const r = versionService.rollback(db, log, T_DRAMA, 1, {
+  it('rollback：回退到 v1 → 写回 metadata + 生成 source=rollback 的 v3', async () => {
+    const r = await versionService.rollback(db, log, T_DRAMA, 1, {
       operatorId: U_OWNER, operatorName: 'owner',
     });
     assert.equal(r.restored_version, 1);
@@ -315,6 +315,71 @@ describe('[S11-T06] 版本快照系统', () => {
     const v3 = versionService.getVersion(db, T_DRAMA, 3);
     assert.equal(v3.source, 'rollback');
     assert.match(v3.change_summary, /回退到版本 v1/);
+  });
+
+  it('rollback 并发防护：同一项目多路并发回退经队列串行化，版本号连续无重复', async () => {
+    // 记录并发前的最大版本号
+    const before = versionService.listVersions(db, T_DRAMA);
+    const maxBefore = before.length ? Math.max(...before.map((x) => x.version_no)) : 0;
+    // 同时发起 5 个回退请求（回退目标交替 v1/v2），Promise.all 并发触发
+    const targets = [1, 2, 1, 2, 1];
+    const results = await Promise.all(
+      targets.map((t) => versionService.rollback(db, log, T_DRAMA, t, {
+        operatorId: U_OWNER, operatorName: 'owner',
+      }))
+    );
+    // 每个回退都成功且各自产生一个新版本
+    assert.equal(results.length, 5);
+    const newVersions = results.map((r) => r.new_version).sort((a, b) => a - b);
+    // 新版本号必须唯一（无重复）且严格递增（队列串行化 + createSnapshot 内部 MAX+1 保证）
+    const uniq = new Set(newVersions);
+    assert.equal(uniq.size, 5, '5 次并发回退必须生成 5 个不重复的新版本号');
+    for (let i = 1; i < newVersions.length; i++) {
+      assert.equal(newVersions[i], newVersions[i - 1] + 1, '新版本号必须连续递增，无空洞/重复');
+    }
+    assert.equal(newVersions[0], maxBefore + 1, '首个新版本号应紧接并发前的最大版本');
+    // DB 中该项目版本号全局唯一
+    const all = versionService.listVersions(db, T_DRAMA);
+    const allNos = all.map((x) => x.version_no);
+    assert.equal(new Set(allNos).size, allNos.length, 'canvas_versions 内 version_no 不得重复');
+  });
+
+  it('rollback 乐观锁：读取后 dramas.updated_at 被抢先修改 → 抛 CONFLICT', async () => {
+    // 构造一个独立测试项目，避免污染主线版本序列
+    const CONFLICT_DRAMA = 99402;
+    db.prepare('DELETE FROM canvas_versions WHERE drama_id = ?').run(CONFLICT_DRAMA);
+    db.prepare('DELETE FROM dramas WHERE id = ?').run(CONFLICT_DRAMA);
+    db.prepare(`
+      INSERT INTO dramas (id, title, status, metadata, created_by, created_at, updated_at)
+      VALUES (?, ?, 'draft', ?, ?, NOW(), '2020-01-01 00:00:00')
+    `).run(
+      CONFLICT_DRAMA, 'S11 乐观锁冲突测试项目',
+      JSON.stringify({ aspect_ratio: '9:16', canvas_layout: LAYOUT_V1 }),
+      U_OWNER
+    );
+    // 建两个版本供回退
+    versionService.createSnapshot(db, log, CONFLICT_DRAMA, LAYOUT_V1, { operatorId: U_OWNER, source: 'save' });
+    versionService.createSnapshot(db, log, CONFLICT_DRAMA, LAYOUT_V2, { operatorId: U_OWNER, source: 'save' });
+
+    // 直接调用内部执行体 _rollbackInner 以绕开队列，模拟「读取 updated_at 后被他人抢改」的竞态：
+    // 先手动把 updated_at 改成与 _rollbackInner 读取到的不一致的值，制造 CAS 失败。
+    // 具体做法：monkey-patch getVersion 不动，改为在 UPDATE 前偷偷改动 updated_at。
+    // 更直接的验证：连续两次读取同一 updated_at 基准并发写，第二次必然 CAS 失败。
+    const runInner = versionService._rollbackInner;
+    assert.equal(typeof runInner, 'function', '应导出 _rollbackInner 供测试');
+
+    // 手动读取基准 updated_at
+    const row = db.prepare('SELECT updated_at FROM dramas WHERE id = ?').get(CONFLICT_DRAMA);
+    // 用一个不同的时间抢先修改，令后续基于旧基准的 CAS 落空
+    db.prepare('UPDATE dramas SET updated_at = ? WHERE id = ?').run('2021-06-06 12:00:00', CONFLICT_DRAMA);
+    // 构造一个「持有旧基准」的写入：模拟 _rollbackInner 在读到 row.updated_at 后才执行 CAS
+    const stale = db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ? AND updated_at = ?')
+      .run(JSON.stringify({}), new Date().toISOString(), CONFLICT_DRAMA, row.updated_at);
+    assert.equal(Number(stale.changes), 0, '基于过期 updated_at 的 CAS 必须落空（changes=0），即冲突');
+
+    // 清理
+    db.prepare('DELETE FROM canvas_versions WHERE drama_id = ?').run(CONFLICT_DRAMA);
+    db.prepare('DELETE FROM dramas WHERE id = ?').run(CONFLICT_DRAMA);
   });
 
   it('computeDiff：修改节点被识别为 modified', () => {

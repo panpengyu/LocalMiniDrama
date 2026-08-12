@@ -20,6 +20,41 @@
 const storageLayout = require('./storageLayout');
 
 /**
+ * 回退串行化队列（应用层「队列机制」）。
+ *
+ * 背景：rollback 是「读 dramas.metadata → 改 → 写回 → 同步 canvas_layouts → 建新快照」的
+ * 读-改-写复合操作，且这三步无法用单个 MySQL 事务包裹（createSnapshot 内部已开事务，
+ * MySQL 不支持事务嵌套，嵌套 BEGIN 会隐式提交外层）。因此在应用层为「每个 drama」维护
+ * 一条串行执行链：同一项目的并发回退请求会排队，一个执行完再执行下一个，杜绝多人同时
+ * 回退时读-改-写交错导致的中间态覆盖 / 版本号竞争。
+ *
+ * 说明：本进程内单实例后端（单连接 sync-mysql）下，队列即可保证串行；配合下方
+ * dramas.updated_at 乐观锁 CAS，即便未来横向扩容为多实例，也能在数据库层兜底检测冲突。
+ *
+ * key: drama_id -> Promise（该项目当前排队链的尾部）
+ */
+const _rollbackChains = new Map();
+
+/**
+ * 将一段回退逻辑排入指定 drama 的串行队列，返回其结果 Promise。
+ * @param {number} dramaId
+ * @param {function} task 实际执行回退的同步函数（返回结果对象）
+ * @returns {Promise<object>}
+ */
+function _enqueueRollback(dramaId, task) {
+  const key = Number(dramaId);
+  const prev = _rollbackChains.get(key) || Promise.resolve();
+  // 无论上一个成功或失败，都接着排队执行当前任务（catch 吞掉前者异常仅用于链式衔接）
+  const next = prev.catch(() => {}).then(() => task());
+  // 记录链尾；任务结束后若自己仍是链尾则清理，避免 Map 无限增长
+  _rollbackChains.set(key, next);
+  next.finally(() => {
+    if (_rollbackChains.get(key) === next) _rollbackChains.delete(key);
+  }).catch(() => {});
+  return next;
+}
+
+/**
  * 从 canvas_layout 中安全提取节点集合。
  * 兼容两种结构：nodes 为对象字典 {id:{...}} 或数组 [{...}]。
  * @returns {object} 归一化为 { [nodeId]: nodeObject }
@@ -274,14 +309,27 @@ function diffVersions(db, dramaId, fromVersionNo, toVersionNo) {
  *
  * 流程：
  *   1. 读取目标版本快照
- *   2. 写回 dramas.metadata.canvas_layout（保真恢复）
+ *   2. 写回 dramas.metadata.canvas_layout（保真恢复）—— 带 updated_at 乐观锁 CAS
  *   3. 同步到 canvas_layouts 表（复用 dramaService.sync3DFieldsToTable，避免循环依赖用延迟 require）
  *   4. 以 source='rollback' 再创建一个新版本（保证历史线性可追溯，不销毁中间版本）
  *
- * @returns {object} { restored_version, new_version }
+ * 并发防护（多人同时回退）：
+ *   - 队列机制：同一 drama 的回退经 _enqueueRollback 串行化，杜绝读-改-写交错
+ *   - 乐观锁：UPDATE dramas ... WHERE id=? AND updated_at=<读取时的值>，若 changes===0
+ *     说明期间已被他人修改，抛出 CONFLICT，避免「后写覆盖先写」（last-write-wins）
+ *
+ * @returns {Promise<object>} { restored_version, new_version }
  */
 function rollback(db, log, dramaId, targetVersionNo, opts = {}) {
   const id = Number(dramaId);
+  // 排入该项目的串行队列，返回 Promise（路由需 await）
+  return _enqueueRollback(id, () => _rollbackInner(db, log, id, targetVersionNo, opts));
+}
+
+/**
+ * 回退的实际执行体（已在串行队列中，同一 drama 不会并发进入）。
+ */
+function _rollbackInner(db, log, id, targetVersionNo, opts = {}) {
   const target = getVersion(db, id, targetVersionNo);
   if (!target || !target.layout) {
     const e = new Error(`回退目标版本 ${targetVersionNo} 不存在或快照损坏`);
@@ -289,14 +337,47 @@ function rollback(db, log, dramaId, targetVersionNo, opts = {}) {
     throw e;
   }
 
-  const drama = db.prepare('SELECT metadata FROM dramas WHERE id = ?').get(id);
+  // 读取当前 metadata 与 updated_at 作为乐观锁基准。
+  // 注意：MySQL 侧 sync-mysql 会把 DATETIME 以 ISO 字符串（含 T/Z、UTC 时区）返回，
+  // 直接回填到 WHERE updated_at = ? 会因时区/格式差异比对落空。因此统一用
+  // DATE_FORMAT 取「会话本地时区的 'YYYY-MM-DD HH:MM:SS' 字符串」作为 CAS 令牌，
+  // 并在 WHERE 中同样用 DATE_FORMAT 比对，规避驱动层日期格式化歧义。
+  const isMysql = db.type === 'mysql';
+  const drama = isMysql
+    ? db.prepare("SELECT metadata, DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS ua_token FROM dramas WHERE id = ?").get(id)
+    : db.prepare('SELECT metadata, updated_at AS ua_token FROM dramas WHERE id = ?').get(id);
   if (!drama) { const e = new Error('项目不存在'); e.code = 'NOT_FOUND'; throw e; }
 
   const meta = storageLayout.parseMetadata(drama.metadata);
   meta.canvas_layout = target.layout;
   const now = new Date().toISOString();
-  db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ?')
-    .run(JSON.stringify(meta), now, id);
+
+  // 乐观锁 CAS：仅当 updated_at 未变（无人在读取后抢先修改）时才写入。
+  // ua_token 为 NULL 时退化为 IS NULL 条件，保证历史数据也能命中。
+  const prevToken = drama.ua_token;
+  let cas;
+  if (prevToken == null) {
+    cas = isMysql
+      ? db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ? AND updated_at IS NULL')
+          .run(JSON.stringify(meta), now, id)
+      : db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ? AND updated_at IS NULL')
+          .run(JSON.stringify(meta), now, id);
+  } else if (isMysql) {
+    cas = db.prepare("UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ? AND DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') = ?")
+      .run(JSON.stringify(meta), now, id, prevToken);
+  } else {
+    cas = db.prepare('UPDATE dramas SET metadata = ?, updated_at = ? WHERE id = ? AND updated_at = ?')
+      .run(JSON.stringify(meta), now, id, prevToken);
+  }
+
+  if (!cas || Number(cas.changes) === 0) {
+    const e = new Error('项目画布在回退期间已被其他操作修改，请刷新后重试');
+    e.code = 'CONFLICT';
+    if (log && log.warn) {
+      log.warn('[S11-T06] rollback 乐观锁冲突', { drama_id: id, target_version: targetVersionNo });
+    }
+    throw e;
+  }
 
   // 同步到 canvas_layouts 表（延迟 require 规避与 dramaService 的循环依赖）
   try {
@@ -340,4 +421,5 @@ module.exports = {
   summarizeDiff,
   extractNodes,
   extractEdges,
+  _rollbackInner,
 };
