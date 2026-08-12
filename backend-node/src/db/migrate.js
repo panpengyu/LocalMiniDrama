@@ -42,6 +42,9 @@ function runOne(database, sql, file, index) {
       console.log('Skip (truncated wrong value):', file + (index >= 0 ? ' #' + (index + 1) : ''));
     } else if (err.code === 'ER_PARSE_ERROR') {
       console.log('Skip (parse error):', file + (index >= 0 ? ' #' + (index + 1) : ''));
+    } else if (err.code === 'SQLITE_ERROR' && msg.includes('syntax error') && (msg.includes('modify') || msg.includes('change'))) {
+      // SQLite 不支持 ALTER TABLE ... MODIFY/CHANGE COLUMN；其为动态类型，无需改列，安全跳过
+      console.log('Skip (SQLite unsupported MODIFY/CHANGE):', file + (index >= 0 ? ' #' + (index + 1) : ''));
     } else if (err.code === 'ER_TABLE_EXISTS_ERROR' || err.code === 'ER_CANT_RENAME_TABLE') {
       console.log('Skip (table exists/rename conflict):', file + (index >= 0 ? ' #' + (index + 1) : ''));
     } else {
@@ -803,6 +806,141 @@ function ensureAllColumns(database) {
     { name: 'check_method', type: "VARCHAR(50) DEFAULT 'cosine_embedding'" },
     { name: 'detail_json', type: 'TEXT' },
     { name: 'retry_count', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  // ===== Sprint 12: 素材管理 + 对象存储 + 后台深度运营 =====
+  // S12-T02 三级素材库：为三张既有库表补 scope 归属列（双库统一）
+  const libraryScopeCols = [
+    { name: 'scope', type: "VARCHAR(16) NOT NULL DEFAULT 'project'" },
+    { name: 'owner_id', type: 'INTEGER' },
+    { name: 'team_id', type: 'INTEGER' },
+    { name: 'enterprise_id', type: 'INTEGER' },
+    { name: 'visibility', type: "VARCHAR(16) NOT NULL DEFAULT 'private'" },
+  ];
+  ensure('character_libraries', libraryScopeCols);
+  ensure('scene_libraries', libraryScopeCols);
+  ensure('prop_libraries', libraryScopeCols);
+
+  // S12-T04 用户最近登录时间
+  ensure('users', [
+    { name: 'last_login_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T01 素材标签
+  ensure('material_tags', [
+    { name: 'dimension', type: "VARCHAR(16) NOT NULL DEFAULT 'content'" },
+    { name: 'name', type: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+  ensure('material_tag_relations', [
+    { name: 'material_table', type: "VARCHAR(32) NOT NULL DEFAULT ''" },
+    { name: 'material_id', type: 'INTEGER DEFAULT 0' },
+    { name: 'tag_id', type: 'INTEGER DEFAULT 0' },
+    { name: 'source', type: "VARCHAR(12) NOT NULL DEFAULT 'ai'" },
+    { name: 'confidence', type: 'FLOAT NOT NULL DEFAULT 1' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T03 存储对象元数据
+  ensure('storage_objects', [
+    { name: 'backend', type: "VARCHAR(16) NOT NULL DEFAULT 'local'" },
+    { name: 'bucket', type: 'VARCHAR(128)' },
+    { name: 'object_key', type: "VARCHAR(512) NOT NULL DEFAULT ''" },
+    { name: 'url', type: 'VARCHAR(1024)' },
+    { name: 'category', type: 'VARCHAR(32)' },
+    { name: 'drama_id', type: 'INTEGER' },
+    { name: 'size_bytes', type: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'mime_type', type: 'VARCHAR(128)' },
+    { name: 'checksum', type: 'VARCHAR(128)' },
+    { name: 'lifecycle', type: "VARCHAR(16) NOT NULL DEFAULT 'active'" },
+    { name: 'last_access_at', type: 'DATETIME' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T04 用户行为流水 + 生命周期
+  ensure('user_activity_logs', [
+    { name: 'user_id', type: 'INTEGER DEFAULT 0' },
+    { name: 'action', type: "VARCHAR(48) NOT NULL DEFAULT ''" },
+    { name: 'target_type', type: 'VARCHAR(32)' },
+    { name: 'target_id', type: 'VARCHAR(64)' },
+    { name: 'meta', type: 'TEXT' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+  ensure('user_lifecycle', [
+    { name: 'user_id', type: 'INTEGER' },
+    { name: 'stage', type: "VARCHAR(16) NOT NULL DEFAULT 'new'" },
+    { name: 'health_score', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'churn_risk', type: "VARCHAR(12) NOT NULL DEFAULT 'low'" },
+    { name: 'active_days_30', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'total_actions', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'total_recharge', type: 'DECIMAL(12,2) NOT NULL DEFAULT 0' },
+    { name: 'profile_tags', type: 'VARCHAR(512)' },
+    { name: 'last_active_at', type: 'DATETIME' },
+    { name: 'computed_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T05 计费规则 + 财务日报
+  ensure('billing_rules', [
+    { name: 'name', type: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'business_type', type: "VARCHAR(32) NOT NULL DEFAULT 'image'" },
+    { name: 'user_level', type: 'VARCHAR(24)' },
+    { name: 'unit_points', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'discount', type: 'FLOAT NOT NULL DEFAULT 1' },
+    { name: 'enabled', type: 'INTEGER NOT NULL DEFAULT 1' },
+    { name: 'priority', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'remark', type: 'VARCHAR(255)' },
+    { name: 'created_at', type: 'DATETIME' },
+    { name: 'updated_at', type: 'DATETIME' },
+  ]);
+  ensure('finance_daily_reports', [
+    { name: 'report_date', type: 'DATE' },
+    { name: 'revenue', type: 'DECIMAL(14,2) NOT NULL DEFAULT 0' },
+    { name: 'recharge_points', type: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'consumed_points', type: 'BIGINT NOT NULL DEFAULT 0' },
+    { name: 'model_cost', type: 'DECIMAL(14,4) NOT NULL DEFAULT 0' },
+    { name: 'gross_profit', type: 'DECIMAL(14,2) NOT NULL DEFAULT 0' },
+    { name: 'paying_users', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'arpu', type: 'DECIMAL(12,4) NOT NULL DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T06 系统指标采样
+  ensure('system_metric_snapshots', [
+    { name: 'cpu_percent', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'mem_percent', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'disk_percent', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'load_avg', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'queue_waiting', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'queue_active', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'api_qpm', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'api_error_rate', type: 'FLOAT NOT NULL DEFAULT 0' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+
+  // S12-T07 操作审计 + 登录日志
+  ensure('operation_audit_logs', [
+    { name: 'actor_id', type: 'INTEGER' },
+    { name: 'actor_name', type: 'VARCHAR(128)' },
+    { name: 'actor_role', type: 'VARCHAR(32)' },
+    { name: 'action', type: "VARCHAR(64) NOT NULL DEFAULT ''" },
+    { name: 'method', type: 'VARCHAR(8)' },
+    { name: 'path', type: 'VARCHAR(255)' },
+    { name: 'target_type', type: 'VARCHAR(32)' },
+    { name: 'target_id', type: 'VARCHAR(64)' },
+    { name: 'status_code', type: 'INTEGER' },
+    { name: 'ip', type: 'VARCHAR(64)' },
+    { name: 'detail', type: 'TEXT' },
+    { name: 'created_at', type: 'DATETIME' },
+  ]);
+  ensure('login_logs', [
+    { name: 'user_id', type: 'INTEGER' },
+    { name: 'username', type: 'VARCHAR(128)' },
+    { name: 'success', type: 'INTEGER NOT NULL DEFAULT 1' },
+    { name: 'ip', type: 'VARCHAR(64)' },
+    { name: 'user_agent', type: 'VARCHAR(255)' },
+    { name: 'reason', type: 'VARCHAR(128)' },
     { name: 'created_at', type: 'DATETIME' },
   ]);
 }

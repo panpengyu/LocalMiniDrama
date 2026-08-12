@@ -64,7 +64,22 @@ function resolveCategoryPaths(storagePath, category, projectSubdir) {
   return { dir: path.join(storagePath, category), relPrefix: category };
 }
 
-function uploadFile(storagePath, baseUrl, log, fileBuffer, originalName, mimeType, category, projectSubdir = null) {
+/**
+ * 保存文件到 storage，返回 { url, local_path }。
+ *
+ * @param {string} storagePath 存储根目录
+ * @param {string} baseUrl 公开访问基地址
+ * @param {object} log logger
+ * @param {Buffer} fileBuffer 文件内容
+ * @param {string} originalName 原始文件名（取扩展名）
+ * @param {string} mimeType MIME 类型
+ * @param {string} category 分类子目录
+ * @param {string|null} projectSubdir 项目子目录
+ * @param {object} [opts] Sprint12-T03 对象登记选项 { db, dramaId, backend }
+ *   传入 db 时，写入后会把该对象登记到 storage_objects 表（MySQL），用于统一检索与生命周期管理。
+ *   登记失败不影响上传主流程（best-effort）。
+ */
+function uploadFile(storagePath, baseUrl, log, fileBuffer, originalName, mimeType, category, projectSubdir = null, opts = null) {
   const { dir: categoryPath, relPrefix } = resolveCategoryPaths(storagePath, category, projectSubdir);
   ensureDir(categoryPath);
   const ext = path.extname(originalName) || '.png';
@@ -75,7 +90,40 @@ function uploadFile(storagePath, baseUrl, log, fileBuffer, originalName, mimeTyp
   const relativePath = `${relPrefix}/${name}`.replace(/\\/g, '/');
   const url = baseUrl ? `${baseUrl.replace(/\/$/, '')}/${relativePath}` : `/static/${relativePath}`;
   log.info('File uploaded', { path: filePath, url });
+  // Sprint12-T03：登记存储对象元数据（best-effort，不阻断上传）
+  registerStorageObjectSafe(log, opts, {
+    objectKey: relativePath,
+    url,
+    category,
+    mimeType,
+    sizeBytes: fileBuffer ? fileBuffer.length : 0,
+    buffer: fileBuffer,
+  });
   return { url, local_path: relativePath };
+}
+
+/**
+ * 尽力登记存储对象到 storage_objects（S12-T03）。
+ * 仅当 opts.db 存在时执行；任何异常都被吞掉并只记 warn，不影响上传主流程。
+ */
+function registerStorageObjectSafe(log, opts, meta) {
+  if (!opts || !opts.db) return;
+  try {
+    const storageObjectService = require('./storageObjectService');
+    storageObjectService.registerObject(opts.db, log, {
+      backend: opts.backend || 'local',
+      bucket: opts.bucket || null,
+      objectKey: meta.objectKey,
+      url: meta.url,
+      category: meta.category || null,
+      dramaId: opts.dramaId != null ? opts.dramaId : null,
+      sizeBytes: meta.sizeBytes || 0,
+      mimeType: meta.mimeType || null,
+      buffer: meta.buffer || null,
+    });
+  } catch (e) {
+    try { log.warn('[S12-T03] registerStorageObject 跳过', { error: e.message }); } catch (_) {}
+  }
 }
 
 /**

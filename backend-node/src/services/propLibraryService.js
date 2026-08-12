@@ -6,6 +6,7 @@ const {
   normalizeSourceId,
   updateLibraryItem: updateExistingLibraryItem,
 } = require('./libraryDedup');
+const libraryQuery = require('./libraryQuery');
 
 function rowToItem(r) {
   return {
@@ -28,12 +29,8 @@ function rowToItem(r) {
 function listLibraryItems(db, query) {
   let sql = 'FROM prop_libraries WHERE deleted_at IS NULL';
   const params = [];
-  if (query.global === '1' || query.global === 1) {
-    sql += ' AND drama_id IS NULL';
-  } else if (query.drama_id != null && query.drama_id !== '') {
-    sql += ' AND drama_id = ?';
-    params.push(Number(query.drama_id));
-  }
+  // S12-T02 三级素材库作用域过滤
+  sql = libraryQuery.appendScopeFilters('prop_libraries', query, sql, params);
   if (query.category) {
     sql += ' AND category = ?';
     params.push(query.category);
@@ -48,6 +45,14 @@ function listLibraryItems(db, query) {
     const k = '%' + query.keyword + '%';
     params.push(k, k, k);
   }
+  // S12-T01 标签检索
+  const tagFilter = libraryQuery.appendTagFilters(db, 'prop_libraries', query, sql, params);
+  if (tagFilter.empty) {
+    const page = Math.max(1, parseInt(query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.page_size, 10) || 20));
+    return { items: [], total: 0, page, pageSize };
+  }
+  sql = tagFilter.sql;
   const countRow = db.prepare('SELECT COUNT(*) as total ' + sql).get(...params);
   const total = countRow.total || 0;
   const page = Math.max(1, parseInt(query.page, 10) || 1);

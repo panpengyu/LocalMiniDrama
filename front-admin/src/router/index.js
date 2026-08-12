@@ -24,12 +24,15 @@ const routes = [
       { path: 'user-team/users', name: 'Users', component: () => import('@/views/user-team/Users.vue'), meta: { title: '用户管理' } },
       { path: 'user-team/teams', name: 'Teams', component: () => import('@/views/user-team/Teams.vue'), meta: { title: '团队管理' } },
       { path: 'user-team/channels', name: 'UserTeamChannels', component: () => import('@/views/user-team/Channels.vue'), meta: { title: '渠道管理' } },
+      { path: 'user-team/lifecycle', name: 'UserLifecycle', component: () => import('@/views/user-team/UserLifecycle.vue'), meta: { title: '用户生命周期' } },
 
       { path: 'content-asset/works', name: 'Works', component: () => import('@/views/content-asset/Works.vue'), meta: { title: '作品管理' } },
       { path: 'content-asset/skills', name: 'Skills', component: () => import('@/views/content-asset/Skills.vue'), meta: { title: '技能管理' } },
       { path: 'content-asset/templates', name: 'AdminTemplates', component: () => import('@/views/content/Templates.vue'), meta: { title: '模板管理' } },
       { path: 'content-asset/public-assets', name: 'PublicAssets', component: () => import('@/views/content-asset/PublicAssets.vue'), meta: { title: '公共资产 / 工具库' } },
       { path: 'content-asset/actor-library', name: 'ActorLibrary', component: () => import('@/views/content-asset/ActorLibrary.vue'), meta: { title: '真人库' } },
+      { path: 'content-asset/storage-objects', name: 'StorageObjects', component: () => import('@/views/content-asset/StorageObjects.vue'), meta: { title: '存储对象管理' } },
+      { path: 'content-asset/material-tags', name: 'MaterialTags', component: () => import('@/views/content-asset/MaterialTags.vue'), meta: { title: '素材标签库' } },
 
       { path: 'operation/site-brand', name: 'SiteBrand', component: () => import('@/views/operation/SiteBrand.vue'), meta: { title: '站点品牌' } },
       { path: 'operation/changelog', name: 'Changelog', component: () => import('@/views/operation/Changelog.vue'), meta: { title: '版本日志' } },
@@ -56,7 +59,9 @@ const routes = [
       { path: 'system/params', name: 'Params', component: () => import('@/views/system/Params.vue'), meta: { title: '参数设置' } },
       { path: 'system/notices', name: 'Notices', component: () => import('@/views/system/Notices.vue'), meta: { title: '通知公告' } },
       { path: 'system/operation-logs', name: 'OperationLogs', component: () => import('@/views/system/OperationLogs.vue'), meta: { title: '操作日志' } },
-      { path: 'system/login-logs', name: 'LoginLogs', component: () => import('@/views/system/LoginLogs.vue'), meta: { title: '登录日志' } }
+      { path: 'system/login-logs', name: 'LoginLogs', component: () => import('@/views/system/LoginLogs.vue'), meta: { title: '登录日志' } },
+      { path: 'system/monitor', name: 'SystemMonitor', component: () => import('@/views/system/Monitor.vue'), meta: { title: '系统监控大屏' } },
+      { path: 'operation/data-analytics', name: 'DataAnalytics', component: () => import('@/views/operation/DataAnalytics.vue'), meta: { title: '数据分析平台' } }
     ]
   }
 ]

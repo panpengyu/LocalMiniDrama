@@ -58,6 +58,19 @@ function createApp() {
   const { resumeProcessingVideoGenerations } = require('./services/videoService');
   resumeProcessingVideoGenerations(db, log);
 
+  // ========== Sprint 12 - S12-T06: 启动系统指标周期采样器（真实数据落库 system_metric_snapshots） ==========
+  try {
+    const systemMonitorService = require('./services/systemMonitorService');
+    const monitorStorageRoot = config.storage?.local_path
+      ? (path.isAbsolute(config.storage.local_path)
+          ? config.storage.local_path
+          : path.join(process.cwd(), config.storage.local_path))
+      : path.join(process.cwd(), 'data', 'storage');
+    systemMonitorService.startSampler(db, log, { intervalMs: 30000, storageRoot: monitorStorageRoot });
+  } catch (e) {
+    log.warn('[S12-T06] 系统指标采样器启动失败（非致命）:', e.message);
+  }
+
   // ========== Sprint 1: AI编剧助手后台消费者（Bull队列） ==========
   try {
     const { startScreenwriterWorker } = require('./services/screenwriterWorker');
@@ -143,9 +156,25 @@ function createApp() {
     next();
   });
 
+  // Sprint 12 - S12-T06: API 吞吐/错误率采集中间件（进程内滑动窗口，供系统监控大屏）
+  try {
+    const systemMonitorService = require('./services/systemMonitorService');
+    app.use(systemMonitorService.apiMetricsMiddleware());
+  } catch (e) {
+    log.warn('[S12-T06] apiMetricsMiddleware 挂载失败（非致命）:', e.message);
+  }
+
   // 认证中间件：处理用户登录状态和权限验证
   const { authMiddleware } = require('./middleware/auth');
   app.use(authMiddleware);
+
+  // Sprint 12 - S12-T07: 操作审计中间件（在认证之后，req.user 已就绪）
+  try {
+    const securityService = require('./services/securityService');
+    app.use(securityService.auditMiddleware(db, log));
+  } catch (e) {
+    log.warn('[S12-T07] auditMiddleware 挂载失败（非致命）:', e.message);
+  }
 
   // 静态资源目录：统一转为绝对路径（打包 exe 下相对路径可能解析异常）
   const storageRoot = config.storage?.local_path

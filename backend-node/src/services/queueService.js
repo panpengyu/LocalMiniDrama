@@ -305,6 +305,36 @@ async function closeQueue() {
   _fallback = false;
 }
 
+/**
+ * 获取队列各状态计数（供系统监控大屏使用）。
+ * Bull 队列使用原生 getJobCounts；内存降级队列则从 jobs Map 统计。
+ * 无论是否已初始化队列都能安全返回，不抛异常。
+ */
+async function getQueueCounts() {
+  const base = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, paused: 0 };
+  try {
+    if (!_queue) {
+      await createQueue();
+    }
+    if (_queue && typeof _queue.getJobCounts === 'function') {
+      const counts = await _queue.getJobCounts();
+      return { ...base, ...counts, redisOk: _redisOk, fallback: _fallback };
+    }
+    // 内存降级队列：直接统计 jobs Map
+    if (_queue && _queue.jobs instanceof Map) {
+      for (const job of _queue.jobs.values()) {
+        if (job.status === 'pending') base.waiting += 1;
+        else if (job.status === 'processing') base.active += 1;
+        else if (job.status === 'completed') base.completed += 1;
+        else if (job.status === 'failed') base.failed += 1;
+      }
+    }
+  } catch (_) {
+    // 保底返回空计数
+  }
+  return { ...base, redisOk: _redisOk, fallback: _fallback };
+}
+
 module.exports = {
   QUEUE_NAME,
   VALID_JOB_TYPES,
@@ -316,6 +346,7 @@ module.exports = {
   registerWorker,
   onEvent,
   closeQueue,
+  getQueueCounts,
   getQueueOpts,
   getConcurrency,
   isFallback: () => _fallback,

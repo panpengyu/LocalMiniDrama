@@ -435,6 +435,34 @@ function setupRouter(cfg, db, log) {
   const collaborationRoutes = require('./collaboration');
   r.use('/', collaborationRoutes(db, log));
 
+  // ---------- 素材标签 + 三级素材库模块（Sprint 12: S12-T01/T02） ----------
+  const materialRoutes = require('./materials');
+  r.use('/', materialRoutes(db, log));
+
+  // ---------- 存储管理模块（Sprint 12: S12-T03 对象存储 / 生命周期 / 迁移追踪） ----------
+  const storageRoutes = require('./storage');
+  r.use('/', storageRoutes(cfg, db, log));
+
+  // ---------- 用户生命周期管理（Sprint 12: S12-T04） ----------
+  const lifecycleRoutes = require('./lifecycle');
+  r.use('/', lifecycleRoutes(db, log));
+
+  // ---------- 财务与计费增强（Sprint 12: S12-T05） ----------
+  const financeRoutes = require('./finance');
+  r.use('/', financeRoutes(db, log));
+
+  // ---------- 系统监控大屏（Sprint 12: S12-T06） ----------
+  const monitorRoutes = require('./monitor');
+  r.use('/', monitorRoutes(cfg, db, log));
+
+  // ---------- 权限与安全增强（Sprint 12: S12-T07 操作审计 / 登录日志 / 脱敏） ----------
+  const securityRoutes = require('./security');
+  r.use('/', securityRoutes(db, log));
+
+  // ---------- 数据分析平台（Sprint 12: S12-T08 行为/漏斗/模型效果/留存） ----------
+  const analyticsRoutes = require('./analytics');
+  r.use('/', analyticsRoutes(db, log));
+
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (req, res) => {
     const cdnService = require('../services/cdnService');

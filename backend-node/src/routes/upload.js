@@ -99,6 +99,7 @@ function routes(cfg, log, db) {
           : path.join(process.cwd(), rawStorage);
         const baseUrl = cfg?.storage?.base_url || '';
         let projectSubdir = null;
+        let dramaIdForObj = null;
         if (db) {
           const raw = req.body?.drama_id;
           const did =
@@ -107,6 +108,7 @@ function routes(cfg, log, db) {
               : NaN;
           if (Number.isFinite(did) && did > 0) {
             projectSubdir = storageLayout.getProjectStorageSubdir(db, did);
+            dramaIdForObj = did;
           }
         }
         const result = uploadService.uploadFile(
@@ -117,7 +119,9 @@ function routes(cfg, log, db) {
           req.file.originalname || 'image.png',
           req.file.mimetype,
           'uploads',
-          projectSubdir
+          projectSubdir,
+          // Sprint12-T03：登记对象元数据到 storage_objects（MySQL）
+          db ? { db, dramaId: dramaIdForObj, backend: cfg?.storage?.type || 'local' } : null
         );
         response.success(res, {
           url: result.url,

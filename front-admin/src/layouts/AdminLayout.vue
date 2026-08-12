@@ -116,7 +116,8 @@ const menuGroups = [
     children: [
       { path: '/user-team/users', title: '用户管理' },
       { path: '/user-team/teams', title: '团队管理' },
-      { path: '/user-team/channels', title: '渠道管理' }
+      { path: '/user-team/channels', title: '渠道管理' },
+      { path: '/user-team/lifecycle', title: '用户生命周期' }
     ]
   },
   {
@@ -127,7 +128,9 @@ const menuGroups = [
       { path: '/content-asset/skills', title: '技能管理' },
       { path: '/content-asset/templates', title: '模板管理' },
       { path: '/content-asset/public-assets', title: '公共资产 / 工具库' },
-      { path: '/content-asset/actor-library', title: '真人库' }
+      { path: '/content-asset/actor-library', title: '真人库' },
+      { path: '/content-asset/storage-objects', title: '存储对象管理' },
+      { path: '/content-asset/material-tags', title: '素材标签库' }
     ]
   },
   {
@@ -143,7 +146,8 @@ const menuGroups = [
       { path: '/operation/log-search', title: '日志检索' },
       { path: '/operation/alert-channel', title: '告警通道' },
       { path: '/operation/alert-events', title: '告警历史' },
-      { path: '/operation/data-anomalies', title: '数据异常检测' }
+      { path: '/operation/data-anomalies', title: '数据异常检测' },
+      { path: '/operation/data-analytics', title: '数据分析平台' }
     ]
   },
   {
@@ -169,7 +173,8 @@ const menuGroups = [
       { path: '/system/params', title: '参数设置' },
       { path: '/system/notices', title: '通知公告' },
       { path: '/system/operation-logs', title: '操作日志' },
-      { path: '/system/login-logs', title: '登录日志' }
+      { path: '/system/login-logs', title: '登录日志' },
+      { path: '/system/monitor', title: '系统监控大屏' }
     ]
   }
 ]

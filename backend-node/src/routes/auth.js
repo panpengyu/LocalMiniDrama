@@ -46,15 +46,34 @@ function authRoutes(db, log) {
    * @returns {object} 登录成功返回用户信息和token
    */
   async function login(req, res) {
+    const clientIp = req.ip || (req.headers || {})['x-forwarded-for'] || req.socket?.remoteAddress;
+    const userAgent = (req.headers || {})['user-agent'];
+    let securityService;
+    try { securityService = require('../services/securityService'); } catch (_) { securityService = null; }
     try {
       const { username, password } = req.body || {};
       const result = await authService.login(db, { username, password });
+      // S12-T07: 记录登录成功日志 + 更新最近登录时间
+      if (securityService) {
+        securityService.recordLogin(db, log, {
+          userId: result.user.id, username: result.user.username, success: true, ip: clientIp, userAgent,
+        });
+      }
+      try {
+        db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(new Date().toISOString(), result.user.id);
+      } catch (_) { /* last_login_at 列缺失时忽略 */ }
       response.success(res, {
         user: result.user,
         token: result.token,
         message: '登录成功'
       });
     } catch (err) {
+      // S12-T07: 记录登录失败日志（含失败原因，用于安全审计）
+      if (securityService) {
+        securityService.recordLogin(db, log, {
+          username: (req.body || {}).username, success: false, ip: clientIp, userAgent, reason: err.message,
+        });
+      }
       log.error('auth/login', { error: err.message });
       response.badRequest(res, err.message);
     }
