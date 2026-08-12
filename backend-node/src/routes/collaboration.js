@@ -179,6 +179,22 @@ function collaborationRoutes(db, log) {
     }
     const target = db.prepare('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL').get(userId);
     if (!target) return response.badRequest(res, '目标用户不存在');
+    // S13-T05 协作人数配额：按项目所有者会员等级限制单项目协作人数（新增成员时校验）
+    try {
+      const quotaService = require('../services/quotaService');
+      const drama = db.prepare('SELECT created_by FROM dramas WHERE id = ?').get(dramaId);
+      const ownerId = drama && drama.created_by != null ? Number(drama.created_by) : req.user.id;
+      const already = collaborationService.getMember(db, dramaId, userId);
+      // 仅在「新增」有效成员时计入配额（已存在成员改角色不占新增名额）
+      if (!already || already.status !== 'active') {
+        const c = quotaService.check(db, ownerId, 'collaborator', { dramaId });
+        if (!c.allowed) {
+          return response.forbidden(res, `该项目协作人数已达上限（${c.limit} 人），请项目所有者升级会员后再邀请`);
+        }
+      }
+    } catch (e) {
+      log.warn('[S13-T05] 协作配额校验异常，放行', { error: e.message });
+    }
     try {
       const member = collaborationService.addMember(db, dramaId, userId, roleTag || 'viewer', req.user.id);
       collaborationService.recordActivity(db, {

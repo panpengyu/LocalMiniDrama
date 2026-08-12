@@ -74,6 +74,13 @@
           <el-icon><Clock /></el-icon>
           版本
         </el-button>
+        <!-- S13-T06: 评论批注入口 -->
+        <el-badge :value="commentUnread" :hidden="commentUnread === 0" class="wb-collab-badge">
+          <el-button size="small" type="warning" plain @click="openCommentPanel">
+            <el-icon><ChatLineSquare /></el-icon>
+            评论
+          </el-button>
+        </el-badge>
         <el-button size="small" @click="toggleTheme" class="wb-theme-btn">
           <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
           {{ isDark ? '浅色' : '暗色' }}
@@ -545,13 +552,21 @@
       :drama-id="dramaId"
       @rolled-back="onVersionRolledBack"
     />
+
+    <!-- ============== S13-T06: 评论批注面板（节点评论/时间戳批注/@提及/批量回复） ============== -->
+    <CommentPanel
+      v-model="commentPanelVisible"
+      :drama-id="dramaId"
+      :node-key="activeCommentNodeKey"
+      :my-role-tag="collabRoleTag"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera, UserFilled, Clock } from '@element-plus/icons-vue'
+import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera, UserFilled, Clock, ChatLineSquare } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ProjectNavTree from './ProjectNavTree.vue'
@@ -566,6 +581,7 @@ import SmartEditTimeline from '@/components/workbench/SmartEditTimeline.vue'
 // S11: 团队协作 + 版本管理组件
 import CollaborationPanel from '@/components/workbench/CollaborationPanel.vue'
 import VersionManagerPanel from '@/components/workbench/VersionManagerPanel.vue'
+import CommentPanel from '@/components/workbench/CommentPanel.vue'
 import { useCollaboration } from '@/composables/useCollaboration'
 
 import { dramaAPI } from '@/api/drama'
@@ -574,6 +590,7 @@ import { sceneAPI } from '@/api/scenes'
 import { storyboardsAPI } from '@/api/storyboards'
 import { ttsPipelineAPI } from '@/api/ttsPipeline'
 import { imagesAPI } from '@/api/images'
+import commentAPI from '@/api/comments'
 import { useTheme } from '@localmini/shared/composables/useTheme'
 import { useWorkbenchLogger } from '@/composables/useWorkbenchLogger'
 
@@ -1225,6 +1242,8 @@ function onDramaLoaded(d) {
   drama.value = d
   // S11-T01: 画布数据就绪后建立协作连接（加入项目房间）
   ensureCollabConnected()
+  // S13-T06: 加载评论未读角标
+  refreshCommentUnread()
   // 默认选中第一集（若有）
   if (!drama.value?.episodes?.length) return
   filterEpisodeId.value = drama.value.episodes[0]?.id || 'all'
@@ -1252,6 +1271,9 @@ function onCanvasNodeClick(p) {
     log.info('[Canvas→Workbench] 画布节点点击 → 打开对应类型内嵌管理 Drawer', {
       nodeType, id, label: data.label || p?.label || null,
     })
+    // S13-T06: 记录当前选中节点键（type:id），供评论批注面板定位
+    const _nk = extractIdFromNodeId(id || data.id)
+    if (nodeType && _nk) activeCommentNodeKey.value = `${nodeType}:${_nk}`
     // ——— 角色节点 → 打开角色一致性 Drawer + 顺带切编辑入口 ——
     if (nodeType.includes('character') || /char/i.test(id || '')) {
       const cid = extractIdFromNodeId(id || data.id || data?.character_id)
@@ -1382,6 +1404,33 @@ const collabConnected = collab.connected
 const collabRoleTag = collab.myRoleTag
 const collabOnline = collab.online
 const collabLocks = collab.locks
+
+/* ============================================================
+   S13-T06: 评论批注面板集成
+   - 复用画布节点点击设定 activeCommentNodeKey（type:id），
+     打开面板默认聚焦当前节点评论；无选中节点时展示全部。
+   - commentUnread 角标由 unread 接口驱动。
+   ============================================================ */
+const commentPanelVisible = ref(false)
+const activeCommentNodeKey = ref(null)
+const commentUnread = ref(0)
+
+async function refreshCommentUnread() {
+  if (!dramaId.value) return
+  try {
+    const res = await commentAPI.unread(dramaId.value)
+    commentUnread.value = Number(res?.total) || 0
+  } catch (e) { /* 忽略：无协作权限或未初始化 */ }
+}
+
+function openCommentPanel() {
+  commentPanelVisible.value = true
+}
+
+// 面板关闭后刷新未读角标
+watch(commentPanelVisible, (open) => {
+  if (!open) refreshCommentUnread()
+})
 
 // 注册实时事件回调
 collab.on('onCanvasOp', (data) => {

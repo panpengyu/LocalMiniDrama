@@ -72,6 +72,12 @@ const router = createRouter({
           meta: { title: 'AI 配置' }
         },
         {
+          path: 'membership',
+          name: 'membership',
+          component: () => import('@/views/MembershipCenter.vue'),
+          meta: { title: '会员中心' }
+        },
+        {
           path: 'free-create',
           name: 'free-create',
           component: () => import('@/views/FreeCreate.vue'),

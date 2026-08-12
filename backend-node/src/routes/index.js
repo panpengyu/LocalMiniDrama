@@ -78,6 +78,8 @@ function setupRouter(cfg, db, log) {
   const { requireAuth, requireRole } = require('../middleware/auth');
   // S12-T05 欠费闭环：创作类接口余额守卫（余额为负则拦截，super_admin 豁免）
   const requireSufficientBalance = require('../middleware/balanceGuard')(db, log);
+  // S13-T05 会员配额守卫（生成次数 / 项目数 / 协作人数）
+  const quotaGuard = require('../middleware/quotaGuard')(db, log);
 
   // ---------- 认证模块 ----------
   r.post('/auth/register', auth.register);
@@ -129,7 +131,7 @@ function setupRouter(cfg, db, log) {
   
   // ---------- 剧本模块 ----------
   r.get('/dramas', drama.listDramas);
-  r.post('/dramas', drama.createDrama);
+  r.post('/dramas', quotaGuard.project, drama.createDrama);
   r.get('/dramas/stats', drama.getDramaStats);
   // 导出/导入（放在 :id 路由前，避免被 :id 捕获）
   r.get('/dramas/:id/export', drama.exportDrama);
@@ -317,7 +319,7 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 图片模块 ----------
   r.get('/images', images.list);
-  r.post('/images', requireSufficientBalance, images.create);
+  r.post('/images', requireSufficientBalance, quotaGuard.generation, images.create);
   r.get('/images/episode/:episode_id/backgrounds', images.episodeBackgrounds);
   r.post('/images/episode/:episode_id/backgrounds/extract', requireSufficientBalance, images.episodeBackgroundsExtract);
   r.post('/images/episode/:episode_id/batch', requireSufficientBalance, images.episodeBatch);
@@ -328,7 +330,7 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 视频模块 ----------
   r.get('/videos', videos.list);
-  r.post('/videos', requireSufficientBalance, videos.create);
+  r.post('/videos', requireSufficientBalance, quotaGuard.generation, videos.create);
   r.post('/videos/image/:image_gen_id', requireSufficientBalance, videos.fromImage);
   r.post('/videos/episode/:episode_id/batch', requireSufficientBalance, videos.episodeBatch);
   r.get('/videos/:id', videos.get);
@@ -464,6 +466,14 @@ function setupRouter(cfg, db, log) {
   // ---------- 数据分析平台（Sprint 12: S12-T08 行为/漏斗/模型效果/留存） ----------
   const analyticsRoutes = require('./analytics');
   r.use('/', analyticsRoutes(db, log));
+
+  // ---------- 会员体系（Sprint 13: S13-T01~T05 等级/计费/支付/配额） ----------
+  const membershipRoutes = require('./membership');
+  r.use('/', membershipRoutes(db, log));
+
+  // ---------- 评论批注系统（Sprint 13: S13-T06 画布评论/时间戳批注/@提及/已读未读/批量回复） ----------
+  const commentRoutes = require('./comments');
+  r.use('/', commentRoutes(db, log));
 
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (req, res) => {

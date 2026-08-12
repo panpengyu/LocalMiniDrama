@@ -45,6 +45,9 @@
               <el-dropdown-item @click="$router.push('/ai-config')">
                 <el-icon><Setting /></el-icon>AI配置
               </el-dropdown-item>
+              <el-dropdown-item @click="$router.push('/membership')">
+                <el-icon><Trophy /></el-icon>会员中心
+              </el-dropdown-item>
               <el-dropdown-item divided @click="handleLogout">
                 <el-icon><SwitchButton /></el-icon>退出登录
               </el-dropdown-item>
@@ -71,7 +74,7 @@
 <script setup>import { ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset } from '@element-plus/icons-vue';
+import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy } from '@element-plus/icons-vue';
 import { useUserStore } from '@/stores/user';
 import { useTheme } from '@localmini/shared/composables/useTheme';
 const router = useRouter();
@@ -90,6 +93,7 @@ const menuItems = [
  { path: '/film/:id/canvas', name: '画布模式', icon: Box },
  { path: '/ai-config', name: 'AI配置', icon: Setting },
  { path: '/media-library', name: '素材库', icon: PictureFilled },
+ { path: '/membership', name: '会员中心', icon: Trophy },
 ];
 const toolGroups = [
  {
