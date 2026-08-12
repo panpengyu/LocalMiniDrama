@@ -36,7 +36,9 @@ function list(db, query) {
   // 与 Go 前端行为对齐：请求 status=processing 时，同时包含“刚结束”的记录（5 分钟内变为 completed/failed），
   // 这样轮询刷新后任务不会从列表消失，无需改 Vue
   if (query.status === 'processing') {
-    sql += " AND (status = 'processing' OR (status IN ('completed','failed') AND updated_at >= NOW() - INTERVAL 5 MINUTE))";
+    // 双数据库兼容：5 分钟前时间点 —— MySQL NOW() - INTERVAL 5 MINUTE ↔ SQLite datetime('now', '-5 minutes')
+    const fiveMinAgo = db.type === 'mysql' ? 'NOW() - INTERVAL 5 MINUTE' : "datetime('now', '-5 minutes')";
+    sql += ` AND (status = 'processing' OR (status IN ('completed','failed') AND updated_at >= ${fiveMinAgo}))`;
   } else if (query.status) {
     sql += ' AND status = ?';
     params.push(query.status);

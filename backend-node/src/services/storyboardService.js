@@ -35,7 +35,10 @@ function syncStoryboardCharacterLinks(db, storyboardId, dramaCharacterIds) {
   ).get(sid);
   const dramaId = sb?.drama_id != null ? Number(sb.drama_id) : null;
   const now = new Date().toISOString();
-  const ins = db.prepare('INSERT IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)');
+  // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+  const ins = db.prepare(db.type === 'mysql'
+    ? 'INSERT IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
+    : 'INSERT OR IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)');
   for (const cid of ids.slice(0, 20)) {
     const crow = db.prepare('SELECT name FROM characters WHERE id = ? AND deleted_at IS NULL').get(cid);
     const name = (crow?.name || '').trim();
@@ -125,7 +128,10 @@ function updateStoryboard(db, log, id, req) {
   if (req.prop_ids !== undefined) {
     const propIds = Array.isArray(req.prop_ids) ? req.prop_ids : [];
     db.prepare('DELETE FROM storyboard_props WHERE storyboard_id = ?').run(Number(id));
-    const ins = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+    // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+    const ins = db.prepare(db.type === 'mysql'
+      ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+      : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
     for (const pid of propIds) ins.run(Number(id), Number(pid));
   }
   log.info('Storyboard updated', { id });

@@ -61,10 +61,16 @@ function getGlobalSetting(db, key, defaultValue = null) {
 function setGlobalSetting(db, key, value) {
   const now = new Date().toISOString();
   const str = JSON.stringify(value);
-  db.prepare(
-    `INSERT INTO global_settings (\`key\`, value, updated_at) VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE value = ?, updated_at = ?`
-  ).run(key, str, now, str, now);
+  // 双数据库兼容：MySQL 用 ON DUPLICATE KEY UPDATE；SQLite 用 ON CONFLICT DO UPDATE（唯一键为 `key`）
+  if (db.type === 'mysql') {
+    db.prepare(
+      'INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = ?, updated_at = ?'
+    ).run(key, str, now, str, now);
+  } else {
+    db.prepare(
+      'INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+    ).run(key, str, now);
+  }
 }
 
 function getUserSetting(db, userId, key, defaultValue = null) {
@@ -78,10 +84,16 @@ function getUserSetting(db, userId, key, defaultValue = null) {
 function setUserSetting(db, userId, key, value) {
   const now = new Date().toISOString();
   const str = JSON.stringify(value);
-  db.prepare(
-    `INSERT INTO user_settings (user_id, \`key\`, value, updated_at) VALUES (?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE value = ?, updated_at = ?`
-  ).run(userId, key, str, now, str, now);
+  // 双数据库兼容：MySQL 用 ON DUPLICATE KEY UPDATE；SQLite 用 ON CONFLICT DO UPDATE（复合主键 user_id + `key`）
+  if (db.type === 'mysql') {
+    db.prepare(
+      'INSERT INTO user_settings (user_id, `key`, value, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE value = ?, updated_at = ?'
+    ).run(userId, key, str, now, str, now);
+  } else {
+    db.prepare(
+      'INSERT INTO user_settings (user_id, `key`, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, `key`) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+    ).run(userId, key, str, now);
+  }
 }
 
 function getSetting(db, userId, key, defaultValue = null) {

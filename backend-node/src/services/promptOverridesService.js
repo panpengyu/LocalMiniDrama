@@ -19,10 +19,21 @@ function getOverride(db, key, userId = null) {
 
 function setOverride(db, key, content, userId = null) {
   const now = new Date().toISOString();
+  // 双数据库兼容：MySQL 用 ON DUPLICATE KEY UPDATE；SQLite 用 ON CONFLICT DO UPDATE。
+  // 注意：prompt_overrides 的唯一约束仅为 `key` 单列（无 key+user_id 复合唯一键），故 ON CONFLICT 指向 `key`。
+  const isMysql = db.type === 'mysql';
   if (userId) {
-    db.prepare('INSERT INTO prompt_overrides (`key`, content, user_id, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE content = ?, updated_at = ?').run(key, content, userId, now, content, now);
+    const sql = isMysql
+      ? 'INSERT INTO prompt_overrides (`key`, content, user_id, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE content = ?, updated_at = ?'
+      : 'INSERT INTO prompt_overrides (`key`, content, user_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at';
+    const params = isMysql ? [key, content, userId, now, content, now] : [key, content, userId, now];
+    db.prepare(sql).run(...params);
   } else {
-    db.prepare('INSERT INTO prompt_overrides (`key`, content, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE content = ?, updated_at = ?').run(key, content, now, content, now);
+    const sql = isMysql
+      ? 'INSERT INTO prompt_overrides (`key`, content, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE content = ?, updated_at = ?'
+      : 'INSERT INTO prompt_overrides (`key`, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at';
+    const params = isMysql ? [key, content, now, content, now] : [key, content, now];
+    db.prepare(sql).run(...params);
   }
 }
 

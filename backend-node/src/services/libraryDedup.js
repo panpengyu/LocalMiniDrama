@@ -23,7 +23,13 @@ function hasColumn(db, table, column) {
   }
   const key = `${table}.${column}`;
   if (tableCache.has(key)) return tableCache.get(key);
-  const columns = db.prepare(`SELECT column_name as name FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = ?`).all(table);
+  let columns;
+  if (db.type === 'mysql') {
+    columns = db.prepare(`SELECT column_name as name FROM INFORMATION_SCHEMA.COLUMNS WHERE table_name = ?`).all(table);
+  } else {
+    // SQLite 无 INFORMATION_SCHEMA，改用 PRAGMA（table 已经过 assertKnownTable 白名单校验）
+    columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  }
   const found = columns.some((row) => row.name === column);
   tableCache.set(key, found);
   return found;

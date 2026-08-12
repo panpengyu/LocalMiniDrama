@@ -521,7 +521,10 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
   try {
     db.prepare('DELETE FROM storyboard_props WHERE storyboard_id = ?').run(existingId);
     if (d.propIds.length > 0) {
-      const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+      // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+      const insProp = db.prepare(db.type === 'mysql'
+        ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+        : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
       for (const pid of d.propIds) insProp.run(existingId, pid);
     }
   } catch (_) {}
@@ -552,7 +555,10 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
     const newId = db.prepare('SELECT LAST_INSERT_ID() as id').get().id;
     if (d.propIds.length > 0) {
       try {
-        const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+        const insProp = db.prepare(db.type === 'mysql'
+          ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+          : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of d.propIds) insProp.run(newId, pid);
       } catch (_) {}
     }
@@ -747,7 +753,10 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
     const id = db.prepare('SELECT LAST_INSERT_ID() as id').get().id;
     if (d.propIds.length > 0) {
       try {
-        const insProp = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+        const insProp = db.prepare(db.type === 'mysql'
+          ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+          : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of d.propIds) insProp.run(id, pid);
       } catch (_) {}
     }
@@ -1398,14 +1407,19 @@ function copyStoryboardAssetLinks(db, fromSbId, toSbId) {
   const now = new Date().toISOString();
   try {
     const chars = db.prepare('SELECT character_id FROM storyboard_characters WHERE storyboard_id = ?').all(from);
-    const insC = db.prepare(
-      'INSERT IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
+    // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+    const insC = db.prepare(db.type === 'mysql'
+      ? 'INSERT IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
+      : 'INSERT OR IGNORE INTO storyboard_characters (storyboard_id, character_id, created_at) VALUES (?, ?, ?)'
     );
     for (const c of chars) insC.run(to, c.character_id, now);
   } catch (_) {}
   try {
     const props = db.prepare('SELECT prop_id FROM storyboard_props WHERE storyboard_id = ?').all(from);
-    const insP = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+    // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+    const insP = db.prepare(db.type === 'mysql'
+      ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+      : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
     for (const p of props) insP.run(to, p.prop_id);
   } catch (_) {}
 }

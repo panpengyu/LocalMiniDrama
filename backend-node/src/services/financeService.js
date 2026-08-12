@@ -131,6 +131,72 @@ function arrearsWarnings(db, { threshold = 0, limit = 50 } = {}) {
   }));
 }
 
+/**
+ * 读取单个用户当前积分余额：取该用户最新一条 point_logs 的 balance_after。
+ * 无任何流水时视为 0（新用户）。返回整数积分。
+ */
+function getUserBalance(db, userId) {
+  const uid = Number(userId);
+  if (!uid) return 0;
+  const row = db.prepare(
+    'SELECT balance_after FROM point_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+  ).get(uid);
+  // MySQL 包装层无行返回 null，SQLite 返回 undefined
+  if (row == null) return 0;
+  return Number(row.balance_after) || 0;
+}
+
+/**
+ * S12-T05 欠费闭环 —— 触发欠费预警通知（写入 platform_notifications）。
+ *
+ * 对每个被 arrearsWarnings 命中的用户创建一条站内通知；通过 dedup_key
+ * （arrears:userId:yyyymmdd）+ 唯一索引保证同一用户同一天只推送一次，幂等安全。
+ *
+ * @returns {{ scanned:number, notified:number, items:Array }}
+ */
+function notifyArrears(db, log, { threshold = 0, limit = 200 } = {}) {
+  const warnings = arrearsWarnings(db, { threshold, limit });
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // yyyymmdd
+  let notified = 0;
+  const items = [];
+
+  for (const w of warnings) {
+    const isArrears = w.level === 'arrears';
+    const dedupKey = `arrears:${w.user_id}:${today}`;
+    // 幂等：同一用户同一天已有欠费通知则跳过
+    const exists = db.prepare(
+      'SELECT id FROM platform_notifications WHERE dedup_key = ? LIMIT 1'
+    ).get(dedupKey);
+    if (exists != null) continue;
+
+    const title = isArrears ? '积分已欠费，创作功能已受限' : '积分余额偏低提醒';
+    const content = isArrears
+      ? `您的积分余额为 ${w.balance}（已为负），当前无法继续使用 AI 创作功能，请尽快充值后恢复。`
+      : `您的积分余额为 ${w.balance}，偏低，建议及时充值以免影响创作。`;
+    const payload = JSON.stringify({ balance: w.balance, level: w.level, threshold });
+    try {
+      db.prepare(
+        `INSERT INTO platform_notifications
+           (user_id, category, level, title, content, payload, dedup_key, is_read, created_at)
+         VALUES (?, 'arrears', ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)`
+      ).run(
+        Number(w.user_id),
+        isArrears ? 'critical' : 'warning',
+        title, content, payload, dedupKey
+      );
+      notified += 1;
+      items.push({ user_id: w.user_id, level: w.level, dedup_key: dedupKey });
+    } catch (e) {
+      // 并发下唯一键冲突（同日重复）：视为已通知，静默跳过
+      if (!/duplicate|unique/i.test(e.message || '')) {
+        if (log) log.warn('[S12-T05] 欠费通知写入失败', { user_id: w.user_id, error: e.message });
+      }
+    }
+  }
+  if (log) log.info('[S12-T05] 欠费预警通知完成', { scanned: warnings.length, notified });
+  return { scanned: warnings.length, notified, items };
+}
+
 // ==================== 计费规则 CRUD ====================
 
 function listBillingRules(db) {
@@ -241,6 +307,8 @@ module.exports = {
   costBreakdown,
   dailyTrend,
   arrearsWarnings,
+  getUserBalance,
+  notifyArrears,
   listBillingRules,
   createBillingRule,
   updateBillingRule,

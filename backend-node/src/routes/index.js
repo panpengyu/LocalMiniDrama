@@ -76,6 +76,8 @@ function setupRouter(cfg, db, log) {
   const admin = adminRoutes(db, log);
   const screenwriter = screenwriterRoutes(db, cfg, log);
   const { requireAuth, requireRole } = require('../middleware/auth');
+  // S12-T05 欠费闭环：创作类接口余额守卫（余额为负则拦截，super_admin 豁免）
+  const requireSufficientBalance = require('../middleware/balanceGuard')(db, log);
 
   // ---------- 认证模块 ----------
   r.post('/auth/register', auth.register);
@@ -241,9 +243,9 @@ function setupRouter(cfg, db, log) {
   r.get('/characters/:id', characters.getOne);
   r.put('/characters/:id', characters.update);
   r.delete('/characters/:id', characters.delete);
-  r.post('/characters/batch-generate-images', characters.batchGenerateImages);
-  r.post('/characters/:id/generate-image', characters.generateImage);
-  r.post('/characters/:id/generate-four-view-image', characters.generateFourViewImage);
+  r.post('/characters/batch-generate-images', requireSufficientBalance, characters.batchGenerateImages);
+  r.post('/characters/:id/generate-image', requireSufficientBalance, characters.generateImage);
+  r.post('/characters/:id/generate-four-view-image', requireSufficientBalance, characters.generateFourViewImage);
   r.post('/characters/:id/generate-prompt', characters.generatePrompt);
   r.post('/characters/:id/upload-image', uploadModule.multerSingle, characters.uploadImage);
   r.put('/characters/:id/image', characters.putImage);
@@ -262,7 +264,7 @@ function setupRouter(cfg, db, log) {
   r.post('/props', prop.createProp);
   r.put('/props/:id', prop.updateProp);
   r.delete('/props/:id', prop.deleteProp);
-  r.post('/props/:id/generate', prop.generateImage);
+  r.post('/props/:id/generate', requireSufficientBalance, prop.generateImage);
   r.post('/props/:id/generate-prompt', prop.generatePropPrompt);
   r.post('/props/:id/add-to-library', prop.addToLibrary);
   r.post('/props/:id/add-to-material-library', prop.addToMaterialLibrary);
@@ -306,29 +308,29 @@ function setupRouter(cfg, db, log) {
   r.put('/scenes/:scene_id', scenes.update);
   r.put('/scenes/:scene_id/prompt', scenes.updatePrompt);
   r.delete('/scenes/:scene_id', scenes.delete);
-  r.post('/scenes/generate-image', scenes.generateImage);
+  r.post('/scenes/generate-image', requireSufficientBalance, scenes.generateImage);
   r.post('/scenes', scenes.create);
-  r.post('/scenes/:scene_id/generate-four-view-image', scenes.generateFourViewImage);
+  r.post('/scenes/:scene_id/generate-four-view-image', requireSufficientBalance, scenes.generateFourViewImage);
   r.post('/scenes/:scene_id/add-to-library', scenes.addToLibrary);
   r.post('/scenes/:scene_id/add-to-material-library', scenes.addToMaterialLibrary);
   r.post('/scenes/:scene_id/extract-from-image', scenes.extractFromImage);
 
   // ---------- 图片模块 ----------
   r.get('/images', images.list);
-  r.post('/images', images.create);
+  r.post('/images', requireSufficientBalance, images.create);
   r.get('/images/episode/:episode_id/backgrounds', images.episodeBackgrounds);
-  r.post('/images/episode/:episode_id/backgrounds/extract', images.episodeBackgroundsExtract);
-  r.post('/images/episode/:episode_id/batch', images.episodeBatch);
-  r.post('/images/scene/:scene_id', images.scene);
+  r.post('/images/episode/:episode_id/backgrounds/extract', requireSufficientBalance, images.episodeBackgroundsExtract);
+  r.post('/images/episode/:episode_id/batch', requireSufficientBalance, images.episodeBatch);
+  r.post('/images/scene/:scene_id', requireSufficientBalance, images.scene);
   r.post('/images/upload', images.upload);
   r.get('/images/:id', images.get);
   r.delete('/images/:id', images.delete);
 
   // ---------- 视频模块 ----------
   r.get('/videos', videos.list);
-  r.post('/videos', videos.create);
-  r.post('/videos/image/:image_gen_id', videos.fromImage);
-  r.post('/videos/episode/:episode_id/batch', videos.episodeBatch);
+  r.post('/videos', requireSufficientBalance, videos.create);
+  r.post('/videos/image/:image_gen_id', requireSufficientBalance, videos.fromImage);
+  r.post('/videos/episode/:episode_id/batch', requireSufficientBalance, videos.episodeBatch);
   r.get('/videos/:id', videos.get);
   r.delete('/videos/:id', videos.delete);
 

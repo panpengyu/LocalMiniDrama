@@ -132,6 +132,115 @@ describe('S12-T05 财务与计费', () => {
     // 毛利 = 收入 - 成本（允许四舍五入误差）
     assert.ok(Math.abs(ov.profit.gross_profit - (ov.revenue.total - ov.cost.model_cost)) < 1);
   });
+
+  // ---------------- S12-T05 欠费闭环：识别 → 通知 → 限权 ----------------
+  const ARREARS_UID = 99598;
+  const SOLVENT_UID = 99599;
+
+  function cleanupArrearsFixtures() {
+    for (const uid of [ARREARS_UID, SOLVENT_UID]) {
+      try { db.prepare('DELETE FROM platform_notifications WHERE user_id = ?').run(uid); } catch (_) {}
+      try { db.prepare('DELETE FROM point_logs WHERE user_id = ?').run(uid); } catch (_) {}
+      try { db.prepare('DELETE FROM users WHERE id = ?').run(uid); } catch (_) {}
+    }
+  }
+
+  it('getUserBalance: 取最新一条 point_logs.balance_after', () => {
+    cleanupArrearsFixtures();
+    db.prepare(
+      `INSERT INTO users (id, username, nickname, password, role, status, created_at)
+       VALUES (?, 'bal_test', '余额测试', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"})`
+    ).run(ARREARS_UID);
+    try {
+      // 无流水视为 0
+      assert.equal(financeService.getUserBalance(db, ARREARS_UID), 0);
+      db.prepare(
+        `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
+         VALUES (?, 'recharge', 'recharge', 100, 100, 'x'), (?, 'consume', 'image', -620, -520, 'x')`
+      ).run(ARREARS_UID, ARREARS_UID);
+      assert.equal(financeService.getUserBalance(db, ARREARS_UID), -520);
+    } finally {
+      cleanupArrearsFixtures();
+    }
+  });
+
+  it('notifyArrears: 欠费用户写入通知且同日幂等', () => {
+    // 依赖 platform_notifications 表；若迁移未执行则跳过
+    const hasTable = db.type === 'mysql'
+      ? db.prepare("SELECT COUNT(*) c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_notifications'").get().c > 0
+      : true;
+    if (!hasTable) { console.warn('[S12-T05] 缺少 platform_notifications 表，跳过 notifyArrears 用例'); return; }
+
+    cleanupArrearsFixtures();
+    db.prepare(
+      `INSERT INTO users (id, username, nickname, password, role, status, created_at)
+       VALUES (?, 'arrears_unit', '欠费单测', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"})`
+    ).run(ARREARS_UID);
+    db.prepare(
+      `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
+       VALUES (?, 'consume', 'image', -300, -300, 'x')`
+    ).run(ARREARS_UID);
+    try {
+      financeService.notifyArrears(db, log, { threshold: 0, limit: 200 });
+      const cnt1 = db.prepare('SELECT COUNT(*) c FROM platform_notifications WHERE user_id = ?').get(ARREARS_UID).c;
+      assert.ok(cnt1 >= 1, '欠费用户应产生至少一条通知');
+      const row = db.prepare('SELECT category, level FROM platform_notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(ARREARS_UID);
+      assert.equal(row.category, 'arrears');
+      assert.equal(row.level, 'critical');
+      // 再次触发：同日幂等，不新增
+      financeService.notifyArrears(db, log, { threshold: 0, limit: 200 });
+      const cnt2 = db.prepare('SELECT COUNT(*) c FROM platform_notifications WHERE user_id = ?').get(ARREARS_UID).c;
+      assert.equal(cnt2, cnt1, '同日重复触发应幂等（数量不变）');
+    } finally {
+      cleanupArrearsFixtures();
+    }
+  });
+
+  it('balanceGuard: 欠费用户被拦截(403)、正常用户放行、super_admin 豁免', () => {
+    const guard = require(path.resolve(__dirname, '..', 'src', 'middleware', 'balanceGuard.js'))(db, log);
+    const makeRes = () => {
+      const cap = { statusCode: null, body: null };
+      return { cap, status(c) { cap.statusCode = c; return this; }, json(b) { cap.body = b; return this; } };
+    };
+    cleanupArrearsFixtures();
+    db.prepare(
+      `INSERT INTO users (id, username, nickname, password, role, status, created_at)
+       VALUES (?, 'arrears_g', '欠费G', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"}),
+              (?, 'solvent_g', '正常G', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"})`
+    ).run(ARREARS_UID, SOLVENT_UID);
+    db.prepare(
+      `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
+       VALUES (?, 'consume', 'image', -300, -300, 'x'), (?, 'recharge', 'recharge', 500, 500, 'x')`
+    ).run(ARREARS_UID, SOLVENT_UID);
+    try {
+      const arrearsUser = db.prepare('SELECT * FROM users WHERE id = ?').get(ARREARS_UID);
+      const solventUser = db.prepare('SELECT * FROM users WHERE id = ?').get(SOLVENT_UID);
+
+      // 欠费用户：拦截 403
+      let nextA = false; const resA = makeRes();
+      guard({ user: arrearsUser, originalUrl: '/api/v1/images' }, resA, () => { nextA = true; });
+      assert.equal(nextA, false, '欠费用户不应放行');
+      assert.equal(resA.cap.statusCode, 403, '欠费用户应返回 403');
+
+      // 正常用户：放行
+      let nextB = false; const resB = makeRes();
+      guard({ user: solventUser, originalUrl: '/api/v1/images' }, resB, () => { nextB = true; });
+      assert.equal(nextB, true, '正常用户应放行');
+      assert.equal(resB.cap.statusCode, null, '正常用户不应产生错误响应');
+
+      // super_admin 豁免（即便余额为负）
+      let nextC = false; const resC = makeRes();
+      guard({ user: { ...arrearsUser, role: 'super_admin' }, originalUrl: '/api/v1/images' }, resC, () => { nextC = true; });
+      assert.equal(nextC, true, 'super_admin 应豁免限权');
+
+      // 未登录：不在此中间件拦截（交由 requireAuth）
+      let nextD = false; const resD = makeRes();
+      guard({ user: null, originalUrl: '/api/v1/images' }, resD, () => { nextD = true; });
+      assert.equal(nextD, true, '未登录请求应放行至后续鉴权');
+    } finally {
+      cleanupArrearsFixtures();
+    }
+  });
 });
 
 // ------------------------------------------------------------

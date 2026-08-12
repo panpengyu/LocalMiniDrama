@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS global_settings (
+  `key` VARCHAR(255) PRIMARY KEY,
+  value TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

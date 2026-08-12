@@ -69,6 +69,21 @@ function financeRoutes(db, log) {
     }
   });
 
+  // 触发欠费预警通知：对命中欠费/低额的用户写入平台站内通知（幂等，同用户同日一次）
+  router.post('/admin/finance/arrears/notify', ...superAdmin, (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = financeService.notifyArrears(db, log, {
+        threshold: body.threshold !== undefined ? Number(body.threshold) : 0,
+        limit: Number(body.limit) || 200,
+      });
+      response.success(res, result);
+    } catch (err) {
+      log.error('[S12-T05] 欠费预警通知失败', { error: err.message });
+      response.internalError(res, err.message);
+    }
+  });
+
   // ---------------- 计费规则 CRUD ----------------
   router.get('/admin/finance/billing-rules', ...superAdmin, (req, res) => {
     try {

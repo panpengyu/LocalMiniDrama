@@ -155,9 +155,22 @@ function canEditNode(db, dramaId, user, nodeKey) {
 // S11-T04 节点锁 + 冲突解决
 // ===========================================================================
 
+// 双数据库兼容：锁过期以“数据库时钟”为准（避免多应用节点时区偏移）。
+//   nowExpr    当前时间：MySQL NOW() ↔ SQLite datetime('now')
+//   futureExpr 当前时间 + N 秒：MySQL DATE_ADD(NOW(), INTERVAL ? SECOND) ↔ SQLite datetime('now', '+' || ? || ' seconds')
+// 注：两者均返回 SQL 片段；futureExpr 会消费一个 TTL 秒数占位符参数。
+function nowExpr(db) {
+  return db.type === 'mysql' ? 'NOW()' : "datetime('now')";
+}
+function futureExpr(db) {
+  return db.type === 'mysql'
+    ? 'DATE_ADD(NOW(), INTERVAL ? SECOND)'
+    : "datetime('now', '+' || ? || ' seconds')";
+}
+
 /** 清理过期锁（懒回收：任何加锁/查询前调用）。使用数据库时钟避免时区偏移。 */
 function reapExpiredLocks(db, dramaId) {
-  db.prepare('DELETE FROM node_locks WHERE drama_id = ? AND expires_at < NOW()')
+  db.prepare(`DELETE FROM node_locks WHERE drama_id = ? AND expires_at < ${nowExpr(db)}`)
     .run(Number(dramaId));
 }
 
@@ -176,7 +189,7 @@ function acquireLock(db, dramaId, nodeKey, user, socketId) {
   if (existing) {
     if (Number(existing.locked_by) === uid) {
       // 重入：续约（过期时间以数据库时钟为准）
-      db.prepare('UPDATE node_locks SET expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), socket_id = ? WHERE id = ?')
+      db.prepare(`UPDATE node_locks SET expires_at = ${futureExpr(db)}, socket_id = ? WHERE id = ?`)
         .run(LOCK_TTL_SECONDS, socketId || existing.socket_id, existing.id);
       const renewed = db.prepare('SELECT * FROM node_locks WHERE id = ?').get(existing.id);
       return { ok: true, lock: renewed || existing, reentrant: true };
@@ -187,7 +200,7 @@ function acquireLock(db, dramaId, nodeKey, user, socketId) {
   try {
     const res = db.prepare(`
       INSERT INTO node_locks (drama_id, node_key, locked_by, locked_by_name, socket_id, version, acquired_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, 0, NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))
+      VALUES (?, ?, ?, ?, ?, 0, ${nowExpr(db)}, ${futureExpr(db)})
     `).run(id, nodeKey, uid, user.username || user.name || null, socketId || null, LOCK_TTL_SECONDS);
     return { ok: true, lock: { id: res.lastInsertRowid, drama_id: id, node_key: nodeKey, locked_by: uid } };
   } catch (err) {
@@ -200,7 +213,7 @@ function acquireLock(db, dramaId, nodeKey, user, socketId) {
 /** 心跳续约（延长锁过期时间，以数据库时钟为准）。 */
 function renewLock(db, dramaId, nodeKey, user) {
   const res = db.prepare(
-    'UPDATE node_locks SET expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE drama_id = ? AND node_key = ? AND locked_by = ?'
+    `UPDATE node_locks SET expires_at = ${futureExpr(db)} WHERE drama_id = ? AND node_key = ? AND locked_by = ?`
   ).run(LOCK_TTL_SECONDS, Number(dramaId), nodeKey, Number(user.id));
   return res.changes > 0;
 }

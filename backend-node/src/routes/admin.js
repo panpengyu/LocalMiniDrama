@@ -522,7 +522,7 @@ function adminRoutes(db, log) {
       const hashedPassword = await bcrypt.hash(password, 10);
       
       const result = db.prepare(
-        'INSERT INTO users (username, password_hash, nickname, role, user_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())'
+        'INSERT INTO users (username, password_hash, nickname, role, user_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
       ).run(username, hashedPassword, nickname || '', role || 'user', user_type || 'individual');
       
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
@@ -583,7 +583,7 @@ function adminRoutes(db, log) {
         return response.badRequest(res, '没有需要更新的字段');
       }
       
-      updates.push('updated_at = NOW()');
+      updates.push('updated_at = CURRENT_TIMESTAMP');
       params.push(id);
       
       db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);

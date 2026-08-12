@@ -356,7 +356,10 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log, us
 
       // 还原 storyboard_props（分镜与道具的关联）
       if (sbPropNewIds.length > 0) {
-        const insSP = db.prepare('INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
+        // 双数据库兼容：MySQL 用 INSERT IGNORE；SQLite 用 INSERT OR IGNORE（语法不互通）
+        const insSP = db.prepare(db.type === 'mysql'
+          ? 'INSERT IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)'
+          : 'INSERT OR IGNORE INTO storyboard_props (storyboard_id, prop_id) VALUES (?, ?)');
         for (const pid of sbPropNewIds) insSP.run(sbId, pid);
       }
 
