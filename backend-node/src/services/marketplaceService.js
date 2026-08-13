@@ -280,20 +280,28 @@ function acquireTemplate(db, log, opts) {
 
   const price = Number(t.price);
   const needPoints = Math.round(price * financeService.POINTS_PER_YUAN);
-  const balance = financeService.getUserBalance(db, userId);
-  if (balance < needPoints) {
-    const e = new Error(`积分不足：需 ${needPoints} 积分，当前 ${balance}`); e.code = 'INSUFFICIENT_POINTS'; throw e;
+  // 事务外余额预检（友好前置拦截）；真正扣费在事务内原子完成
+  const preBalance = financeService.getUserBalance(db, userId);
+  if (preBalance < needPoints) {
+    const e = new Error(`积分不足：需 ${needPoints} 积分，当前 ${preBalance}`); e.code = 'INSUFFICIENT_POINTS'; throw e;
   }
 
   const orderNo = genNo('TP');
 
   const runTx = () => {
-    // 1) 扣积分
-    const balAfter = balance - needPoints;
-    db.prepare(
-      `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
-       VALUES (?, 'consume', 'template_purchase', ?, ?, ?, ?, ${nowExpr(db)})`
-    ).run(userId, -needPoints, balAfter, orderNo, `购买模板《${t.title}》`);
+    // 并发防重复购买：锁用户锚点行后再复查「是否已获取」，使同一用户对同一模板的并发购买串行化。
+    // 输家在此处看到已存在的获取记录，直接返回，避免重复扣分 / 重复分成 / 重复计数。
+    if (db.type === 'mysql') db.prepare('SELECT id FROM users WHERE id = ? FOR UPDATE').get(userId);
+    const owned = db.prepare('SELECT * FROM marketplace_downloads WHERE template_id = ? AND user_id = ?').get(templateId, userId);
+    if (owned) {
+      return { download: owned, settlement: null, alreadyOwned: true };
+    }
+
+    // 1) 原子扣积分（deductPointsAtomic 内部已锁用户行 + 校验余额）
+    financeService.deductPointsAtomic(db, {
+      userId, points: needPoints, businessType: 'template_purchase',
+      relatedId: orderNo, remark: `购买模板《${t.title}》`,
+    });
 
     // 2) 落购买记录
     const res = db.prepare(
@@ -312,10 +320,13 @@ function acquireTemplate(db, log, opts) {
     });
 
     const download = db.prepare('SELECT * FROM marketplace_downloads WHERE id = ?').get(downloadId);
-    return { download, settlement };
+    return { download, settlement, alreadyOwned: false };
   };
 
-  const { download, settlement } = db.transaction ? db.transaction(runTx)() : runTx();
+  const { download, settlement, alreadyOwned } = db.transaction ? db.transaction(runTx)() : runTx();
+  if (alreadyOwned) {
+    return { download, purchased: download.acquire_type === 'purchase', alreadyOwned: true, settlement: null };
+  }
   if (log) log.info('[S14-T01] 付费模板购买成功', { templateId, userId, price, orderNo });
   return { download, purchased: true, alreadyOwned: false, settlement };
 }

@@ -165,20 +165,62 @@ function consumeGeneration(db, userId, delta = 1) {
 }
 
 /**
+ * 原子「占用一次生成额度（仅当未超限）」。将「校验 used<limit」与「used+1」合并为
+ * 单条带前置条件的写，避免 check→consume 两步之间的 TOCTOU 窗口导致并发超发。
+ *
+ * 分两步原子写（均以 limit 为前置条件）：
+ *   1) 尝试对已存在的当月计数行做条件自增：UPDATE ... SET used=used+1 WHERE used < limit；
+ *      changes===1 表示抢到额度。
+ *   2) 若无既有行（changes===0 且当月尚无计数），尝试首次插入 used=1（仅当 limit>=1）；
+ *      并发下靠 (user_id,metric,period_key) 唯一键：赢家 INSERT 成功，输家转回第 1 步条件自增。
+ * @returns {boolean} 是否成功占用（false = 已达上限）
+ */
+function tryConsumeGenerationBounded(db, uid, period, limit) {
+  const bump = () => db.prepare(
+    `UPDATE membership_quota_usage SET used = used + 1, updated_at = ${nowExpr(db)}
+     WHERE user_id = ? AND metric = 'generation' AND period_key = ? AND used < ?`
+  ).run(uid, period, limit).changes;
+
+  if (bump() === 1) return true;
+
+  // 无既有行则首次插入（limit>=1 时）；已存在行时唯一键冲突 → 回退条件自增
+  if (limit >= 1) {
+    try {
+      const r = db.prepare(
+        `INSERT INTO membership_quota_usage (user_id, metric, period_key, used, updated_at)
+         VALUES (?, 'generation', ?, 1, ${nowExpr(db)})`
+      ).run(uid, period);
+      if (r.changes === 1) return true;
+    } catch (_) { /* 唯一键冲突：并发下他人已插入，转条件自增 */ }
+    if (bump() === 1) return true;
+  }
+  return false;
+}
+
+/**
  * 校验并占用一次生成额度（原子）。超限抛 QUOTA_EXCEEDED。
  * 返回 { used, limit, remaining }。
  */
 function checkAndConsumeGeneration(db, userId) {
+  const uid = Number(userId);
   const runTx = () => {
-    const c = check(db, userId, 'generation');
-    if (!c.allowed) {
-      const err = new Error(`本月 AI 生成次数已达上限（${c.limit} 次），请升级会员或次月再试`);
+    const { plan } = membershipService.getUserMembership(db, uid);
+    const limit = quotaLimit(plan, 'generation');
+    // 无限制套餐：直接原子自增，无需上限守卫
+    if (limit < 0) {
+      const used = consumeGeneration(db, uid, 1);
+      return { used, limit: -1, remaining: -1 };
+    }
+    const period = currentPeriodKey();
+    const ok = tryConsumeGenerationBounded(db, uid, period, limit);
+    if (!ok) {
+      const err = new Error(`本月 AI 生成次数已达上限（${limit} 次），请升级会员或次月再试`);
       err.code = 'QUOTA_EXCEEDED';
-      err.quota = c;
+      err.quota = { allowed: false, unlimited: false, limit, used: usedGeneration(db, uid), remaining: 0, metric: 'generation' };
       throw err;
     }
-    const used = consumeGeneration(db, userId, 1);
-    return { used, limit: c.limit, remaining: c.unlimited ? -1 : Math.max(0, c.limit - used) };
+    const used = usedGeneration(db, uid);
+    return { used, limit, remaining: Math.max(0, limit - used) };
   };
   return db.transaction ? db.transaction(runTx)() : runTx();
 }

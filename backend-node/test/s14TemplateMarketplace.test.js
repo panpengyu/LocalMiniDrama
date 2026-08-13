@@ -71,8 +71,10 @@ function cleanup() {
     deleteCreatorCascade(uid);
     // 清理购买/下载记录里以本测试为买家的残留
     db.prepare("DELETE FROM marketplace_downloads WHERE user_id = ?").run(uid);
-    db.prepare("DELETE FROM point_logs WHERE user_id = ? AND business_type = 'template_purchase'").run(uid);
-    db.prepare("DELETE FROM point_logs WHERE user_id = ? AND business_type = 'test_s14'").run(uid);
+    // 清理测试 / 演示脚本写入的积分残留（真实库共享用户，避免污染购买用例的初始余额）
+    db.prepare(
+      "DELETE FROM point_logs WHERE user_id = ? AND business_type IN ('template_purchase','test_s14','seed_s14_demo','stress_test')"
+    ).run(uid);
   }
   // 清理测试应用生成的项目（title 前缀标记）
   db.prepare("DELETE FROM marketplace_downloads WHERE applied_drama_id IN (SELECT id FROM dramas WHERE title LIKE 'S14测试%')").run();

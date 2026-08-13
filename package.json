@@ -12,7 +12,8 @@
     "dev:all": "concurrently \"npm run dev:user\" \"npm run dev:admin\"",
     "build:user": "npm run build --workspace front-user",
     "build:admin": "npm run build --workspace front-admin",
-    "build:all": "npm run build:user && npm run build:admin"
+    "build:all": "npm run build:user && npm run build:admin",
+    "report:pdf": "node scripts/md-to-pdf.mjs"
   },
   "devDependencies": {
     "concurrently": "^8.2.0"

@@ -216,22 +216,28 @@ function manualReview(db, log, { templateId, approve, remark, reviewerId }) {
   if (!approve && !remark) { const e = new Error('驳回必须填写原因'); e.code = 'REJECT_REASON_REQUIRED'; throw e; }
 
   const toStatus = approve ? 'listed' : 'rejected';
+  const inList = MANUAL_REVIEWABLE.map(() => '?').join(',');
   const runTx = () => {
+    // 原子状态流转：UPDATE 自带 status 前置条件，changes===1 者才是本次并发的唯一赢家。
+    // 避免「读取(guard)→写入」之间的 TOCTOU 窗口导致多个并发复审同时通过、写重复审计日志。
+    let changed;
     if (approve) {
-      db.prepare(
+      changed = db.prepare(
         `UPDATE marketplace_templates
            SET status = 'listed', reviewer_id = ?, reviewed_at = ${nowExpr(db)},
                listed_at = COALESCE(listed_at, ${nowExpr(db)}), reject_reason = NULL, updated_at = ${nowExpr(db)}
-         WHERE id = ?`
-      ).run(reviewerId || null, Number(templateId));
-      creatorService.bumpCreatorTemplateCount(db, t.creator_id);
+         WHERE id = ? AND status IN (${inList})`
+      ).run(reviewerId || null, Number(templateId), ...MANUAL_REVIEWABLE).changes;
     } else {
-      db.prepare(
+      changed = db.prepare(
         `UPDATE marketplace_templates
            SET status = 'rejected', reviewer_id = ?, reviewed_at = ${nowExpr(db)}, reject_reason = ?, updated_at = ${nowExpr(db)}
-         WHERE id = ?`
-      ).run(reviewerId || null, remark, Number(templateId));
+         WHERE id = ? AND status IN (${inList})`
+      ).run(reviewerId || null, remark, Number(templateId), ...MANUAL_REVIEWABLE).changes;
     }
+    // 并发下未抢到状态流转（changes===0）：状态已被其它复审改变，判定为不可复审。
+    if (!changed) { const e = new Error(`当前状态不可人工复审：已被处理`); e.code = 'NOT_REVIEWABLE'; throw e; }
+    if (approve) creatorService.bumpCreatorTemplateCount(db, t.creator_id);
     writeReviewLog(db, {
       templateId, reviewType: 'manual', action: approve ? 'approve' : 'reject',
       fromStatus: t.status, toStatus, reviewerId: reviewerId || null,
@@ -260,13 +266,20 @@ function setListing(db, log, { templateId, listed, reviewerId, remark }) {
   }
 
   const toStatus = listed ? 'listed' : 'delisted';
+  const fromRequired = listed ? 'delisted' : 'listed';
   const runTx = () => {
-    db.prepare(
+    // 原子上下架：UPDATE 自带 from 状态前置条件，防并发重复流转与重复审计。
+    const changed = db.prepare(
       `UPDATE marketplace_templates
          SET status = ?, listed_at = CASE WHEN ? = 'listed' THEN COALESCE(listed_at, ${nowExpr(db)}) ELSE listed_at END,
              updated_at = ${nowExpr(db)}
-       WHERE id = ?`
-    ).run(toStatus, toStatus, Number(templateId));
+       WHERE id = ? AND status = ?`
+    ).run(toStatus, toStatus, Number(templateId), fromRequired).changes;
+    if (!changed) {
+      const e = new Error(listed ? '仅已下架模板可恢复上架' : '仅已上架模板可下架');
+      e.code = listed ? 'NOT_DELISTED' : 'NOT_LISTED';
+      throw e;
+    }
     creatorService.bumpCreatorTemplateCount(db, t.creator_id);
     writeReviewLog(db, {
       templateId, reviewType: 'manual', action: listed ? 'relist' : 'delist',

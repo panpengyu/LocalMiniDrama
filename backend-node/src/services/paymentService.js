@@ -202,17 +202,19 @@ function handlePaymentSuccess(db, log, opts) {
   const autoRenew = order.billing_cycle !== 'lifetime' && !!opts.autoRenew;
 
   const runTx = () => {
-    // 1) 积分支付：先扣积分（余额不足抛错，回滚）
-    if (order.pay_method === 'points' && amount > 0) {
-      deductPointsForOrder(db, order, amount);
-    }
-
-    // 2) 标记订单已支付
-    db.prepare(
+    // 1) 原子抢占「订单标记为已支付」——WHERE pay_status='pending' 保证并发/重复回调下仅一个赢家。
+    //    changes===0 表示已被其它回调处理，视为幂等，避免重复开通会员/重复计收入/重复扣分。
+    const claimed = db.prepare(
       `UPDATE membership_orders
          SET pay_status = 'paid', trade_no = ?, paid_at = ${nowExpr(db)}, updated_at = ${nowExpr(db)}
        WHERE id = ? AND pay_status = 'pending'`
-    ).run(opts.tradeNo || null, order.id);
+    ).run(opts.tradeNo || null, order.id).changes;
+    if (!claimed) { const e = new Error('订单已被处理'); e.code = 'ALREADY_PAID'; throw e; }
+
+    // 2) 积分支付：原子扣积分（锁用户行 + 校验余额，余额不足抛错回滚）
+    if (order.pay_method === 'points' && amount > 0) {
+      deductPointsForOrder(db, order, amount);
+    }
 
     // 3) 开通 / 续费 / 升级会员（立即生效）
     const membership = membershipService.activateMembership(db, {
@@ -238,7 +240,18 @@ function handlePaymentSuccess(db, log, opts) {
     return membership;
   };
 
-  const membership = db.transaction ? db.transaction(runTx)() : runTx();
+  let membership;
+  try {
+    membership = db.transaction ? db.transaction(runTx)() : runTx();
+  } catch (e) {
+    // 并发下未抢到订单标记：按幂等返回既有会员状态（回调可能重复投递）
+    if (e && e.code === 'ALREADY_PAID') {
+      const paidOrder = getOrder(db, order.id);
+      const ms = db.prepare('SELECT * FROM user_memberships WHERE user_id = ?').get(order.user_id);
+      return { order: paidOrder, membership: ms, alreadyPaid: true };
+    }
+    throw e;
+  }
 
   if (log) log.info('[S13-T04] 会员支付成功已开通', {
     orderNo, userId: order.user_id, level: order.level_code, cycle: order.billing_cycle,
@@ -248,23 +261,16 @@ function handlePaymentSuccess(db, log, opts) {
   return { order: getOrder(db, order.id), membership, alreadyPaid: false };
 }
 
-/** 积分支付：从用户积分余额扣减，写入一条 consume 流水（business_type=membership）。 */
+/** 积分支付：从用户积分余额原子扣减，写入一条 consume 流水（business_type=membership）。 */
 function deductPointsForOrder(db, order, amountYuan) {
   const needPoints = Math.round(amountYuan * financeService.POINTS_PER_YUAN);
-  const balance = financeService.getUserBalance(db, order.user_id);
-  if (balance < needPoints) {
-    const err = new Error(`积分不足：需 ${needPoints} 积分，当前 ${balance}`);
-    err.code = 'INSUFFICIENT_POINTS';
-    throw err;
-  }
-  const balanceAfter = balance - needPoints;
-  db.prepare(
-    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
-     VALUES (?, 'consume', 'membership', ?, ?, ?, ?, ${nowExpr(db)})`
-  ).run(
-    order.user_id, -needPoints, balanceAfter, order.order_no,
-    `会员购买(${order.level_code}/${order.billing_cycle})`
-  );
+  financeService.deductPointsAtomic(db, {
+    userId: order.user_id,
+    points: needPoints,
+    businessType: 'membership',
+    relatedId: order.order_no,
+    remark: `会员购买(${order.level_code}/${order.billing_cycle})`,
+  });
 }
 
 /** 现金渠道支付：记录一条已支付 recharges 收入（保持财务报表口径一致）。 */

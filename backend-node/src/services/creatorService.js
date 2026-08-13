@@ -320,9 +320,14 @@ function requestWithdrawal(db, log, creator, { amount }) {
 
   const withdrawNo = marketplaceService.genNo('WD');
   const runTx = () => {
-    // 冻结余额（扣减）
-    const balAfter = +(c.balance - amt).toFixed(2);
-    db.prepare(`UPDATE marketplace_creators SET balance = ?, updated_at = ${nowExpr(db)} WHERE id = ?`).run(balAfter, c.id);
+    // 原子冻结余额：SET balance=balance-amt WHERE balance>=amt，changes===1 才算扣减成功。
+    // 杜绝并发提现基于同一旧余额覆盖写导致的超额提现 / 账目错乱（lost update）。
+    const changed = db.prepare(
+      `UPDATE marketplace_creators SET balance = balance - ?, updated_at = ${nowExpr(db)} WHERE id = ? AND balance >= ?`
+    ).run(amt, c.id, amt).changes;
+    if (!changed) { const e = new Error(`可提现余额不足`); e.code = 'INSUFFICIENT_BALANCE'; throw e; }
+    // 读回扣减后的真实余额作为流水快照
+    const balAfter = +(Number(db.prepare('SELECT balance FROM marketplace_creators WHERE id = ?').get(c.id).balance) || 0).toFixed(2);
     const res = db.prepare(
       `INSERT INTO marketplace_withdrawals
          (withdraw_no, creator_id, creator_user_id, amount, account_type, account, status, created_at, updated_at)
@@ -356,24 +361,27 @@ function reviewWithdrawal(db, log, { withdrawalId, approve, remark, reviewerId }
   const amt = +Number(w.amount).toFixed(2);
   const runTx = () => {
     if (approve) {
-      db.prepare(
+      // 原子抢占状态流转：WHERE status IN ('pending','approved') 保证并发/重复审核下仅一个赢家，
+      // changes===0 说明已被处理，避免重复累加 total_withdrawn。
+      const changed = db.prepare(
         `UPDATE marketplace_withdrawals
            SET status = 'paid', review_remark = ?, reviewer_id = ?, reviewed_at = ${nowExpr(db)}, paid_at = ${nowExpr(db)}, updated_at = ${nowExpr(db)}
-         WHERE id = ?`
-      ).run(remark || null, reviewerId || null, w.id);
-      // 冻结金额已在申请时扣减，打款时仅累加 total_withdrawn
+         WHERE id = ? AND status IN ('pending','approved')`
+      ).run(remark || null, reviewerId || null, w.id).changes;
+      if (!changed) { const e = new Error('提现单已被处理'); e.code = 'WITHDRAWAL_NOT_REVIEWABLE'; throw e; }
+      // 冻结金额已在申请时扣减，打款时仅原子累加 total_withdrawn
       db.prepare(`UPDATE marketplace_creators SET total_withdrawn = total_withdrawn + ?, updated_at = ${nowExpr(db)} WHERE id = ?`)
         .run(amt, w.creator_id);
     } else {
-      db.prepare(
+      const changed = db.prepare(
         `UPDATE marketplace_withdrawals
            SET status = 'rejected', review_remark = ?, reviewer_id = ?, reviewed_at = ${nowExpr(db)}, updated_at = ${nowExpr(db)}
-         WHERE id = ?`
-      ).run(remark || null, reviewerId || null, w.id);
-      // 退回冻结金额到余额 + 退回流水
-      const cur = db.prepare('SELECT balance FROM marketplace_creators WHERE id = ?').get(w.creator_id);
-      const balAfter = +((Number(cur.balance) || 0) + amt).toFixed(2);
-      db.prepare(`UPDATE marketplace_creators SET balance = ?, updated_at = ${nowExpr(db)} WHERE id = ?`).run(balAfter, w.creator_id);
+         WHERE id = ? AND status IN ('pending','approved')`
+      ).run(remark || null, reviewerId || null, w.id).changes;
+      if (!changed) { const e = new Error('提现单已被处理'); e.code = 'WITHDRAWAL_NOT_REVIEWABLE'; throw e; }
+      // 原子退回冻结金额到余额（balance=balance+amt），再读回快照写退回流水
+      db.prepare(`UPDATE marketplace_creators SET balance = balance + ?, updated_at = ${nowExpr(db)} WHERE id = ?`).run(amt, w.creator_id);
+      const balAfter = +(Number(db.prepare('SELECT balance FROM marketplace_creators WHERE id = ?').get(w.creator_id).balance) || 0).toFixed(2);
       db.prepare(
         `INSERT INTO marketplace_creator_ledger (creator_id, entry_type, amount, balance_after, ref_type, ref_id, remark, created_at)
          VALUES (?, 'withdraw_refund', ?, ?, 'withdrawal', ?, ?, ${nowExpr(db)})`

@@ -10,31 +10,40 @@
         </div>
         <el-button :icon="Refresh" :loading="loadingStats" @click="loadStats">刷新概览</el-button>
       </div>
-      <div class="stat-grid">
-        <div class="stat-cell">
-          <div class="stat-num">{{ stats.templates.listed }}</div>
-          <div class="stat-label">在售模板</div>
-        </div>
-        <div class="stat-cell warn">
-          <div class="stat-num">{{ stats.templates.in_review }}</div>
-          <div class="stat-label">待审核</div>
-        </div>
-        <div class="stat-cell">
-          <div class="stat-num">{{ stats.transactions.downloads }}</div>
-          <div class="stat-label">累计获取</div>
-        </div>
-        <div class="stat-cell">
-          <div class="stat-num">¥{{ fmtMoney(stats.transactions.gmv) }}</div>
-          <div class="stat-label">成交额 GMV</div>
-        </div>
-        <div class="stat-cell">
-          <div class="stat-num">¥{{ fmtMoney(stats.revenue.platform_income) }}</div>
-          <div class="stat-label">平台分成收入</div>
-        </div>
-        <div class="stat-cell">
-          <div class="stat-num">{{ stats.creators.approved }}<em>/{{ stats.creators.total }}</em></div>
-          <div class="stat-label">认证创作者</div>
-        </div>
+      <div class="stat-grid" v-loading="loadingStats && !statsLoaded" element-loading-text="加载概览…">
+        <template v-if="statsLoaded">
+          <div class="stat-cell">
+            <div class="stat-num">{{ stats.templates.listed }}</div>
+            <div class="stat-label">在售模板</div>
+          </div>
+          <div class="stat-cell warn">
+            <div class="stat-num">{{ stats.templates.in_review }}</div>
+            <div class="stat-label">待审核</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-num">{{ stats.transactions.downloads }}</div>
+            <div class="stat-label">累计获取</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-num">¥{{ fmtMoney(stats.transactions.gmv) }}</div>
+            <div class="stat-label">成交额 GMV</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-num">¥{{ fmtMoney(stats.revenue.platform_income) }}</div>
+            <div class="stat-label">平台分成收入</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-num">{{ stats.creators.approved }}<em>/{{ stats.creators.total }}</em></div>
+            <div class="stat-label">认证创作者</div>
+          </div>
+        </template>
+        <!-- 首屏拉取前的骨架占位，避免瞬时显示「0 / 暂无数据」 -->
+        <template v-else>
+          <div v-for="n in 6" :key="n" class="stat-cell skeleton">
+            <div class="stat-num skeleton-bar"></div>
+            <div class="stat-label skeleton-bar sm"></div>
+          </div>
+        </template>
       </div>
     </el-card>
 
@@ -514,6 +523,8 @@ const emptyStats = () => ({
 })
 const stats = ref(emptyStats())
 const loadingStats = ref(false)
+// 首屏概览是否已成功拉取；用于骨架占位，避免拉取完成前瞬时渲染「0 / 暂无数据」
+const statsLoaded = ref(false)
 const platformRate = computed(() => Number(stats.value.platform_rate) || 0.3)
 const platformPct = computed(() => Math.round(platformRate.value * 100))
 
@@ -522,8 +533,11 @@ async function loadStats() {
   try {
     const res = await marketplaceAdminAPI.stats()
     stats.value = { ...emptyStats(), ...res }
+    statsLoaded.value = true
   } catch (e) {
-    stats.value = emptyStats()
+    // 拉取失败时保留已有概览（若首屏则维持骨架态），并显式提示，避免静默清零误导
+    if (!statsLoaded.value) stats.value = emptyStats()
+    ElMessage.error('概览数据加载失败，请点击「刷新概览」重试')
   } finally {
     loadingStats.value = false
   }
@@ -917,6 +931,22 @@ onMounted(async () => {
 .stat-num { font-size: 22px; font-weight: 700; color: var(--text-bright); }
 .stat-num em { font-size: 14px; color: var(--text-subtle); font-style: normal; }
 .stat-label { font-size: 12px; color: var(--text-subtle); margin-top: 4px; }
+
+/* 首屏概览骨架占位 */
+.stat-cell.skeleton { pointer-events: none; }
+.skeleton-bar {
+  margin: 0 auto;
+  height: 22px; width: 60%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-page) 25%, var(--border-color) 37%, var(--bg-page) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+.skeleton-bar.sm { height: 12px; width: 42%; margin-top: 8px; }
+@keyframes skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
 
 .mkt-tabs { margin-top: 16px; }
 .tab-label { display: inline-flex; align-items: center; gap: 4px; }

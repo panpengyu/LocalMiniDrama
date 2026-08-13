@@ -18,6 +18,10 @@
 
 const POINTS_PER_YUAN = 100;
 
+function nowExpr(db) {
+  return db.type === 'mysql' ? 'NOW()' : "datetime('now')";
+}
+
 function toYuan(points) {
   return +((Number(points) || 0) / POINTS_PER_YUAN).toFixed(2);
 }
@@ -144,6 +148,42 @@ function getUserBalance(db, userId) {
   // MySQL 包装层无行返回 null，SQLite 返回 undefined
   if (row == null) return 0;
   return Number(row.balance_after) || 0;
+}
+
+/**
+ * 原子扣减用户积分（防并发 lost update / 余额变负）。
+ *
+ * point_logs 为「仅追加」账本，余额由最新一行 balance_after 派生，无 users.balance 单行可原子自增。
+ * 因此这里在用户锚点行（users）上加行锁使同一用户的余额变更串行化：
+ *   MySQL：SELECT ... FOR UPDATE 锁 users 行；SQLite：由 immediate 写事务串行化。
+ * 锁定后再读取最新余额、校验充足、写入 consume 流水，杜绝「读余额→写扣减」之间的 TOCTOU 窗口。
+ *
+ * 必须在事务内调用（调用方用 db.transaction 包裹）。
+ * @param {object} opts { userId, points(正整数，需扣减的积分), businessType, relatedId, remark }
+ * @returns {{ needPoints, balanceBefore, balanceAfter }}
+ */
+function deductPointsAtomic(db, { userId, points, businessType, relatedId, remark }) {
+  const uid = Number(userId);
+  const need = Math.round(Number(points) || 0);
+  if (!uid) { const e = new Error('无效用户'); e.code = 'INVALID_USER'; throw e; }
+  if (need <= 0) { const e = new Error('扣减积分必须为正'); e.code = 'INVALID_AMOUNT'; throw e; }
+
+  // 锁定用户锚点行，串行化该用户的余额变更（MySQL 行锁 / SQLite 写事务）
+  if (db.type === 'mysql') {
+    db.prepare('SELECT id FROM users WHERE id = ? FOR UPDATE').get(uid);
+  }
+  const balanceBefore = getUserBalance(db, uid);
+  if (balanceBefore < need) {
+    const e = new Error(`积分不足：需 ${need} 积分，当前 ${balanceBefore}`);
+    e.code = 'INSUFFICIENT_POINTS';
+    throw e;
+  }
+  const balanceAfter = balanceBefore - need;
+  db.prepare(
+    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
+     VALUES (?, 'consume', ?, ?, ?, ?, ?, ${nowExpr(db)})`
+  ).run(uid, businessType || 'consume', -need, balanceAfter, relatedId || null, remark || null);
+  return { needPoints: need, balanceBefore, balanceAfter };
 }
 
 /**
@@ -308,6 +348,7 @@ module.exports = {
   dailyTrend,
   arrearsWarnings,
   getUserBalance,
+  deductPointsAtomic,
   notifyArrears,
   listBillingRules,
   createBillingRule,
