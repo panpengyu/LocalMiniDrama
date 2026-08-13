@@ -123,11 +123,102 @@ function updateGenerationSettings(db) {
   };
 }
 
+/**
+ * 获取支付渠道配置接口（系统管理 · 仅 super_admin）
+ *
+ * 返回微信/支付宝商户凭据的「脱敏」视图：密钥类字段只返回是否已配置（configured）与掩码，
+ * 绝不回传明文密钥，避免二次泄露。前端据此渲染「已开通 / 未开通」与占位输入框。
+ */
+function getPaymentSettings(db) {
+  return (req, res) => {
+    const wechat = settingsService.getGlobalSetting(db, 'pay_wechat', null) || {};
+    const alipay = settingsService.getGlobalSetting(db, 'pay_alipay', null) || {};
+    const mask = (v) => (v ? `${String(v).slice(0, 2)}****${String(v).slice(-2)}` : '');
+    response.success(res, {
+      wechat: {
+        configured: !!(wechat.mchid || wechat.merchant_id) && !!wechat.api_v3_key
+          && Array.isArray(wechat.platform_certs) && wechat.platform_certs.length > 0,
+        mchid: wechat.mchid || wechat.merchant_id || '',
+        app_id: wechat.app_id || '',
+        notify_url: wechat.notify_url || '',
+        api_v3_key_mask: mask(wechat.api_v3_key),
+        platform_certs_count: Array.isArray(wechat.platform_certs) ? wechat.platform_certs.length : 0,
+      },
+      alipay: {
+        configured: !!alipay.merchant_id && !!alipay.api_key,
+        merchant_id: alipay.merchant_id || '',
+        app_id: alipay.app_id || '',
+        notify_url: alipay.notify_url || '',
+        api_key_mask: mask(alipay.api_key),
+      },
+    });
+  };
+}
+
+/**
+ * 更新支付渠道配置接口（系统管理 · 仅 super_admin）
+ *
+ * 采用「增量更新」：仅覆盖本次传入的字段，未传字段保留原值（便于只改回调地址而不重填密钥）。
+ * 微信 v3 必填校验：mchid + api_v3_key(32字节) + platform_certs（数组）。
+ */
+function updatePaymentSettings(db, log) {
+  return (req, res) => {
+    const b = req.body || {};
+    // —— 微信支付 v3 ——
+    if (b.wechat && typeof b.wechat === 'object') {
+      const cur = settingsService.getGlobalSetting(db, 'pay_wechat', null) || {};
+      const next = { ...cur };
+      const w = b.wechat;
+      if (w.mchid !== undefined) { next.mchid = String(w.mchid || ''); next.merchant_id = next.mchid; }
+      if (w.app_id !== undefined) next.app_id = String(w.app_id || '');
+      if (w.notify_url !== undefined) next.notify_url = String(w.notify_url || '');
+      if (w.api_v3_key !== undefined && w.api_v3_key !== '') {
+        if (String(w.api_v3_key).length !== 32) {
+          return response.badRequest(res, '微信 APIv3 密钥必须为 32 字节');
+        }
+        next.api_v3_key = String(w.api_v3_key);
+        next.api_key = next.api_v3_key; // 兼容既有「已开通」判定字段
+      }
+      if (w.platform_certs !== undefined) {
+        if (!Array.isArray(w.platform_certs)) return response.badRequest(res, 'platform_certs 需为数组');
+        // 每项须含 serial_no 与 public_key_pem
+        for (const c of w.platform_certs) {
+          if (!c || !(c.serial_no || c.serialNo) || !(c.public_key_pem || c.pem)) {
+            return response.badRequest(res, '平台证书每项需包含 serial_no 与 public_key_pem');
+          }
+        }
+        next.platform_certs = w.platform_certs.map((c) => ({
+          serial_no: c.serial_no || c.serialNo,
+          public_key_pem: c.public_key_pem || c.pem,
+        }));
+      }
+      settingsService.setGlobalSetting(db, 'pay_wechat', next);
+      if (log) log.info('[S13-T04] 微信支付凭据已更新', { mchid: next.mchid, certs: (next.platform_certs || []).length });
+    }
+    // —— 支付宝 ——
+    if (b.alipay && typeof b.alipay === 'object') {
+      const cur = settingsService.getGlobalSetting(db, 'pay_alipay', null) || {};
+      const next = { ...cur };
+      const a = b.alipay;
+      if (a.merchant_id !== undefined) next.merchant_id = String(a.merchant_id || '');
+      if (a.app_id !== undefined) next.app_id = String(a.app_id || '');
+      if (a.notify_url !== undefined) next.notify_url = String(a.notify_url || '');
+      if (a.api_key !== undefined && a.api_key !== '') next.api_key = String(a.api_key);
+      if (a.alipay_public_key !== undefined) next.alipay_public_key = String(a.alipay_public_key || '');
+      settingsService.setGlobalSetting(db, 'pay_alipay', next);
+      if (log) log.info('[S13-T04] 支付宝凭据已更新', { merchant_id: next.merchant_id });
+    }
+    return getPaymentSettings(db)(req, res);
+  };
+}
+
 module.exports = function settingsRoutes(db, cfg, log) {
   return {
     getLanguage: getLanguage(cfg),
     updateLanguage: updateLanguage(cfg, log),
     getGenerationSettings: getGenerationSettings(db),
     updateGenerationSettings: updateGenerationSettings(db),
+    getPaymentSettings: getPaymentSettings(db),
+    updatePaymentSettings: updatePaymentSettings(db, log),
   };
 };

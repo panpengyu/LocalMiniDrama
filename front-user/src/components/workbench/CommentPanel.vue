@@ -45,6 +45,22 @@
         <el-button text size="small" @click="clearNodeFilter">查看全部</el-button>
       </div>
 
+      <!-- 内嵌视频预览：提供 videoSrc 时可在面板内直接播放并跳转到批注时间点 -->
+      <div v-if="resolvedVideoSrc" class="cd-video-preview">
+        <video
+          ref="videoRef"
+          :src="resolvedVideoSrc"
+          controls
+          preload="metadata"
+          class="cd-video-el"
+          @loadedmetadata="onVideoReady"
+        ></video>
+        <div class="cd-video-tip">
+          <el-icon><VideoPlay /></el-icon>
+          点击评论上的时间标签即可跳转到对应画面
+        </div>
+      </div>
+
       <!-- 批量回复条 -->
       <div v-if="selectedIds.length" class="cd-batch-bar">
         <span>已选 {{ selectedIds.length }} 条</span>
@@ -77,8 +93,16 @@
                 <span v-else class="dot-unread" title="未读"></span>
                 <span class="time">{{ fromNow(t.created_at) }}</span>
                 <el-tag v-if="t.node_key" size="small" effect="plain" class="node-tag">{{ t.node_key }}</el-tag>
-                <el-tag v-if="t.timestamp_ms != null" size="small" type="warning" effect="plain" class="ts-tag">
-                  <el-icon><Timer /></el-icon>{{ fmtTs(t.timestamp_ms) }}
+                <el-tag
+                  v-if="t.timestamp_ms != null"
+                  size="small"
+                  type="warning"
+                  effect="plain"
+                  class="ts-tag ts-tag-clickable"
+                  :title="`跳转到 ${fmtTs(t.timestamp_ms)}`"
+                  @click.stop="seekTo(t)"
+                >
+                  <el-icon><VideoPlay /></el-icon>{{ fmtTs(t.timestamp_ms) }}
                 </el-tag>
                 <el-tag v-if="t.status === 'resolved'" size="small" type="success" effect="dark">已解决</el-tag>
               </div>
@@ -166,7 +190,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Check, Aim, Timer } from '@element-plus/icons-vue'
+import { ChatLineSquare, Check, Aim, VideoPlay } from '@element-plus/icons-vue'
 import commentAPI from '@/api/comments'
 import { useUserStore } from '@/stores/user'
 
@@ -176,9 +200,11 @@ const props = defineProps({
   // 当前定位的画布节点键，格式 type:id（可选）
   nodeKey: { type: String, default: null },
   // 当前用户的协作角色标签，用于删除权限判断（owner/manage 可删他人）
-  myRoleTag: { type: String, default: '' }
+  myRoleTag: { type: String, default: '' },
+  // 可选：当前节点关联的视频地址；提供后面板内嵌播放器，点击时间戳可直接跳转
+  videoSrc: { type: String, default: '' }
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'seek-timestamp'])
 
 const userStore = useUserStore()
 const myId = computed(() => Number(userStore.user?.id))
@@ -186,6 +212,16 @@ const myId = computed(() => Number(userStore.user?.id))
 const loading = ref(false)
 const threads = ref([])
 const unreadTotal = ref(0)
+
+// 内嵌视频预览 / 时间轴跳转
+const videoRef = ref(null)
+const videoReady = ref(false)
+// 支持字符串或 { url }；解析为可播放地址（相对路径经 request 代理即可）
+const resolvedVideoSrc = computed(() => {
+  const v = props.videoSrc
+  if (!v) return ''
+  return typeof v === 'string' ? v : (v.url || '')
+})
 
 const scope = ref('node') // node | all
 const statusFilter = ref('')
@@ -357,6 +393,46 @@ async function markAll() {
   await Promise.all([loadComments(), loadUnread()])
 }
 
+/* ---------- 时间轴跳转 ---------- */
+function onVideoReady() {
+  videoReady.value = true
+}
+
+/**
+ * 点击评论的时间戳标签：跳转到该批注对应的播放位置。
+ *   1) 若面板内嵌了视频（videoSrc），直接 seek 内嵌播放器并自动播放；
+ *   2) 无论是否内嵌，都向外 emit `seek-timestamp`，宿主（如主预览播放器/剪辑时间线）
+ *      可监听并驱动自己的播放器跳转，保持组件解耦。
+ */
+function seekTo(comment) {
+  const ms = Number(comment && comment.timestamp_ms)
+  if (!Number.isFinite(ms) || ms < 0) return
+  const seconds = ms / 1000
+
+  // 内嵌播放器跳转
+  const el = videoRef.value
+  if (el) {
+    try {
+      const doSeek = () => {
+        // 不超过视频总时长（元数据就绪时才有 duration）
+        const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : seconds
+        el.currentTime = Math.min(seconds, dur)
+        el.play && el.play().catch(() => { /* 自动播放被拦截时忽略 */ })
+      }
+      if (videoReady.value || (Number.isFinite(el.duration) && el.duration > 0)) {
+        doSeek()
+      } else {
+        el.addEventListener('loadedmetadata', doSeek, { once: true })
+        el.load && el.load()
+      }
+      ElMessage.success(`已跳转到 ${fmtTs(ms)}`)
+    } catch (e) { /* 忽略播放器异常，仍向外派发事件 */ }
+  }
+
+  // 对外派发，供宿主主播放器响应
+  emit('seek-timestamp', { ms, seconds, nodeKey: comment.node_key || null, commentId: comment.id })
+}
+
 /* ---------- 展示辅助 ---------- */
 function initials(name) {
   if (!name) return 'U'
@@ -484,6 +560,37 @@ function renderMentions(text) {
 .dot-unread { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
 .node-tag, .ts-tag { font-size: 11px; }
 .ts-tag .el-icon { margin-right: 2px; vertical-align: -1px; }
+.ts-tag-clickable {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.ts-tag-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(230, 162, 60, 0.35);
+}
+
+/* 内嵌视频预览 */
+.cd-video-preview {
+  margin-bottom: 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f172a;
+}
+.cd-video-el {
+  width: 100%;
+  max-height: 200px;
+  display: block;
+  background: #000;
+}
+.cd-video-tip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+  padding: 6px 10px;
+  background: #1e293b;
+}
 
 .thread-text {
   margin: 6px 0;

@@ -147,32 +147,50 @@ function membershipRoutes(db, log) {
   });
 
   // ===================== 支付异步回调（第三方通知） =====================
-  // 说明：真实环境需在此按各渠道规范验签（微信 v3 证书 / 支付宝 RSA2）。
-  // 未配置商户凭据时，此端点不接受任何未验签的开通请求，直接 400，杜绝伪造回调。
+  // 说明：微信 v3 已按官方规范接入验签 + AES-256-GCM 资源解密（见 services/wechatPayV3.js）；
+  // 支付宝 RSA2 验签留统一接入点。未配置商户凭据（系统管理中未开通）时直接拒绝，杜绝伪造回调。
+  const wechatPayV3 = require('../services/wechatPayV3');
+
   router.post('/membership/pay/notify/:method', (req, res) => {
     const method = req.params.method;
     if (!['wechat', 'alipay'].includes(method)) return response.badRequest(res, '非法回调渠道');
     try {
+      // —— 微信支付 v3：验签 + 解密密文，从解密报文取订单号 ——
+      if (method === 'wechat') {
+        const r = wechatPayV3.handleCallback(db, req);
+        if (!r.ok) {
+          if (r.reason === 'NOT_CONFIGURED') return response.badRequest(res, '微信支付未在系统管理中开通，拒绝处理回调');
+          if (r.reason === 'SIGN_INVALID') return response.error(res, 400, 'SIGN_INVALID', '微信支付回调验签失败');
+          if (r.reason === 'DECRYPT_FAILED') return response.error(res, 400, 'DECRYPT_FAILED', '微信支付回调解密失败');
+          // 非成功交易态：按微信规范应答已接收，但不开通
+          return response.success(res, { received: true, ignored: true, reason: r.reason });
+        }
+        const result = paymentService.handlePaymentSuccess(db, log, {
+          orderNo: r.orderNo, tradeNo: r.transactionId, autoRenew: false,
+        });
+        return response.success(res, { received: true, already_paid: result.alreadyPaid });
+      }
+
+      // —— 支付宝：读取凭据 + RSA2 验签（占位，未接入 SDK 时始终拒绝，避免伪造放行） ——
       const b = req.body || {};
       const orderNo = b.order_no || b.out_trade_no;
       if (!orderNo) return response.badRequest(res, '缺少订单号');
       const settingsService = require('../services/settingsService');
-      const cred = settingsService.getGlobalSetting(db, method === 'wechat' ? 'pay_wechat' : 'pay_alipay', null);
+      const cred = settingsService.getGlobalSetting(db, 'pay_alipay', null);
       if (!cred || !cred.merchant_id || !cred.api_key) {
-        return response.badRequest(res, '支付渠道未开通，拒绝处理回调');
+        return response.badRequest(res, '支付宝未在系统管理中开通，拒绝处理回调');
       }
-      // TODO(生产接入)：此处按 method 调用官方 SDK verifySign(req)，验签失败返回 400。
-      const verified = verifyCallbackSignature(method, cred, req);
-      if (!verified) return response.error(res, 400, 'SIGN_INVALID', '回调验签失败');
+      const verified = verifyAlipaySignature(cred, req);
+      if (!verified) return response.error(res, 400, 'SIGN_INVALID', '支付宝回调验签失败');
       const result = paymentService.handlePaymentSuccess(db, log, {
-        orderNo, tradeNo: b.trade_no || b.transaction_id || null, autoRenew: false,
+        orderNo, tradeNo: b.trade_no || null, autoRenew: false,
       });
       response.success(res, { received: true, already_paid: result.alreadyPaid });
     } catch (err) { fail(res, err); }
   });
 
-  // 回调验签占位：仅在具备真实商户 SDK 时实现；无 SDK 时始终返回 false，避免伪造放行。
-  function verifyCallbackSignature(_method, _cred, _req) {
+  // 支付宝验签占位：仅在具备真实商户 SDK 时实现；无 SDK 时始终返回 false，避免伪造放行。
+  function verifyAlipaySignature(_cred, _req) {
     return false;
   }
 

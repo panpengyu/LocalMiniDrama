@@ -558,7 +558,9 @@
       v-model="commentPanelVisible"
       :drama-id="dramaId"
       :node-key="activeCommentNodeKey"
+      :video-src="activeCommentVideoSrc"
       :my-role-tag="collabRoleTag"
+      @seek-timestamp="onCommentSeek"
     />
   </div>
 </template>
@@ -1274,6 +1276,8 @@ function onCanvasNodeClick(p) {
     // S13-T06: 记录当前选中节点键（type:id），供评论批注面板定位
     const _nk = extractIdFromNodeId(id || data.id)
     if (nodeType && _nk) activeCommentNodeKey.value = `${nodeType}:${_nk}`
+    // S13-T06: 若节点关联视频，记录其地址供评论面板内嵌播放器做时间戳跳转
+    activeCommentVideoSrc.value = extractNodeVideoUrl(data)
     // ——— 角色节点 → 打开角色一致性 Drawer + 顺带切编辑入口 ——
     if (nodeType.includes('character') || /char/i.test(id || '')) {
       const cid = extractIdFromNodeId(id || data.id || data?.character_id)
@@ -1413,7 +1417,32 @@ const collabLocks = collab.locks
    ============================================================ */
 const commentPanelVisible = ref(false)
 const activeCommentNodeKey = ref(null)
+const activeCommentVideoSrc = ref('')
 const commentUnread = ref(0)
+
+/**
+ * 从画布节点数据中提取可播放的视频地址（用于评论面板时间戳跳转的内嵌预览）。
+ * 兼容常见字段：video_url / videoUrl / output_url / preview_url / url（且以视频扩展名结尾）。
+ */
+function extractNodeVideoUrl(data) {
+  if (!data || typeof data !== 'object') return ''
+  const cand = data.video_url || data.videoUrl || data.output_url
+    || data.preview_url || data.previewUrl || ''
+  if (cand) return cand
+  const url = data.url || ''
+  if (typeof url === 'string' && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) return url
+  return ''
+}
+
+/**
+ * 评论时间戳跳转事件：面板已尝试驱动内嵌播放器；此处记录日志，
+ * 后续若接入主预览播放器可在此驱动其 seek。
+ */
+function onCommentSeek(payload) {
+  log.info('[S13-T06] 评论时间戳跳转', {
+    ms: payload?.ms, nodeKey: payload?.nodeKey, commentId: payload?.commentId,
+  })
+}
 
 async function refreshCommentUnread() {
   if (!dramaId.value) return

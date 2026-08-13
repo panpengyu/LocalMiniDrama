@@ -383,6 +383,9 @@ function setupRouter(cfg, db, log) {
   r.put('/settings/language', settings.updateLanguage);
   r.get('/settings/generation', settings.getGenerationSettings);
   r.put('/settings/generation', settings.updateGenerationSettings);
+  // S13-T04 支付渠道凭据配置（系统管理，仅 super_admin；密钥脱敏返回）
+  r.get('/settings/payment', requireAuth, requireRole(['super_admin']), settings.getPaymentSettings);
+  r.put('/settings/payment', requireAuth, requireRole(['super_admin']), settings.updatePaymentSettings);
 
   // ---------- 提示词覆盖模块 ----------
   r.get('/settings/prompts', promptOverrides.list);
