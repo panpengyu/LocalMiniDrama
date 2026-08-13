@@ -78,6 +78,18 @@ const router = createRouter({
           meta: { title: '会员中心' }
         },
         {
+          path: 'marketplace',
+          name: 'marketplace',
+          component: () => import('@/views/TemplateMarket.vue'),
+          meta: { title: '模板市场' }
+        },
+        {
+          path: 'creator',
+          name: 'creator-center',
+          component: () => import('@/views/CreatorCenter.vue'),
+          meta: { title: '创作者中心' }
+        },
+        {
           path: 'free-create',
           name: 'free-create',
           component: () => import('@/views/FreeCreate.vue'),

@@ -1,0 +1,1 @@
+import{r as s}from"./request-D6TMQLRH.js";const i={auditLogs(t={}){return s.get("/admin/security/audit-logs",{params:t})},auditStats(){return s.get("/admin/security/audit-stats")},loginLogs(t={}){return s.get("/admin/security/login-logs",{params:t})},loginStats(t=7){return s.get("/admin/security/login-stats",{params:{days:t}})}};export{i as s};

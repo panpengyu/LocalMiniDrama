@@ -34,6 +34,8 @@ const routes = [
       { path: 'content-asset/storage-objects', name: 'StorageObjects', component: () => import('@/views/content-asset/StorageObjects.vue'), meta: { title: '存储对象管理' } },
       { path: 'content-asset/material-tags', name: 'MaterialTags', component: () => import('@/views/content-asset/MaterialTags.vue'), meta: { title: '素材标签库' } },
 
+      { path: 'marketplace/review', name: 'MarketplaceReview', component: () => import('@/views/marketplace/ReviewWorkbench.vue'), meta: { title: '模板市场 · 审核工作台' } },
+
       { path: 'operation/site-brand', name: 'SiteBrand', component: () => import('@/views/operation/SiteBrand.vue'), meta: { title: '站点品牌' } },
       { path: 'operation/changelog', name: 'Changelog', component: () => import('@/views/operation/Changelog.vue'), meta: { title: '版本日志' } },
       { path: 'operation/sms-config', name: 'SmsConfig', component: () => import('@/views/operation/SmsConfig.vue'), meta: { title: '短信配置' } },

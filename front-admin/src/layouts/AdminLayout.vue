@@ -82,7 +82,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Monitor, Fold, Expand, User, ArrowDown, SwitchButton,
-  Grid, Cpu, FolderOpened, Operation, Wallet, Setting
+  Grid, Cpu, FolderOpened, Operation, Wallet, Setting, Shop
 } from '@element-plus/icons-vue'
 import { useAdminUserStore } from '@/stores/adminUser'
 
@@ -131,6 +131,13 @@ const menuGroups = [
       { path: '/content-asset/actor-library', title: '真人库' },
       { path: '/content-asset/storage-objects', title: '存储对象管理' },
       { path: '/content-asset/material-tags', title: '素材标签库' }
+    ]
+  },
+  {
+    title: '模板市场',
+    icon: Shop,
+    children: [
+      { path: '/marketplace/review', title: '审核工作台' }
     ]
   },
   {

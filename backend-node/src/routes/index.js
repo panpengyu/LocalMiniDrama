@@ -478,6 +478,10 @@ function setupRouter(cfg, db, log) {
   const commentRoutes = require('./comments');
   r.use('/', commentRoutes(db, log));
 
+  // ---------- 模板市场（Sprint 14: S14-T01~T05 模板画廊/创作者中心/审核工作台/收益分成） ----------
+  const marketplaceRoutes = require('./marketplace');
+  r.use('/', marketplaceRoutes(db, log));
+
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (req, res) => {
     const cdnService = require('../services/cdnService');
