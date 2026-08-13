@@ -35,10 +35,14 @@ const response = require('../response');
 const { requireAuth } = require('../middleware/auth');
 const collaborationService = require('../services/collaborationService');
 const versionService = require('../services/versionService');
+const quotaService = require('../services/quotaService');
+const membershipService = require('../services/membershipService');
+const atomicQuotaGuardFactory = require('../middleware/atomicQuotaGuard');
 
-function collaborationRoutes(db, log) {
+function collaborationRoutes(db, log, deps = {}) {
   const express = require('express');
   const router = express.Router();
+  const atomicQuotaGuard = deps.atomicQuotaGuard || atomicQuotaGuardFactory(db, log);
 
   // 统一：校验当前用户对项目具备指定能力，否则 403
   function ensureCapability(req, res, dramaId, capability) {
@@ -150,7 +154,7 @@ function collaborationRoutes(db, log) {
 
   // ===================== 协作成员 (S11-T02) =====================
 
-  router.get('/dramas/:id/collaborators/roles', requireAuth, (req, res) => {
+  router.get('/dramas/:id/collaborators/roles', requireAuth, (_req, res) => {
     response.success(res, {
       roles: collaborationService.VALID_ROLE_TAGS,
       capabilities: collaborationService.ROLE_CAPABILITIES,
@@ -179,38 +183,42 @@ function collaborationRoutes(db, log) {
     }
     const target = db.prepare('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL').get(userId);
     if (!target) return response.badRequest(res, '目标用户不存在');
-    // S13-T05 协作人数配额：按项目所有者会员等级限制单项目协作人数（新增成员时校验）
-    try {
-      const quotaService = require('../services/quotaService');
-      const drama = db.prepare('SELECT created_by FROM dramas WHERE id = ?').get(dramaId);
-      const ownerId = drama && drama.created_by != null ? Number(drama.created_by) : req.user.id;
-      const already = collaborationService.getMember(db, dramaId, userId);
-      // 仅在「新增」有效成员时计入配额（已存在成员改角色不占新增名额）
-      if (!already || already.status !== 'active') {
-        const c = quotaService.check(db, ownerId, 'collaborator', { dramaId });
-        if (!c.allowed) {
-          return response.forbidden(res, `该项目协作人数已达上限（${c.limit} 人），请项目所有者升级会员后再邀请`);
-        }
-      }
-    } catch (e) {
-      log.warn('[S13-T05] 协作配额校验异常，放行', { error: e.message });
-    }
-    try {
-      const member = collaborationService.addMember(db, dramaId, userId, roleTag || 'viewer', req.user.id);
-      collaborationService.recordActivity(db, {
-        dramaId, userId: req.user.id, userName: req.user.username || req.user.name,
-        actionType: 'member_join', targetKey: `user:${userId}`, detail: { roleTag: roleTag || 'viewer' },
-      });
-      collaborationService.createNotification(db, {
-        dramaId, recipientId: userId, actorId: req.user.id, actorName: req.user.username || req.user.name,
-        type: 'member_join', title: '您已被加入项目协作',
-        content: `${req.user.username || req.user.name} 邀请您以「${roleTag || 'viewer'}」角色参与协作`,
-      });
-      response.success(res, member);
-    } catch (err) {
-      log.error('[S11-T02] 添加成员失败', { error: err.message });
-      response.internalError(res, err.message);
-    }
+
+    // S13-T05 协作人数配额：按项目所有者会员等级限制单项目协作人数。
+    // H6 原子占位：将「是否新增名额判定 + 上限校验 + addMember」合并进单个写序列化事务，
+    // 由通用 atomicQuotaGuard 承载竞态防护，消除并发邀请下 check→addMember 之间的 TOCTOU 超发窗口。
+    // 锚点锁 dramas 行，覆盖「项目首个协作者（used=0）」并发场景。
+    const drama = db.prepare('SELECT created_by FROM dramas WHERE id = ?').get(dramaId);
+    const ownerId = drama && drama.created_by != null ? Number(drama.created_by) : req.user.id;
+
+    const outcome = atomicQuotaGuard.guardAndConsume(req, res, {
+      tag: '[S13-T05][collaborator]',
+      // 上限：项目所有者的协作人数配额（解析异常由中间件 fail-open 放行）
+      limit: () => quotaService.quotaLimit(membershipService.getUserMembership(db, ownerId).plan, 'collaborator'),
+      anchor: () => ({ table: 'dramas', id: dramaId }),
+      // 仅「新增有效成员」占用名额；已 active 成员改角色不占（事务内判定，避免脏读）
+      consumesSeat: () => {
+        const already = collaborationService.getMember(db, dramaId, userId);
+        return !already || already.status !== 'active';
+      },
+      count: () => quotaService.usedCollaborators(db, dramaId),
+      mutate: () => collaborationService.addMember(db, dramaId, userId, roleTag || 'viewer', req.user.id),
+      message: (limit) => `该项目协作人数已达上限（${limit} 人），请项目所有者升级会员后再邀请`,
+    });
+    if (!outcome) return; // 已被守卫直接响应（403 / 500）
+
+    // 事务已提交，审计与通知作为后置副作用执行
+    const member = outcome.result;
+    collaborationService.recordActivity(db, {
+      dramaId, userId: req.user.id, userName: req.user.username || req.user.name,
+      actionType: 'member_join', targetKey: `user:${userId}`, detail: { roleTag: roleTag || 'viewer' },
+    });
+    collaborationService.createNotification(db, {
+      dramaId, recipientId: userId, actorId: req.user.id, actorName: req.user.username || req.user.name,
+      type: 'member_join', title: '您已被加入项目协作',
+      content: `${req.user.username || req.user.name} 邀请您以「${roleTag || 'viewer'}」角色参与协作`,
+    });
+    response.success(res, member);
   });
 
   router.delete('/dramas/:id/collaborators/:userId', requireAuth, (req, res) => {

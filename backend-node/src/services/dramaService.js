@@ -62,7 +62,15 @@ function parseJsonColumn(value) {
   }
 }
 
-async function createDrama(db, log, req, user = null) {
+/**
+ * 同步插入 dramas 行并返回自增 id（不含任何 async 步骤）。
+ *
+ * 拆分自 createDrama：async 的缓存通知无法置于 better-sqlite3 的同步事务内，
+ * 故把「纯 DB 写」独立出来，供 quotaService.tryConsumeProjectBounded 在写序列化事务中调用，
+ * 实现「项目数配额校验 + 插入」的原子占位（H7 TOCTOU 修复）。
+ * @returns {number} 新建 drama 的自增主键
+ */
+function insertDramaRow(db, log, req, user = null) {
   const now = new Date().toISOString();
   let meta = {};
   if (req.metadata) {
@@ -97,6 +105,11 @@ async function createDrama(db, log, req, user = null) {
   );
   const id = info.lastInsertRowid;
   log.info('Drama created', { drama_id: id, created_by: user ? user.id : null });
+  return id;
+}
+
+/** 新建后的 async 后置步骤（缓存/布隆过滤器通知）；置于事务提交之后，避免 async 混入同步事务。 */
+async function afterDramaCreated(log, id) {
   // R3: 通知 cacheService → 把新id加入布隆过滤器 + 失效列表缓存（否则列表页仍显示旧缓存，详情页被Bloom误判404）
   const cs = _cacheSvcNotifier();
   if (cs && typeof cs.notifyDramaCreated === 'function') {
@@ -104,6 +117,11 @@ async function createDrama(db, log, req, user = null) {
       log.warn && log.warn('[DRAMA-SVC] notifyDramaCreated 失败:', err.message)
     );
   }
+}
+
+async function createDrama(db, log, req, user = null) {
+  const id = insertDramaRow(db, log, req, user);
+  await afterDramaCreated(log, id);
   return getDramaById(db, id);
 }
 
@@ -1225,6 +1243,8 @@ function downloadEpisodeVideo(db, episodeId) {
 
 module.exports = {
   createDrama,
+  insertDramaRow,
+  afterDramaCreated,
   getDrama,
   getDramaById,
   listDramas,

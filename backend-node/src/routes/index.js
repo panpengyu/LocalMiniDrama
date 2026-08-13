@@ -49,7 +49,6 @@ const bgmRoutes = require('./bgm');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
-  const drama = dramaRoutes(db, cfg, log);
   const task = taskRoutes(db, log);
   const settings = settingsRoutes(db, cfg, log);
   const aiConfig = aiConfigRoutes(db, log, cfg);
@@ -80,6 +79,13 @@ function setupRouter(cfg, db, log) {
   const requireSufficientBalance = require('../middleware/balanceGuard')(db, log);
   // S13-T05 会员配额守卫（生成次数 / 项目数 / 协作人数）
   const quotaGuard = require('../middleware/quotaGuard')(db, log);
+  // 通用「原子配额占位」守卫单例（H6/H7 沉淀）：把「校验 + 那条写入」合并进单个写序列化事务，
+  // 从根上消除 TOCTOU 超发。此处统一实例化并注入各路由工厂，新增「累计型配额」路由可直接复用同一实例，
+  // 无需各自 require（避免散落的实例与不一致的 exempt/日志策略）。详见 middleware/atomicQuotaGuard.js。
+  const atomicQuotaGuard = require('../middleware/atomicQuotaGuard')(db, log);
+
+  // 剧本路由工厂：注入共享的 atomicQuotaGuard 单例（H7 项目数配额原子占位）
+  const drama = dramaRoutes(db, cfg, log, { atomicQuotaGuard });
 
   // ---------- 认证模块 ----------
   r.post('/auth/register', auth.register);
@@ -131,7 +137,10 @@ function setupRouter(cfg, db, log) {
   
   // ---------- 剧本模块 ----------
   r.get('/dramas', drama.listDramas);
-  r.post('/dramas', quotaGuard.project, drama.createDrama);
+  // H7: 项目数配额改为「原子占位」——校验与 INSERT 在同一写序列化事务内完成，
+  // 由 drama.createDrama 内部经 quotaService.tryConsumeProjectBounded 保证，
+  // 故此处不再挂非原子的 quotaGuard.project（旧 check→insert 存在 TOCTOU 超发窗口）。
+  r.post('/dramas', drama.createDrama);
   r.get('/dramas/stats', drama.getDramaStats);
   // 导出/导入（放在 :id 路由前，避免被 :id 捕获）
   r.get('/dramas/:id/export', drama.exportDrama);
@@ -440,7 +449,7 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 团队协作 + 版本管理模块（Sprint 11: S11-T02/T04/T05/T06/T07/T08） ----------
   const collaborationRoutes = require('./collaboration');
-  r.use('/', collaborationRoutes(db, log));
+  r.use('/', collaborationRoutes(db, log, { atomicQuotaGuard }));
 
   // ---------- 素材标签 + 三级素材库模块（Sprint 12: S12-T01/T02） ----------
   const materialRoutes = require('./materials');

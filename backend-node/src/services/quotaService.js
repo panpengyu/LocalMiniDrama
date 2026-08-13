@@ -23,6 +23,7 @@
  */
 
 const membershipService = require('./membershipService');
+const atomicQuota = require('../utils/atomicQuota');
 
 const METRICS = ['generation', 'project', 'storage', 'collaborator'];
 
@@ -225,6 +226,62 @@ function checkAndConsumeGeneration(db, userId) {
   return db.transaction ? db.transaction(runTx)() : runTx();
 }
 
+/**
+ * 原子占位统一实现见 utils/atomicQuota（runWriteSerialized + 锚点行锁 + tryConsumeBounded）。
+ * 本文件下述两函数只是「配额语义（用哪张表计数、锁哪个锚点行、幂等规则）」的薄封装，
+ * 竞态防护的通用机制全部下沉到工具层，供其它模块直接复用。
+ */
+
+/**
+ * H7 项目数配额：原子占位创建项目。
+ *
+ * 将「COUNT(dramas) < limit 校验」与「INSERT dramas」放进同一写序列化事务，
+ * 消除 quotaGuard.project(check) → createDrama(insert) 之间的 TOCTOU 超发窗口。
+ * 锚点：锁定所有者 users 行，串行化同一用户的并发项目创建（覆盖 used=0 场景）。
+ *
+ * @param {function} insertFn 事务内执行的实际插入回调（返回值原样透传给调用方）
+ * @param {number}   limit    项目数上限；<0 表示无限制（不加守卫直接执行）
+ * @returns {{ ok:boolean, used:number, limit:number, result?:any }}
+ *          ok=false 表示已达上限（未插入）；ok=true 时 result 为 insertFn 返回值
+ */
+function tryConsumeProjectBounded(db, userId, limit, insertFn) {
+  const uid = Number(userId);
+  return atomicQuota.tryConsumeBounded({
+    db,
+    limit,
+    anchor: { table: 'users', id: uid },
+    count: () => usedProjects(db, uid),
+    mutate: insertFn,
+  });
+}
+
+/**
+ * H6 协作人数配额：原子占位新增协作成员。
+ *
+ * 将「判断是否占用新名额 → COUNT(active) < limit 校验 → 新增/更新成员」放进同一写序列化事务，
+ * 消除并发邀请下多个请求各自读到「未满」而同时插入导致超发的 TOCTOU 窗口。
+ * 锚点：锁定所属 dramas 行，串行化同一项目的并发协作者加入（覆盖 used=0 场景）。
+ *
+ * 幂等语义：仅「新增有效(active)成员」占用名额；已是 active 成员的改角色不占新名额，
+ * 故传入 seatCheckFn 在事务内判定；返回 false 时跳过上限校验直接执行 addFn。
+ *
+ * @param {number}   limit       单项目协作人数上限；<0 表示无限制
+ * @param {function} seatCheckFn 事务内执行，返回本次操作是否占用一个新名额(boolean)
+ * @param {function} addFn       事务内执行的实际新增/更新回调（返回成员行）
+ * @returns {{ ok:boolean, used:number, limit:number, result?:any }}
+ */
+function tryConsumeCollaboratorBounded(db, dramaId, limit, seatCheckFn, addFn) {
+  const id = Number(dramaId);
+  return atomicQuota.tryConsumeBounded({
+    db,
+    limit,
+    anchor: { table: 'dramas', id },
+    consumesSeat: seatCheckFn,
+    count: () => usedCollaborators(db, id),
+    mutate: addFn,
+  });
+}
+
 /** 用户配额总览（会员中心/前端展示用）。 */
 function summary(db, userId, opts = {}) {
   const { plan, levelCode, isActive, membership } = membershipService.getUserMembership(db, userId);
@@ -257,5 +314,7 @@ module.exports = {
   check,
   consumeGeneration,
   checkAndConsumeGeneration,
+  tryConsumeProjectBounded,
+  tryConsumeCollaboratorBounded,
   summary,
 };

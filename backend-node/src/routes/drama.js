@@ -14,6 +14,9 @@ const propService = require('../services/propService');
 const response = require('../response');
 const dramaExportService = require('../services/dramaExportService');
 const dramaImportService = require('../services/dramaImportService');
+const quotaService = require('../services/quotaService');
+const membershipService = require('../services/membershipService');
+const atomicQuotaGuardFactory = require('../middleware/atomicQuotaGuard');
 
 /**
  * 创建剧本接口
@@ -22,14 +25,32 @@ const dramaImportService = require('../services/dramaImportService');
  * @param {object} log - 日志模块
  * @returns {function} Express 路由处理函数
  */
-function createDrama(db, log) {
+function createDrama(db, log, injectedGuard) {
+  const atomicQuotaGuard = injectedGuard || atomicQuotaGuardFactory(db, log);
   return async (req, res) => {
     const body = req.body || {};
     if (!body.title || String(body.title).trim() === '') {
       return response.badRequest(res, '标题不能为空');
     }
+    const user = req.user;
+
+    // H7 原子占位：将「项目数校验 + INSERT dramas」合并进单个写序列化事务，
+    // 由通用 atomicQuotaGuard 承载竞态防护（超管/未登录豁免、限额解析 fail-open、写入 fail-closed）。
+    const outcome = atomicQuotaGuard.guardAndConsume(req, res, {
+      tag: '[S13-T05][project]',
+      limit: () => quotaService.quotaLimit(membershipService.getUserMembership(db, user.id).plan, 'project'),
+      anchor: () => ({ table: 'users', id: user.id }),
+      count: () => quotaService.usedProjects(db, user.id),
+      mutate: () => dramaService.insertDramaRow(db, log, body, user),
+      message: (limit) => `项目数已达上限（${limit} 个），请升级会员后再创建`,
+    });
+    if (!outcome) return; // 已被守卫直接响应（403 / 500）
+
     try {
-      const drama = await dramaService.createDrama(db, log, body, req.user);
+      // 事务已提交，async 后置步骤（缓存/布隆过滤器通知）在事务外执行
+      const id = outcome.result;
+      await dramaService.afterDramaCreated(log, id);
+      const drama = dramaService.getDramaById(db, id);
       response.created(res, drama);
     } catch (err) {
       log.error('Create drama failed', { error: err.message, stack: err.stack });
@@ -442,9 +463,9 @@ function generateStoryboard(db, log) {
   };
 }
 
-module.exports = function dramaRoutes(db, cfg, log) {
+module.exports = function dramaRoutes(db, cfg, log, deps = {}) {
   return {
-    createDrama: createDrama(db, log),
+    createDrama: createDrama(db, log, deps.atomicQuotaGuard),
     getDrama: getDrama(db, cfg),
     listDramas: listDramas(db, log),
     updateDrama: updateDrama(db, log),
