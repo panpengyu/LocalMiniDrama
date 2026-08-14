@@ -384,7 +384,17 @@ async function processVideoGeneration(db, log, videoGenId) {
   }
   const now = new Date().toISOString();
   try {
-    db.prepare('UPDATE video_generations SET status = ?, updated_at = ? WHERE id = ?').run('processing', now, videoGenId);
+    // [P1 竞态修复] 原子抢占：activeVideoPolls 仅是「同进程」快速短路，不能作为跨实例唯一防线。
+    // 把「仍为 pending」下沉进 UPDATE 的 WHERE，changes===1 者才是本进程赢家；否则说明已被其它实例
+    // 抢占，立即释放内存标记并跳过，避免多实例下重复调用外部视频生成 API 造成重复计费。
+    const claimed = db.prepare(
+      "UPDATE video_generations SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'"
+    ).run(now, videoGenId).changes;
+    if (!claimed) {
+      activeVideoPolls.delete(videoGenId);
+      log.info('Video generation already claimed by another instance, skip', { videoGenId, status: row.status });
+      return;
+    }
     const loadConfig = require('../config').loadConfig;
     const cfg = loadConfig();
     const filesBaseUrl = (cfg.storage && cfg.storage.base_url) ? String(cfg.storage.base_url).replace(/\/$/, '') : '';

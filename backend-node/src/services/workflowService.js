@@ -280,36 +280,49 @@ function reviewStep(db, instanceId, stepIndex, { approved, reviewerId, note }) {
   const steps = inst?.steps || [];
   const isLastStep = stepIndex >= steps.length - 1;
 
-  if (approved) {
-    db.prepare('UPDATE workflow_step_logs SET status = ?, reviewer_id = ?, reviewed_at = ?, review_note = ? WHERE id = ?')
-      .run(STEP_STATUS.COMPLETED, reviewerId || null, nowStr(), note || null, stepLog.id);
-    console.log(`[${traceId}] 审核通过`, {
-      instanceId, stepIndex,
-      reviewerId: reviewerId || '-',
-      note: (note || '').substring(0, 50),
-    });
-    // [边界修复] 审核通过后推进实例进度
-    const completedSteps = Math.max(inst?.completed_steps || 0, stepIndex + 1);
-    const nextIdx = isLastStep ? stepIndex : stepIndex + 1;
-    const nextStatus = isLastStep ? INSTANCE_STATUS.COMPLETED : INSTANCE_STATUS.PENDING;
-    db.prepare('UPDATE workflow_instances SET status = ?, current_step_index = ?, completed_steps = ?, error_message = NULL, updated_at = ? WHERE id = ?')
-      .run(nextStatus, nextIdx, completedSteps, nowStr(), Number(instanceId));
-    if (isLastStep) {
-      db.prepare('UPDATE workflow_instances SET completed_at = ? WHERE id = ?').run(nowStr(), Number(instanceId));
-      console.log(`[${traceId}] 最后一步审核通过 → 实例全部完成`);
+  // [P0 竞态修复] 审批状态机原子流转：把「仍为 reviewing」的前置条件下沉进 UPDATE 的 WHERE，
+  // 以 changes===1 判定并发唯一赢家，避免「读 guard(274) → 写 UPDATE」之间的 TOCTOU 窗口
+  // 导致两个并发审批（含 approve+reject 交叉）同时通过、重复推进实例进度 / 覆盖 reviewer。
+  // 两条 UPDATE（step_log 流转 + instance 进度）用事务包裹，保证要么全成要么全不动。
+  // 范式对齐 templateReviewService.manualReview 的条件 UPDATE + changes 判赢家写法。
+  const runTx = () => {
+    if (approved) {
+      const changed = db.prepare(
+        'UPDATE workflow_step_logs SET status = ?, reviewer_id = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = ?'
+      ).run(STEP_STATUS.COMPLETED, reviewerId || null, nowStr(), note || null, stepLog.id, STEP_STATUS.REVIEWING).changes;
+      // changes===0：该步骤已被其它并发审批处理，判定为不在审核状态，不再重复推进实例
+      if (!changed) throw new Error('[WF-REV-002] 该步骤不在审核状态');
+      console.log(`[${traceId}] 审核通过`, {
+        instanceId, stepIndex,
+        reviewerId: reviewerId || '-',
+        note: (note || '').substring(0, 50),
+      });
+      // [边界修复] 审核通过后推进实例进度
+      const completedSteps = Math.max(inst?.completed_steps || 0, stepIndex + 1);
+      const nextIdx = isLastStep ? stepIndex : stepIndex + 1;
+      const nextStatus = isLastStep ? INSTANCE_STATUS.COMPLETED : INSTANCE_STATUS.PENDING;
+      db.prepare('UPDATE workflow_instances SET status = ?, current_step_index = ?, completed_steps = ?, error_message = NULL, updated_at = ? WHERE id = ?')
+        .run(nextStatus, nextIdx, completedSteps, nowStr(), Number(instanceId));
+      if (isLastStep) {
+        db.prepare('UPDATE workflow_instances SET completed_at = ? WHERE id = ?').run(nowStr(), Number(instanceId));
+        console.log(`[${traceId}] 最后一步审核通过 → 实例全部完成`);
+      } else {
+        console.log(`[${traceId}] 实例进度已推进，可调用 resume 继续执行`);
+      }
     } else {
-      console.log(`[${traceId}] 实例进度已推进，可调用 resume 继续执行`);
+      const changed = db.prepare(
+        'UPDATE workflow_step_logs SET status = ?, reviewer_id = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = ?'
+      ).run(STEP_STATUS.FAILED, reviewerId || null, nowStr(), note || '审核未通过', stepLog.id, STEP_STATUS.REVIEWING).changes;
+      if (!changed) throw new Error('[WF-REV-002] 该步骤不在审核状态');
+      db.prepare('UPDATE workflow_instances SET status = ?, error_message = ? WHERE id = ?')
+        .run(INSTANCE_STATUS.FAILED, '审核未通过: ' + (note || ''), Number(instanceId));
+      console.log(`[${traceId}] 审核驳回 → 实例标记失败`, {
+        instanceId, stepIndex,
+        reason: (note || '审核未通过').substring(0, 50),
+      });
     }
-  } else {
-    db.prepare('UPDATE workflow_step_logs SET status = ?, reviewer_id = ?, reviewed_at = ?, review_note = ? WHERE id = ?')
-      .run(STEP_STATUS.FAILED, reviewerId || null, nowStr(), note || '审核未通过', stepLog.id);
-    db.prepare('UPDATE workflow_instances SET status = ?, error_message = ? WHERE id = ?')
-      .run(INSTANCE_STATUS.FAILED, '审核未通过: ' + (note || ''), Number(instanceId));
-    console.log(`[${traceId}] 审核驳回 → 实例标记失败`, {
-      instanceId, stepIndex,
-      reason: (note || '审核未通过').substring(0, 50),
-    });
-  }
+  };
+  db.transaction ? db.transaction(runTx)() : runTx();
   return getStepLogs(db, instanceId);
 }
 

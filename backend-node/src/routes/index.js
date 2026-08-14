@@ -415,7 +415,7 @@ function setupRouter(cfg, db, log) {
     explorer: false,
   }));
   // 纯 JSON spec（供代码生成）: /api/v1/docs/openapi.json
-  r.get('/docs/openapi.json', (req, res) => { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.json(swaggerSpec); });
+  r.get('/docs/openapi.json', (_req, res) => { res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.json(swaggerSpec); });
 
   // ---------- AI编剧助手模块（Sprint 1） ----------
   r.use('/ai/screenwriter', screenwriter);
@@ -492,13 +492,13 @@ function setupRouter(cfg, db, log) {
   r.use('/', marketplaceRoutes(db, log));
 
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
-  r.get('/cdn/status', (req, res) => {
+  r.get('/cdn/status', (_req, res) => {
     const cdnService = require('../services/cdnService');
     response.success(res, cdnService.getStatus());
   });
 
   // ---------- 缓存统计查询（Sprint 8: S8-T07） ----------
-  r.get('/cache/stats', (req, res) => {
+  r.get('/cache/stats', (_req, res) => {
     const cacheService = require('../services/cacheService');
     response.success(res, cacheService.getStats());
   });

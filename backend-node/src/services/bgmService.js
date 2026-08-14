@@ -394,8 +394,15 @@ async function processBgmGeneration(db, log, bgmId) {
 
   // 更新为处理中
   const tStart = Date.now();
-  db.prepare("UPDATE bgm_tracks SET status = 'processing', progress = 10, updated_at = ? WHERE id = ?")
-    .run(nowStr(), Number(bgmId));
+  // [P1 竞态修复] 原子抢占：把「仍为 pending」下沉进 UPDATE 的 WHERE，changes===1 者才是本进程赢家。
+  // 避免多实例/连接池下两个 worker 同时读到 pending（第387行 guard）后都发起 BGM 生成造成重复计费。
+  const claimed = db.prepare(
+    "UPDATE bgm_tracks SET status = 'processing', progress = 10, updated_at = ? WHERE id = ? AND status = 'pending'"
+  ).run(nowStr(), Number(bgmId)).changes;
+  if (!claimed) {
+    if (log && log.info) log.info(`[${traceId}] BGM已被其它实例抢占，跳过`, { bgmId });
+    return;
+  }
   console.log(`[${traceId}] [GEN#2] 开始生成BGM（模拟模式）`, {
     bgmId,
     mood: row.mood,

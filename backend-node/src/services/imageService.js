@@ -608,7 +608,15 @@ async function processImageGeneration(db, log, imageGenId) {
 
   const now = new Date().toISOString();
   try {
-    db.prepare('UPDATE image_generations SET status = ?, updated_at = ? WHERE id = ?').run('processing', now, imageGenId);
+    // [P1 竞态修复] 原子抢占：把「仍为 pending」下沉进 UPDATE 的 WHERE，以 changes===1 判定本进程抢占成功。
+    // 避免多实例/连接池下两个 worker 同时读到 pending（第595行 guard）后都发起外部 AI 调用，造成重复计费。
+    const claimed = db.prepare(
+      "UPDATE image_generations SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'"
+    ).run(now, imageGenId).changes;
+    if (!claimed) {
+      log.info('[图生] 已被其它实例抢占，跳过', { id: imageGenId });
+      return;
+    }
     const imageServiceType = row.storyboard_id ? 'storyboard_image' : 'image';
 
     // ── 四宫格模式：先生成4帧提示词，再拼装组合提示词 ──────────────────

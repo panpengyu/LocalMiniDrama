@@ -175,7 +175,15 @@ async function processVideoMerge(db, log, mergeId, baseUrl) {
     log.warn('video merge parse scenes failed', { merge_id: mergeId });
   }
   const now = new Date().toISOString();
-  db.prepare('UPDATE video_merges SET status = ? WHERE id = ?').run('processing', mergeId);
+  // [P1 竞态修复] 原子抢占：video_merges 初始为 'pending'。把「仍为 pending」下沉进 UPDATE 的 WHERE，
+  // changes===1 者才是本进程赢家；否则说明合成已被其它实例抢占，直接跳过，避免多实例下重复执行 ffmpeg 合并。
+  const claimed = db.prepare(
+    "UPDATE video_merges SET status = 'processing' WHERE id = ? AND status = 'pending'"
+  ).run(mergeId).changes;
+  if (!claimed) {
+    log.info('video merge already claimed by another instance, skip', { merge_id: mergeId, status: r.status });
+    return;
+  }
   const taskService = require('./taskService');
   if (scenes.length === 0) {
     db.prepare('UPDATE video_merges SET status = ?, error_msg = ? WHERE id = ?').run('failed', '无有效视频片段', mergeId);
