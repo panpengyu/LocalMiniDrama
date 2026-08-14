@@ -16,6 +16,7 @@
 
 - **S15-T01 API Key 管理系统**（`src/services/apiKeyService.js` + `src/routes/apiKeys.js` + `migrations/51_s15_api_platform.sql`）：
   - 开发者应用：申请创建 / 我的应用列表 / 详情 / 管理端分页与审批（驳回/通过/重复审批拦截/未审批不可建 Key），软删除留痕
+  - 管理端审批界面（`front-admin/src/views/system/OpenPlatformApps.vue`，路由 `/system/open-platform-apps`）：应用状态筛选与关键词搜索、通过/驳回（可填原因）、应用详情与密钥脱敏列表（scope/限流/配额/有效期）
   - API 密钥：`sha256` 哈希落库 + 前缀展示 + 明文仅创建时返回一次、状态机（active/revoked）、吊销与续期、限流(次/分)/配额(次/日)/有效天数/IP 白名单落库
   - 权限范围白名单 `API_SCOPES`：`drama:read / drama:write / screenplay:generate / image:generate / asset:read`；IP 白名单支持精确 / `*` 通配 / IPv4 CIDR
   - 数据迁移：5 张表 `api_apps / api_keys / api_call_logs / api_daily_usage / api_rate_windows`

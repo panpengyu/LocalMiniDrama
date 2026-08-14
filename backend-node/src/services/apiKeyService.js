@@ -238,24 +238,29 @@ function reviewApp(db, log, { appId, approve, reason, adminId } = {}) {
   return db.prepare('SELECT * FROM api_apps WHERE app_id = ?').get(app.app_id);
 }
 
-/** 管理端分页查询应用（支持状态过滤）。 */
+/** 管理端分页查询应用（支持状态过滤；LEFT JOIN 带出申请人信息）。 */
 function listAppsAdmin(db, log, { status, keyword, page = 1, pageSize = 20 } = {}) {
-  const where = ['deleted_at IS NULL'];
+  const where = ['a.deleted_at IS NULL'];
   const params = [];
   if (status && Object.values(APP_STATUS).includes(status)) {
-    where.push('status = ?'); params.push(status);
+    where.push('a.status = ?'); params.push(status);
   }
   if (keyword && String(keyword).trim()) {
-    where.push('(name LIKE ? OR app_id LIKE ?)');
+    where.push('(a.name LIKE ? OR a.app_id LIKE ?)');
     const kw = `%${String(keyword).trim()}%`;
     params.push(kw, kw);
   }
   const whereSql = where.join(' AND ');
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM api_apps WHERE ${whereSql}`).get(...params).c;
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM api_apps a WHERE ${whereSql}`).get(...params).c;
   const limit = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
   const offset = Math.max((Number(page) || 1) - 1, 0) * limit;
   const rows = db.prepare(
-    `SELECT * FROM api_apps WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    `SELECT a.*, u.username AS user_username, u.nickname AS user_nickname, u.phone AS user_phone,
+            COALESCE(NULLIF(u.nickname, ''), u.username, '') AS user_name
+     FROM api_apps a
+     LEFT JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+     WHERE ${whereSql}
+     ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
   ).all(...params, limit, offset);
   return { total, page: Number(page) || 1, pageSize: limit, items: rows };
 }

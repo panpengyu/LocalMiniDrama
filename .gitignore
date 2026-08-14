@@ -21,3 +21,6 @@ __pycache__/
 *.pyc
 *.egg-info/
 dist/
+
+# 测试与运行时日志
+backend-node/logs/

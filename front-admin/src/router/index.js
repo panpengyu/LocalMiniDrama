@@ -62,6 +62,7 @@ const routes = [
       { path: 'system/notices', name: 'Notices', component: () => import('@/views/system/Notices.vue'), meta: { title: '通知公告' } },
       { path: 'system/operation-logs', name: 'OperationLogs', component: () => import('@/views/system/OperationLogs.vue'), meta: { title: '操作日志' } },
       { path: 'system/login-logs', name: 'LoginLogs', component: () => import('@/views/system/LoginLogs.vue'), meta: { title: '登录日志' } },
+      { path: 'system/open-platform-apps', name: 'OpenPlatformApps', component: () => import('@/views/system/OpenPlatformApps.vue'), meta: { title: 'API应用审批' } },
       { path: 'system/monitor', name: 'SystemMonitor', component: () => import('@/views/system/Monitor.vue'), meta: { title: '系统监控大屏' } },
       { path: 'operation/data-analytics', name: 'DataAnalytics', component: () => import('@/views/operation/DataAnalytics.vue'), meta: { title: '数据分析平台' } }
     ]
