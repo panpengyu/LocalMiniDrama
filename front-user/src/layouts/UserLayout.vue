@@ -74,7 +74,7 @@
 <script setup>import { ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy, ShoppingBag, Star } from '@element-plus/icons-vue';
+import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy, ShoppingBag, Star, Key } from '@element-plus/icons-vue';
 import { useUserStore } from '@/stores/user';
 import { useTheme } from '@localmini/shared/composables/useTheme';
 const router = useRouter();
@@ -96,6 +96,7 @@ const menuItems = [
  { path: '/marketplace', name: '模板市场', icon: ShoppingBag },
  { path: '/creator', name: '创作者中心', icon: Star },
  { path: '/membership', name: '会员中心', icon: Trophy },
+ { path: '/developer', name: '开发者控制台', icon: Key },
 ];
 const toolGroups = [
  {

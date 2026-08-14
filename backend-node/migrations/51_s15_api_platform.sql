@@ -81,9 +81,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS api_call_logs (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-  app_id      VARCHAR(64)  NOT NULL COMMENT '所属应用标识',
-  key_id      VARCHAR(64)  NOT NULL COMMENT '所用密钥标识',
-  user_id     BIGINT       NOT NULL COMMENT '所属用户ID',
+  app_id      VARCHAR(64)  NULL COMMENT '所属应用标识(认证失败时为NULL)',
+  key_id      VARCHAR(64)  NULL COMMENT '所用密钥标识(认证失败时为NULL)',
+  user_id     BIGINT       NOT NULL COMMENT '所属用户ID(认证失败时为0)',
   endpoint    VARCHAR(255) NOT NULL COMMENT '请求端点(/open/...)',
   method      VARCHAR(8)   NOT NULL COMMENT 'HTTP方法',
   scope       VARCHAR(64)  NULL COMMENT '校验通过的权限范围',
@@ -133,3 +133,12 @@ CREATE TABLE IF NOT EXISTS api_rate_windows (
   UNIQUE KEY uk_key_window (key_id, window_start),
   KEY idx_window_start (window_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='S15-T02 限流窗口计数';
+
+-- ------------------------------------------------------------
+-- 兼容：旧库 api_call_logs.app_id/key_id 原为 NOT NULL，
+-- 认证失败（缺 Key/无效 Key）时无应用与密钥信息，需允许 NULL
+-- （CREATE TABLE IF NOT EXISTS 对已存在表无效，此处 MODIFY 补齐）
+-- ------------------------------------------------------------
+ALTER TABLE api_call_logs
+  MODIFY COLUMN app_id VARCHAR(64) NULL COMMENT '所属应用标识(认证失败时为NULL)',
+  MODIFY COLUMN key_id VARCHAR(64) NULL COMMENT '所用密钥标识(认证失败时为NULL)';

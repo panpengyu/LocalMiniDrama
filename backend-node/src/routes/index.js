@@ -495,6 +495,16 @@ function setupRouter(cfg, db, log) {
   const apiKeysRoutes = require('./apiKeys');
   r.use('/', apiKeysRoutes(db, log));
 
+  // ---------- 开放 API 接口（Sprint 15: S15-T03 项目管理/剧本生成/图片生成/素材查询） ----------
+  const openApiRoutes = require('./openApi');
+  r.use('/', openApiRoutes(db, cfg, log));
+
+  // ---------- 开放平台在线文档（Sprint 15: S15-T04 Swagger） ----------
+  // 文档地址：/api/v1/open/docs（Swagger UI）；纯 JSON：/api/v1/open/docs/openapi.json
+  const openApiSpec = require('./openApiSpec');
+  const openDocsRouter = require('./openDocs');
+  r.use('/open/docs', openDocsRouter(openApiSpec));
+
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (_req, res) => {
     const cdnService = require('../services/cdnService');

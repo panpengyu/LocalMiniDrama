@@ -119,6 +119,38 @@ function apiKeysRoutes(db, log) {
     } catch (err) { fail(res, err); }
   });
 
+  // ===================== 用户端：开发者控制台统计 =====================
+  // 以下接口均基于 MySQL（api_call_logs / api_daily_usage）实时统计，无 mock。
+
+  // 调用概览：总调用 / 今日调用 / 今日错误 / 各密钥配额使用率
+  router.get('/open-platform/stats/overview', requireAuth, (req, res) => {
+    try {
+      const data = apiKeyService.getCallOverview(db, log, { userId: req.user.id });
+      response.success(res, data);
+    } catch (err) { fail(res, err); }
+  });
+
+  // 调用趋势：近 N 天每日调用/失败数（默认 7 天）
+  router.get('/open-platform/stats/trend', requireAuth, (req, res) => {
+    try {
+      const data = apiKeyService.getCallTrend(db, log, { userId: req.user.id, days: req.query.days });
+      response.success(res, data);
+    } catch (err) { fail(res, err); }
+  });
+
+  // 错误日志：最近失败调用（分页），含错误码/端点/时间
+  router.get('/open-platform/stats/errors', requireAuth, (req, res) => {
+    try {
+      const result = apiKeyService.getErrorLogs(db, log, {
+        userId: req.user.id,
+        keyId: req.query.key_id,
+        page: req.query.page,
+        pageSize: req.query.page_size,
+      });
+      response.successWithPagination(res, result.items, result.total, result.page, result.pageSize);
+    } catch (err) { fail(res, err); }
+  });
+
   // ===================== 管理端：应用/密钥审批与查询 =====================
 
   // 应用分页列表

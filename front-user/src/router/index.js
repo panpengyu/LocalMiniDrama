@@ -78,6 +78,12 @@ const router = createRouter({
           meta: { title: '会员中心' }
         },
         {
+          path: 'developer',
+          name: 'developer-center',
+          component: () => import('@/views/DeveloperCenter.vue'),
+          meta: { title: '开发者控制台' }
+        },
+        {
           path: 'marketplace',
           name: 'marketplace',
           component: () => import('@/views/TemplateMarket.vue'),

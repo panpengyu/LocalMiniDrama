@@ -441,6 +441,91 @@ function keyAllowsIp(key, ip) {
 }
 
 // ---------------------------------------------------------------------------
+// S15-T05 开发者控制台统计（基于 api_call_logs / api_daily_usage 实时聚合）
+// ---------------------------------------------------------------------------
+
+/**
+ * 调用概览：总调用 / 今日调用 / 今日错误 / 各密钥配额使用率。
+ * @param {object} opts { userId }
+ */
+function getCallOverview(db, log, { userId } = {}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const total = db.prepare('SELECT COUNT(*) AS c FROM api_call_logs WHERE user_id = ?').get(Number(userId)).c;
+  const todayCalls = db.prepare(
+    'SELECT COUNT(*) AS c FROM api_call_logs WHERE user_id = ? AND DATE(created_at) = ?'
+  ).get(Number(userId), today).c;
+  const todayErrors = db.prepare(
+    'SELECT COUNT(*) AS c FROM api_call_logs WHERE user_id = ? AND DATE(created_at) = ? AND status_code >= 400'
+  ).get(Number(userId), today).c;
+
+  const usageRows = db.prepare(
+    `SELECT du.key_id, du.app_id, du.call_count, du.error_count, du.quota_limit,
+            COALESCE(k.name, '') AS key_name
+     FROM api_daily_usage du
+     LEFT JOIN api_keys k ON k.key_id = du.key_id
+     WHERE du.usage_date = ? AND du.app_id IN (
+       SELECT app_id FROM api_apps WHERE user_id = ?
+     )`
+  ).all(today, Number(userId));
+
+  const quota_usage = usageRows.map((u) => ({
+    key_id: u.key_id,
+    app_id: u.app_id,
+    key_name: u.key_name,
+    call_count: u.call_count,
+    error_count: u.error_count,
+    quota_limit: u.quota_limit,
+    usage_rate: u.quota_limit > 0 ? Number(((u.call_count / u.quota_limit) * 100).toFixed(2)) : 0,
+  }));
+
+  return { total_calls: total, today_calls: todayCalls, today_errors: todayErrors, quota_usage };
+}
+
+/**
+ * 调用趋势：近 N 天（默认 7，最大 30）每日调用/失败数。
+ * @param {object} opts { userId, days }
+ */
+function getCallTrend(db, log, { userId, days = 7 } = {}) {
+  const n = Math.min(Math.max(Number(days) || 7, 1), 30);
+  const rows = db.prepare(
+    `SELECT DATE(created_at) AS day, COUNT(*) AS calls,
+            SUM(status_code >= 400) AS errors
+     FROM api_call_logs
+     WHERE user_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+     GROUP BY DATE(created_at)
+     ORDER BY day ASC`
+  ).all(Number(userId), n);
+  return {
+    days: n,
+    points: rows.map((r) => ({
+      date: r.day, calls: r.calls, errors: Number(r.errors) || 0,
+    })),
+  };
+}
+
+/**
+ * 错误日志：最近失败调用（分页）。
+ * @param {object} opts { userId, keyId?, page?, pageSize? }
+ */
+function getErrorLogs(db, log, { userId, keyId, page = 1, pageSize = 20 } = {}) {
+  const p = Math.max(Number(page) || 1, 1);
+  const ps = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
+  const offset = (p - 1) * ps;
+  const where = keyId
+    ? 'user_id = ? AND key_id = ? AND status_code >= 400'
+    : 'user_id = ? AND status_code >= 400';
+  const args = keyId ? [Number(userId), String(keyId)] : [Number(userId)];
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM api_call_logs WHERE ${where}`).get(...args).c;
+  const list = db.prepare(
+    `SELECT id, app_id, key_id, endpoint, method, scope, status_code, error_code, ip, latency_ms, created_at
+     FROM api_call_logs WHERE ${where}
+     ORDER BY id DESC LIMIT ? OFFSET ?`
+  ).all(...args, ps, offset);
+  return { items: list, total, page: p, pageSize: ps };
+}
+
+// ---------------------------------------------------------------------------
 // 导出
 // ---------------------------------------------------------------------------
 module.exports = {
@@ -466,6 +551,10 @@ module.exports = {
   keyHasScope,
   keyAllowsIp,
   maskKey,
+  // 开发者控制台统计（S15-T05）
+  getCallOverview,
+  getCallTrend,
+  getErrorLogs,
   // 工具（便于单测）
   generateKeySecret,
   sha256,

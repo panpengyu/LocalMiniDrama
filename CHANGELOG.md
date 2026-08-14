@@ -8,6 +8,47 @@
 
 ---
 
+## [1.4.0] - 2026-08-14
+
+### Sprint 15 — API 开放平台
+
+#### 新增
+
+- **S15-T01 API Key 管理系统**（`src/services/apiKeyService.js` + `src/routes/apiKeys.js` + `migrations/51_s15_api_platform.sql`）：
+  - 开发者应用：申请创建 / 我的应用列表 / 详情 / 管理端分页与审批（驳回/通过/重复审批拦截/未审批不可建 Key），软删除留痕
+  - API 密钥：`sha256` 哈希落库 + 前缀展示 + 明文仅创建时返回一次、状态机（active/revoked）、吊销与续期、限流(次/分)/配额(次/日)/有效天数/IP 白名单落库
+  - 权限范围白名单 `API_SCOPES`：`drama:read / drama:write / screenplay:generate / image:generate / asset:read`；IP 白名单支持精确 / `*` 通配 / IPv4 CIDR
+  - 数据迁移：5 张表 `api_apps / api_keys / api_call_logs / api_daily_usage / api_rate_windows`
+- **S15-T02 API 网关与限流**（`src/middleware/apiGateway.js`）：
+  - 统一鉴权：`X-API-Key` / `Bearer` 提取 → 哈希比对密钥 → 状态/有效期/IP 白名单校验 → 每分钟限流 + 每日配额（原子累加落库）
+  - 调用全量留痕：成功/失败均写 `api_call_logs`（端点/方法/scope/状态码/错误码/IP/耗时），配额与限流写入 `api_daily_usage` / `api_rate_windows`
+  - 错误码：`MISSING_API_KEY / INVALID_API_KEY / API_KEY_EXPIRED / API_KEY_REVOKED / API_KEY_INACTIVE / IP_DENIED / SCOPE_NOT_ALLOWED / RATE_LIMITED / DAILY_QUOTA_EXCEEDED`
+- **S15-T03 开放 API 接口**（`src/routes/openApi.js`，挂载 `/api/v1/open/*`）：
+  - 项目管理：`GET/POST /dramas`、`GET /dramas/:id`（复用 `dramaService`，数据归属 API Key 用户）
+  - 剧本生成：`POST /screenplay/outlines`、`/screenplay/characters`（复用 `screenwriterService`）
+  - 图片生成：`POST /images`（异步返回 task_id）、`GET /images/:id`（复用 `imageService` / `taskService`）
+  - 素材查询：`GET /assets`（复用 `assetService`）；全部接口走网关鉴权 + scope 校验
+- **S15-T04 在线文档 + 多语言 SDK**：
+  - Swagger/OpenAPI 3.0：`src/routes/openApiSpec.js` + `openDocs.js`，Swagger UI 挂载 `/api/v1/open/docs`、纯 JSON `/open/docs/openapi.json`
+  - Node.js SDK（`sdks/node`，`@localmini/open-api`，Node 18+ 内置 fetch、零依赖）：8 个方法覆盖全部开放接口 + `OpenApiError` 统一异常
+  - Python SDK（`sdks/python`，`localmini-openapi`，仅标准库）：对应 8 个方法 + `OpenApiRateLimitError`/`OpenApiPermissionError`
+- **S15-T05 开发者控制台**（`front-user/src/views/DeveloperCenter.vue` + `api/openPlatform.js`，路由 `/developer`）：
+  - 密钥管理：创建应用（提交审批）、为已通过应用生成密钥（选 scope/限流/配额/天数/IP 白名单）、密钥列表（脱敏）、吊销/续期、明文仅展示一次
+  - 调用统计：概览卡片（累计/今日调用/今日错误）+ 调用趋势（近 7/14/30 天柱状图）
+  - 配额监控：各密钥当日配额使用率进度条（读 `api_daily_usage`）
+  - 错误日志：失败调用分页表格（状态码/错误码/端点/密钥/耗时）
+  - 后端统计端点：`GET /open-platform/stats/overview|trend|errors`（`apiKeyService` 的 `getCallOverview/getCallTrend/getErrorLogs` 实时聚合）
+
+#### 测试
+
+- `test/s15ApiKeyManagement.test.js`：11 项（Key 管理 + 开发者控制台统计），真实 MySQL
+- `test/s15ApiGateway.test.js`：11 项（网关鉴权/限流/配额/留痕），真实 MySQL
+- `test/s15OpenApi.test.js`：9 项（开放 API 认证/scope/项目管理/素材查询，真实 HTTP 集成），真实 MySQL
+- `sdks/node/test/smoke.test.js`：Node SDK 冒烟（鉴权头/解包/错误归一化）
+- `sdks/python/tests/test_client.py`：Python SDK 冒烟（5 项）
+
+---
+
 ## [1.3.0] - 2026-08-13
 
 ### Sprint 14 — 模板市场（创作者生态）

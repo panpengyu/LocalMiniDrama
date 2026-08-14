@@ -227,4 +227,68 @@ describe('S15-T01 API Key 管理系统', () => {
     const keyword = apiKeyService.listAppsAdmin(db, log, { keyword: 'S15测试应用' });
     assert.equal(keyword.total >= 1, true);
   });
+
+  // ---- S15-T05 开发者控制台统计（基于 MySQL 实时聚合，无 mock） ----
+  it('调用概览：总调用 / 今日调用 / 今日错误 / 配额使用率', () => {
+    const app = apiKeyService.createApp(db, log, { userId: TEST_USER_ID, name: '统计概览应用' });
+    apiKeyService.reviewApp(db, log, { appId: app.app_id, approve: true, adminId: TEST_ADMIN_ID });
+    const { key } = apiKeyService.createKey(db, log, {
+      userId: TEST_USER_ID, appId: app.app_id, scopes: ['drama:read'], dailyQuota: 100,
+    });
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 造 3 条成功 + 2 条失败调用日志
+    for (let i = 0; i < 3; i++) {
+      db.prepare(
+        `INSERT INTO api_call_logs (app_id, key_id, user_id, endpoint, method, status_code, created_at)
+         VALUES (?, ?, ?, '/open/dramas', 'GET', 200, NOW())`
+      ).run(app.app_id, key.key_id, TEST_USER_ID);
+    }
+    for (let i = 0; i < 2; i++) {
+      db.prepare(
+        `INSERT INTO api_call_logs (app_id, key_id, user_id, endpoint, method, status_code, error_code, created_at)
+         VALUES (?, ?, ?, '/open/dramas', 'GET', 429, 'RATE_LIMITED', NOW())`
+      ).run(app.app_id, key.key_id, TEST_USER_ID);
+    }
+    // 造当日配额用量
+    db.prepare(
+      `INSERT INTO api_daily_usage (key_id, app_id, usage_date, call_count, error_count, quota_limit)
+       VALUES (?, ?, ?, 5, 2, 100)`
+    ).run(key.key_id, app.app_id, today);
+
+    const o = apiKeyService.getCallOverview(db, log, { userId: TEST_USER_ID });
+    assert.ok(o.total_calls >= 5, `总调用应>=5，实际 ${o.total_calls}`);
+    assert.ok(o.today_calls >= 5, `今日调用应>=5，实际 ${o.today_calls}`);
+    assert.ok(o.today_errors >= 2, `今日错误应>=2，实际 ${o.today_errors}`);
+    const q = o.quota_usage.find((x) => x.key_id === key.key_id);
+    assert.ok(q, '配额使用率应包含该密钥');
+    assert.equal(q.call_count, 5);
+    assert.equal(q.quota_limit, 100);
+    assert.equal(q.usage_rate, 5); // 5/100=5%
+  });
+
+  it('调用趋势：返回按天聚合的调用/失败点', () => {
+    const trend = apiKeyService.getCallTrend(db, log, { userId: TEST_USER_ID, days: 7 });
+    assert.equal(trend.days, 7);
+    assert.ok(Array.isArray(trend.points));
+    // 至少包含今天（前面造过数据）
+    const todayStr = trend.points.find((p) => p.calls >= 5);
+    assert.ok(todayStr, '趋势中应包含今天的调用记录');
+    assert.ok(todayStr.errors >= 2, '趋势中今天错误数应>=2');
+  });
+
+  it('错误日志：仅返回失败调用且分页正确', () => {
+    const result = apiKeyService.getErrorLogs(db, log, { userId: TEST_USER_ID, page: 1, pageSize: 20 });
+    assert.ok(result.total >= 2, `错误总数应>=2，实际 ${result.total}`);
+    assert.ok(result.items.length >= 2);
+    // 全部是失败(status>=400)
+    for (const item of result.items) {
+      assert.ok(item.status_code >= 400);
+      if (item.status_code === 429) assert.equal(item.error_code, 'RATE_LIMITED');
+    }
+    // 按时间倒序
+    for (let i = 1; i < result.items.length; i++) {
+      assert.ok(result.items[i - 1].id >= result.items[i].id);
+    }
+  });
 });

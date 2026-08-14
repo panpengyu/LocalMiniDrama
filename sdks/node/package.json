@@ -1,0 +1,28 @@
+{
+  "name": "@localmini/open-api",
+  "version": "1.0.0",
+  "description": "LocalMiniDrama 开放平台 API 的 Node.js SDK（Node 18+，内置 fetch，零运行时依赖）",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./errors": "./errors.js"
+  },
+  "files": [
+    "index.js",
+    "errors.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/smoke.test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "localmini",
+    "short-drama",
+    "open-api",
+    "sdk"
+  ],
+  "license": "MIT"
+}
