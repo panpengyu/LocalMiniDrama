@@ -491,6 +491,10 @@ function setupRouter(cfg, db, log) {
   const marketplaceRoutes = require('./marketplace');
   r.use('/', marketplaceRoutes(db, log));
 
+  // ---------- API 开放平台（Sprint 15: S15-T01 开发者应用/密钥管理 + 管理端审批） ----------
+  const apiKeysRoutes = require('./apiKeys');
+  r.use('/', apiKeysRoutes(db, log));
+
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (_req, res) => {
     const cdnService = require('../services/cdnService');
