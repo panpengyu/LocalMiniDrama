@@ -188,3 +188,49 @@ describe('S16-T06 帮助中心', () => {
     assert.equal(db.prepare('SELECT * FROM help_docs WHERE id = ?').get(id) == null, true);
   });
 });
+
+describe('M4 里程碑验收', () => {
+  it('模板市场已上架模板 >= 50（M4：≥50 个模板上架）', () => {
+    const row = db.prepare(
+      "SELECT COUNT(*) AS c FROM marketplace_templates WHERE status = 'listed' AND is_deleted = 0"
+    ).get();
+    assert.ok(row.c >= 50, `上架模板应 >= 50，实际 ${row.c}`);
+  });
+
+  it('上架模板 content_json 内容体完整（角色/场景/节奏/风格）', () => {
+    const tpl = db.prepare(
+      "SELECT * FROM marketplace_templates WHERE status = 'listed' AND is_deleted = 0 ORDER BY download_count DESC LIMIT 1"
+    ).get();
+    assert.ok(tpl && tpl.content_json, '应存在上架模板');
+    const body = JSON.parse(tpl.content_json);
+    assert.ok(Array.isArray(body.character_presets) && body.character_presets.length >= 1, '角色预设');
+    assert.ok(Array.isArray(body.scene_presets) && body.scene_presets.length >= 1, '场景预设');
+    assert.ok(body.storyboard_rhythm && body.storyboard_rhythm.hook, '分镜节奏');
+    assert.ok(body.style_config && body.style_config.theme, '风格配置');
+  });
+
+  it('模板题材覆盖 >= 5 类（八大题材种子）', () => {
+    const rows = db.prepare(
+      "SELECT DISTINCT category FROM marketplace_templates WHERE status = 'listed' AND is_deleted = 0"
+    ).all();
+    assert.ok(rows.length >= 5, `题材分类应 >= 5，实际 ${rows.length}（${rows.map(r => r.category).join(',')}）`);
+  });
+
+  it('视频教程文档为真实图文教程（非占位符）', () => {
+    const rows = db.prepare("SELECT doc_key, content FROM help_docs WHERE doc_key IN ('video-quickstart', 'video-advanced')").all();
+    assert.equal(rows.length, 2);
+    for (const r of rows) {
+      assert.ok(!/即将上线/.test(r.content), `${r.doc_key} 不应为占位符`);
+      assert.ok(r.content.length > 100, `${r.doc_key} 内容应完整`);
+    }
+  });
+
+  it('安全扫描结果已落库且最近一次全部通过', () => {
+    const total = db.prepare('SELECT COUNT(*) AS c FROM security_scan_results').get().c;
+    assert.ok(total >= 16, `安全扫描记录应 >= 16，实际 ${total}`);
+    const latest = db.prepare('SELECT id FROM security_scan_results ORDER BY id DESC LIMIT 1').get();
+    const pass = db.prepare('SELECT COUNT(*) AS c FROM security_scan_results WHERE id = ? AND status = ?').get(latest.id, 'pass').c;
+    const all = db.prepare('SELECT COUNT(*) AS c FROM security_scan_results WHERE id = ?').get(latest.id).c;
+    assert.equal(pass, all, `最近一次扫描应全部通过（${pass}/${all}）`);
+  });
+});

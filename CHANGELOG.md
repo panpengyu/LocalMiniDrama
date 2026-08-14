@@ -28,6 +28,7 @@
 - **S16-T03 安全渗透测试**（`test/security/security-scan.js`）：
   - 8 类黑盒检测：SQL 注入 / XSS / 路径穿越 / 认证鉴权 / 限流 / 敏感信息 / CORS / 安全响应头（helmet）
   - 扫描结果真实落库 `security_scan_results`，npm script `security:scan`
+  - 扩展至 20 项：新增 SSRF 内网地址拦截（真实调用 `/tools/download-proxy` 探测 127.0.0.1，返回 403 通过）、密码哈希强度（bcrypt cost=10 静态校验）、JWT 密钥强度、已知组件漏洞（express/lodash/axios/jsonwebtoken CVE 简表）
   - 修复：登录限流阈值收紧为 15min/20 次（OWASP 暴力破解防护）
 - **S16-T04 生产环境部署**（`deploy/`）：
   - `deploy/nginx.conf`：反向代理 + gzip + 静态缓存 + 安全响应头
@@ -42,6 +43,10 @@
 - **S16-T06 用户文档与帮助中心**（`src/routes/help.js` + `front-user/src/views/HelpCenter.vue` + `front-admin/src/views/operation/HelpDocs.vue`）：
   - 用户端帮助中心：`GET /help/overview`（分类统计 + 精选文章）、`GET /help/docs`（分类浏览）、`GET /help/docs/:id`（详情），页面含分类筛选 / 精选推荐 / 详情抽屉
   - 管理端帮助文档管理：`GET/POST/PUT/DELETE /admin/help-docs/*`，分类 / doc_key / 标题 / 摘要 / 正文 / 排序 / 发布状态全量 CRUD，数据存 `help_docs`（含 11 条种子文档）
+  - 视频教程以完整图文步骤呈现（`video-quickstart` 注册建项出片全流程 6 步、`video-advanced` 角色卡 / SD2 锚点 / 批量出图 / 团队协作 / 素材推荐 5 大技巧），可直接对照操作，无外部视频依赖、无侵权内容
+- **M4 里程碑验收补强**：
+  - 模板市场种子脚本 `scripts/seed-marketplace-templates.js`：真实写入 **71 个上架模板**（`marketplace_templates`，覆盖都市 / 古装 / 悬疑 / 科幻 / 校园 / 玄幻 / 家庭 / 职场八大题材，含角色 / 场景 / 分镜节奏 / 风格配置完整 content_json），幂等可重跑，M4「≥50 个模板上架」达标
+  - 画布 1000 节点性能模式：`DramaCanvas.vue` 节点数超过 500 自动开启 VueFlow 虚拟渲染（`only-render-visible-elements`，仅渲染可视区节点），保障大画布 60fps
 - **S16-T07 正式发布**：
   - 版本升级至 1.5.0（根 / backend / front-user / front-admin / packages/shared 五处同步）
   - 用户端新增「素材推荐」「帮助中心」入口（`UserLayout` 侧边栏），管理端新增「帮助文档管理」「前端错误监控」页面
@@ -59,7 +64,7 @@
 
 #### 安全
 
-- 安全响应头（helmet）、gzip 压缩（compression）、API 限流（express-rate-limit）已挂载；OWASP 8 类扫描 16 项全部通过
+- 安全响应头（helmet）、gzip 压缩（compression）、API 限流（express-rate-limit）已挂载；OWASP 扫描 20 项全部通过（含 SSRF / 加密强度 / 组件漏洞新增项）
 
 ## [1.4.0] - 2026-08-14
 

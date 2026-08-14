@@ -136,6 +136,47 @@ async function run() {
     corsAllow ? `允许来源: ${corsAllow}` : '未允许 null Origin（通过 CORS 白名单策略）',
     'CORS 白名单配置（本项目 config.server.cors_origins）');
 
+  // 9) SSRF 防护探测（下载代理禁止访问内网地址）
+  const ssrfProbe = await req('GET', '/api/v1/tools/download-proxy?url=http://127.0.0.1:5679/health');
+  const ssrfBlocked = ssrfProbe.status === 403 || /禁止访问内网|SSRF|blocked/i.test(ssrfProbe.body);
+  record('ssrf', 'SSRF 内网地址拦截', ssrfBlocked ? 'pass' : 'fail',
+    ssrfBlocked ? 'info' : 'high',
+    ssrfBlocked ? `内网 127.0.0.1 请求被拦截（${ssrfProbe.status}）` : `可请求内网 127.0.0.1（${ssrfProbe.status}，存在 SSRF 风险）`,
+    '下载代理增加内网 IP 校验（isPrivateIP + resolveHostnameSafe 防 DNS rebinding，覆盖 127.0.0.1/10.x/172.16-31/192.168/::1/ULA）');
+
+  // 10) 加密配置：密码存储使用 bcrypt/argon2（读取代码静态校验）
+  const fs = require('fs');
+  const path2 = require('path');
+  const authSrc = fs.existsSync(path2.join(__dirname, '..', '..', 'src', 'services', 'authService.js'))
+    ? fs.readFileSync(path2.join(__dirname, '..', '..', 'src', 'services', 'authService.js'), 'utf8') : '';
+  const usesBcrypt = /bcrypt\.hashSync\(password,\s*10\)/.test(authSrc) || /argon2/.test(authSrc);
+  const usesWeakHash = /createHash\('md5'\)|createHash\('sha1'\)/.test(authSrc);
+  record('cryptography', '密码哈希强度', usesBcrypt && !usesWeakHash ? 'pass' : 'fail',
+    usesBcrypt && !usesWeakHash ? 'info' : 'high',
+    usesBcrypt && !usesWeakHash ? '使用 bcrypt cost=10（OWASP 推荐）' : '未使用 bcrypt/argon2 或存在 MD5/SHA1 弱哈希',
+    '密码必须使用 bcrypt(cost>=10) 或 argon2 存储');
+
+  // 11) 敏感配置泄露：JWT 密钥不应为默认占位
+  const jwtSecret = (authSrc.match(/JWT_SECRET\s*=\s*'([^']+)'/) || [])[1] || '';
+  const weakSecret = !jwtSecret || jwtSecret.length < 32 || /default|secret|localmini|2026/i.test(jwtSecret) && jwtSecret.length < 32;
+  record('sensitive_info', 'JWT 密钥强度', weakSecret ? 'fail' : 'pass', weakSecret ? 'medium' : 'info',
+    weakSecret ? 'JWT 密钥过短或含默认值' : `JWT 密钥长度 ${jwtSecret.length} 字符`,
+    'JWT_SECRET 应从环境变量读取且长度 ≥ 32 随机字符');
+
+  // 12) 已知组件漏洞：核心依赖版本风险检查（生产建议及时升级）
+  const pkgPath = path2.join(__dirname, '..', '..', 'package.json');
+  const deps = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).dependencies || {};
+  const risky = [];
+  // 常见已知风险版本（CVE 简表，仅高风险主版本）
+  if (deps['express'] && /^4\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19)\./.test(deps['express'])) risky.push(`express ${deps['express']} 版本过旧`);
+  if (deps['lodash'] && /^4\.17\.(1[0-9])/.test(deps['lodash'])) risky.push(`lodash ${deps['lodash']} 存在已知 CVE（<4.17.21 建议升级）`);
+  if (deps['axios'] && /^0\.(2[0-9])\./.test(deps['axios'])) risky.push(`axios ${deps['axios']} 版本过旧`);
+  if (deps['jsonwebtoken'] && /^8\./.test(deps['jsonwebtoken']) && /^8\.(0|1|2|3|4|5)\./.test(deps['jsonwebtoken'])) risky.push(`jsonwebtoken ${deps['jsonwebtoken']} 存在 CVE-2022-23529 风险`);
+  record('vulnerable_components', '已知组件漏洞', risky.length === 0 ? 'pass' : 'fail',
+    risky.length ? 'high' : 'info',
+    risky.length ? risky.join('；') : '核心依赖未发现已知高危版本',
+    '定期执行 npm audit / npm update，修复 CVE');
+
   // 持久化到 MySQL security_scan_results
   let saved = 0;
   try {

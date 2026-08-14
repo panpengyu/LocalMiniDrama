@@ -226,6 +226,9 @@
           :pan-on-drag="[1, 2]"
           :pan-on-scroll="true"
           :fit-view-on-init="!hasSavedViewport"
+          :only-render-visible-elements="perfModeEnabled"
+          :delete-key-code="null"
+          :multiselect-key-code="'Meta'"
           class="vue-flow-canvas"
           @node-double-click="onNodeDoubleClick"
           @node-click="onNodeClick"
@@ -360,6 +363,22 @@ const paneClickSuppressed = ref(false)
 const nodeStatus = createCanvasNodeStatusStore()
 const aligningNodes = ref(false)
 const canvasFlowApi = ref(null)
+
+// S16-T02 性能模式：节点数超过 500 自动启用虚拟渲染（仅渲染可视区节点），保障 1000 节点画布 60fps
+const perfModeEnabled = ref(false)
+const perfThreshold = 500
+watch(
+  () => nodes.value.length,
+  (n) => {
+    const shouldEnable = n > perfThreshold
+    if (perfModeEnabled.value !== shouldEnable) {
+      perfModeEnabled.value = shouldEnable
+      if (shouldEnable) {
+        ElMessage.info(`节点数 ${n} 超过 ${perfThreshold}，已自动开启性能模式（虚拟渲染，仅绘制可视区域）`)
+      }
+    }
+  }
+)
 
 const PANEL_NODE_TYPES = new Set(['canvasStoryboard', 'canvasMedia', 'canvasAsset', 'canvasScript'])
 

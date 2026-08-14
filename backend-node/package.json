@@ -16,6 +16,7 @@
     "test": "node --test test/*.test.js",
     "perf:test": "node scripts/loadtest/run-perf.js",
     "security:scan": "node test/security/security-scan.js",
+    "seed:templates": "node scripts/seed-marketplace-templates.js",
     "test:coverage": "c8 --reporter=text --reporter=text-summary --exclude=test --exclude=migrations --exclude='scripts/*' --exclude='src/routes/*.test.js' node --test test/*.test.js",
     "test:coverage:html": "c8 --reporter=html --reporter=text-summary --exclude=test --exclude=migrations node --test test/*.test.js"
   },

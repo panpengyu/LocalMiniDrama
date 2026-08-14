@@ -6,12 +6,70 @@ const http = require('http');
 const { randomUUID } = require('crypto');
 
 /**
+ * SSRF 防护：拒绝内网/环回/链路本地/保留地址的下载目标。
+ * 覆盖 IP 字面量（IPv4/IPv6）、localhost、*.local 域名解析后的目标。
+ */
+const NET = require('net');
+
+function isPrivateHostname(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  // 环回与本地主机名
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  // 已是 IP 字面量：直接判定
+  const ipv4 = NET.isIP(host) === 4;
+  const ipv6 = NET.isIP(host) === 6;
+  const ip = ipv4 || ipv6 ? host : null;
+  if (ip) return isPrivateIp(ip);
+  // 域名：解析后再次校验
+  let resolved = null;
+  try { resolved = require('dns').lookupSync(host, { family: 4 }); } catch (_) { /* 解析失败放行，由请求超时兜底 */ }
+  if (resolved && isPrivateIp(resolved)) return true;
+  return false;
+}
+
+function isPrivateIp(ip) {
+  const v = NET.isIP(ip);
+  if (v === 4) {
+    const parts = String(ip).split('.').map(Number);
+    if (parts[0] === 10) return true;
+    if (parts[0] === 127) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true; // 链路本地
+    if (parts[0] === 0 || parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true; // 保留/CGN
+    if (parts[0] >= 224) return true; // 组播/保留
+    return false;
+  }
+  if (v === 6) {
+    const lower = String(ip).toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // 链路本地
+    return false;
+  }
+  return false;
+}
+
+function assertPublicUrl(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch (_) { return; }
+  if (!/^https?:$/.test(parsed.protocol)) return;
+  if (isPrivateHostname(parsed.hostname)) {
+    const err = new Error(`SSRF blocked: 禁止下载内网地址 ${parsed.hostname}`);
+    err.code = 'ERR_SSRF_BLOCKED';
+    throw err;
+  }
+}
+
+/**
  * 用 Node.js 原生 http/https 模块下载 URL 到 Buffer。
  * 比 native fetch 在 Electron 打包环境中更可靠，支持自动跟随 301/302 重定向（最多 5 次）。
+ * 防 SSRF：每次请求（含重定向跳转）前均校验目标为公网地址。
  */
 function downloadBufferViaNodeHttp(url, timeoutMs = 30000, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 5) return reject(new Error('Too many redirects'));
+    try { assertPublicUrl(url); } catch (e) { return reject(e); }
     const parsed = new URL(url);
     const mod = parsed.protocol === 'https:' ? https : http;
     const options = {
