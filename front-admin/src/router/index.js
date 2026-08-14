@@ -46,6 +46,8 @@ const routes = [
       { path: 'operation/alert-channel', name: 'AlertChannel', component: () => import('@/views/operation/AlertChannel.vue'), meta: { title: '告警通道' } },
       { path: 'operation/alert-events', name: 'AlertEvents', component: () => import('@/views/operation/AlertEvents.vue'), meta: { title: '告警历史' } },
       { path: 'operation/data-anomalies', name: 'DataAnomalies', component: () => import('@/views/operation/DataAnomalies.vue'), meta: { title: '数据异常检测' } },
+      { path: 'operation/help-docs', name: 'HelpDocs', component: () => import('@/views/operation/HelpDocs.vue'), meta: { title: '帮助文档管理' } },
+      { path: 'operation/frontend-errors', name: 'FrontendErrors', component: () => import('@/views/operation/FrontendErrors.vue'), meta: { title: '前端错误监控' } },
 
       { path: 'finance/overview', name: 'FinanceOverview', component: () => import('@/views/finance/Overview.vue'), meta: { title: '收支总览' } },
       { path: 'finance/recharge-plans', name: 'RechargePlans', component: () => import('@/views/finance/RechargePlans.vue'), meta: { title: '充值套餐' } },

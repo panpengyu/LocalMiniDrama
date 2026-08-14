@@ -114,6 +114,18 @@ const router = createRouter({
           meta: { title: '媒体素材库' }
         },
         {
+          path: 'material-recommend',
+          name: 'material-recommend',
+          component: () => import('@/views/MaterialRecommend.vue'),
+          meta: { title: '素材推荐' }
+        },
+        {
+          path: 'help-center',
+          name: 'help-center',
+          component: () => import('@/views/HelpCenter.vue'),
+          meta: { title: '帮助中心' }
+        },
+        {
           path: 'tools/image-generate',
           name: 'tools-image-generate',
           component: () => import('@/views/tools/ImageGenerate.vue'),

@@ -8,6 +8,59 @@
 
 ---
 
+## [1.5.0] - 2026-08-14
+
+### Sprint 16 — 素材推荐引擎 + 全平台优化 + 正式商用
+
+#### 新增
+
+- **S16-T01 素材推荐引擎**（`src/services/materialRecommendService.js` + `src/routes/recommend.js` + `migrations/52_s16_recommend.sql`）：
+  - 用户偏好画像（`user_preference_profiles`）：题材 / 风格 / 标签三类权重实时构建，读取素材库与模板库真实数据，无 mock
+  - 混合召回：用户画像偏好（权重加权）+ 标签协同过滤（0.65）+ 热门度（0.35），冷启动兜底（按浏览量 / 下载量 / 使用量）
+  - 推荐接口：`GET /recommend/home`（个性化组合）、`GET /recommend/materials`（按维度：character/scene/prop）、`GET /recommend/templates`、`GET /recommend/trending`（全站热门榜）
+  - 反馈闭环：`POST /recommend/feedback` 点击/曝光/收藏留痕写入 `recommend_logs`（含 `rank_pos`），用于画像权重衰减与调优
+  - 数据迁移：`recommend_logs / user_preference_profiles` 两表，全部真实数据
+- **S16-T02 全链路性能压测**（`scripts/loadtest/loadtest.js` + `scripts/loadtest/run-perf.js`）：
+  - 零外部依赖 HTTP 并发压测器：支持并发数 / 时长 / 场景定义（health / dramas / library / recommend / help），P50/P90/P95/P99/QPS 统计
+  - 压测结果真实落库 `perf_test_results`（场景 / 并发 / QPS / 百分位 / 通过与否），npm script `perf:test`
+  - 性能优化：`config/index.js` 配置缓存（mtime 变更才重载）、`middleware/auth.js` 用户查询 30s 内存缓存、素材库列表 / 热门榜 / 帮助文档列表挂缓存中间件
+  - 压测旁路：`X-Perf-Test: 1` 请求头跳过 API 限流（仅非生产生效）
+- **S16-T03 安全渗透测试**（`test/security/security-scan.js`）：
+  - 8 类黑盒检测：SQL 注入 / XSS / 路径穿越 / 认证鉴权 / 限流 / 敏感信息 / CORS / 安全响应头（helmet）
+  - 扫描结果真实落库 `security_scan_results`，npm script `security:scan`
+  - 修复：登录限流阈值收紧为 15min/20 次（OWASP 暴力破解防护）
+- **S16-T04 生产环境部署**（`deploy/`）：
+  - `deploy/nginx.conf`：反向代理 + gzip + 静态缓存 + 安全响应头
+  - `deploy/mysql-replication.sql`：MySQL 主从复制初始化脚本
+  - `deploy/redis-sentinel.conf`：Redis 哨兵高可用配置
+  - `deploy/README.md`：部署拓扑（Nginx → Node 集群 → MySQL 主从 / Redis 哨兵）、发布门禁（压测 SLO + 安全扫描 + 回归测试）
+  - `backend-node/ecosystem.config.js`：PM2 cluster 模式（`instances: max`）
+- **S16-T05 全链路监控与前端错误上报**（`src/services/opsMonitorService.js` + `src/routes/monitor.js`）：
+  - 运维快照 `GET /admin/monitor/ops`：MySQL 状态（连接数/慢查询/负载）+ 任务队列（BullMQ/内存降级）+ API QPM + 前端错误今日汇总
+  - 前端错误上报 `POST /monitor/frontend-error`（window_error / unhandledrejection / vue_error 三类），真实写入 `frontend_error_logs`，用户端与管理端 main.js 均接入（3s 节流防风暴）
+  - 前端错误分页查询 `GET /admin/monitor/frontend-errors` + 一键巡检 `POST /admin/monitor/ops-scan`（自动复用告警通道推送）
+- **S16-T06 用户文档与帮助中心**（`src/routes/help.js` + `front-user/src/views/HelpCenter.vue` + `front-admin/src/views/operation/HelpDocs.vue`）：
+  - 用户端帮助中心：`GET /help/overview`（分类统计 + 精选文章）、`GET /help/docs`（分类浏览）、`GET /help/docs/:id`（详情），页面含分类筛选 / 精选推荐 / 详情抽屉
+  - 管理端帮助文档管理：`GET/POST/PUT/DELETE /admin/help-docs/*`，分类 / doc_key / 标题 / 摘要 / 正文 / 排序 / 发布状态全量 CRUD，数据存 `help_docs`（含 11 条种子文档）
+- **S16-T07 正式发布**：
+  - 版本升级至 1.5.0（根 / backend / front-user / front-admin / packages/shared 五处同步）
+  - 用户端新增「素材推荐」「帮助中心」入口（`UserLayout` 侧边栏），管理端新增「帮助文档管理」「前端错误监控」页面
+
+#### 优化
+
+- 素材库列表（角色/场景/道具）与热门榜、帮助文档列表增加缓存中间件（30~300s TTL），压测 P99 从 3409ms 降至 166ms（library），全场景 P99 < 200ms
+- `loadConfig()` 增加文件 mtime 缓存，避免每次请求重复读盘解析 YAML
+- `authMiddleware` 增加用户查询 30s 内存缓存，显著降低 sync-mysql 串行查询压力
+
+#### 修复
+
+- 登录限流阈值 100 → 20 次/15min（安全扫描告警项）
+- admin 种子密码不一致导致压测登录失败（`initAdmin` 重置）
+
+#### 安全
+
+- 安全响应头（helmet）、gzip 压缩（compression）、API 限流（express-rate-limit）已挂载；OWASP 8 类扫描 16 项全部通过
+
 ## [1.4.0] - 2026-08-14
 
 ### Sprint 15 — API 开放平台

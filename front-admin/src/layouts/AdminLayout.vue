@@ -154,7 +154,9 @@ const menuGroups = [
       { path: '/operation/alert-channel', title: '告警通道' },
       { path: '/operation/alert-events', title: '告警历史' },
       { path: '/operation/data-anomalies', title: '数据异常检测' },
-      { path: '/operation/data-analytics', title: '数据分析平台' }
+      { path: '/operation/data-analytics', title: '数据分析平台' },
+      { path: '/operation/help-docs', title: '帮助文档管理' },
+      { path: '/operation/frontend-errors', title: '前端错误监控' }
     ]
   },
   {

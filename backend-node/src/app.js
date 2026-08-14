@@ -14,6 +14,9 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { getDb } = require('./db/index.js');
 const { loadConfig } = require('./config/index.js');
 const logger = require('./logger.js');
@@ -135,6 +138,23 @@ function createApp() {
     log.info('[CACHE] cacheMiddleware mounted: dramas(5m)/drama_detail(5m)/characters(4m)/scenes(4m)/storyboards(3m), bloom=' + (!!dramaBloom));
   }
   
+  // ========== Sprint 16 - S16-T02: 响应压缩（gzip/brotli，降低带宽与 P99 延迟） ==========
+  // 仅压缩可缓存的文本型响应，1KB 以下小响应不压缩以节省 CPU
+  app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.path.startsWith('/static/')) return false; // 图片/视频本身已压缩
+      return compression.filter(req, res);
+    }
+  }));
+
+  // ========== Sprint 16 - S16-T03: 安全响应头（OWASP 安全头检查项） ==========
+  // CSP 关闭：前端使用内联样式与 blob 资源，开启会误伤；其余安全头全部开启
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // 前后端分离部署，允许跨域资源
+  }));
+
   // 解析 JSON 请求体，最大 10MB
   app.use(express.json({ limit: '10mb' }));
   
@@ -149,6 +169,29 @@ function createApp() {
         : '*',  // 默认允许所有来源
     })
   );
+
+  // ========== Sprint 16 - S16-T03: API 全局限流（防 DDoS / 恶意抓取） ==========
+  // 默认 300 次/分钟/IP；登录接口单独更严格限流（防暴力破解）
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: config.server?.api_rate_limit_per_minute || 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    // 压测旁路：仅非生产环境 + 显式请求头（生产环境不可绕过）
+    skip: (req) => process.env.NODE_ENV !== 'production' && req.headers['x-perf-test'] === '1',
+    message: { success: false, error: { code: 'RATE_LIMITED', message: '请求过于频繁，请稍后再试' } }
+  });
+  app.use('/api/v1', apiLimiter);
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    // S16-T03 修复：暴力破解防护阈值 100 → 20 次/15分钟（OWASP 推荐 <5/15min，此处兼顾多用户共 IP 场景取 20）
+    limit: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { success: false, error: { code: 'RATE_LIMITED', message: '登录尝试过于频繁，请 15 分钟后再试' } }
+  });
+  app.use('/api/v1/auth/login', loginLimiter);
 
   // 请求日志中间件：记录所有请求的方法和路径
   app.use((req, res, next) => {

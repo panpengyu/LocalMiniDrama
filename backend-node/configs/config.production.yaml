@@ -1,0 +1,70 @@
+# ============================================================
+# Sprint 16 - S16-T04 生产环境配置示例
+# 部署时复制为 config.yaml 并按实际环境替换敏感项
+# ============================================================
+app:
+  name: LocalMiniDrama API
+  version: 1.5.0
+  debug: false                 # 生产关闭调试，错误不输出内部堆栈
+  language: zh
+server:
+  port: 5679                   # PM2 集群内每个实例监听 5679（Nginx upstream 轮询）
+  host: 0.0.0.0
+  cors_origins:
+    - https://user.example.com
+    - https://admin.example.com
+  read_timeout: 600
+  write_timeout: 600
+  insecure_tls: false
+  api_rate_limit_per_minute: 300   # S16-T03 全局限流阈值（生产可按需调高）
+database:
+  # MySQL 主从架构下：API 读写走主库；如配置只读副本可另建读写分离层
+  type: mysql
+  host: 10.0.0.11              # 生产 MySQL 主库地址（示例）
+  port: 3306
+  user: localminidrama_prod
+  password: CHANGE_ME_STRONG_PASSWORD   # 使用强口令 / 环境变量注入
+  database: localminidrama
+  max_idle: 20
+  max_open: 200
+storage:
+  type: local
+  local_path: /data/localminidrama/storage
+  base_url: https://user.example.com/static
+video:
+  generation_timeout_minutes: 60
+ai:
+  default_text_provider: openai
+  default_image_provider: openai
+  default_video_provider: doubao
+style:
+  default_style: ''
+  default_role_style: full body and face clearly visible, character centered, consistent facial features, high detail, masterpiece, best quality
+  default_scene_style: wide establishing shot, highly detailed environment, sharp focus, rich atmosphere, masterpiece, best quality
+  default_prop_style: object centered, clean simple background, studio lighting, sharp focus, high detail, masterpiece, best quality
+  default_image_ratio: '16:9'
+  default_video_ratio: '16:9'
+  default_prop_ratio: '1:1'
+  default_image_size: 1024x1024
+vendor_lock:
+  enabled: true
+  config_file: ai-configs-qudao.json
+image_proxy:
+  expire_hours: 6
+  use_for_video: true
+  upload_timeout_seconds: 300
+  upload_max_attempts: 3
+redis:
+  # Redis 哨兵架构：主地址 + 哨兵节点（应用侧可配 sentinels 列表）
+  host: 127.0.0.1
+  port: 6379
+  password: CHANGE_ME_REDIS_PASSWORD
+  db: 0
+queue:
+  default_attempts: 5
+  backoff_type: exponential
+  backoff_delay: 5000
+  concurrency: 4
+  bgm_concurrency: 6
+  merge_concurrency: 4
+  enabled: true

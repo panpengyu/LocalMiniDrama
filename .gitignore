@@ -1,7 +1,11 @@
 参考前端/
 .trae
 node_modules/
-backend-node/scripts
+backend-node/scripts/*
+!backend-node/scripts/loadtest/
+
+# 工作记忆（会话上下文，不入库）
+.codebuddy/
 backend-node/configs/ai-configs-stary.json
 backend-node/configs/ai-configs-qudao.json
 backend-node/configs/ai-configs-2026-03-12 (5).json

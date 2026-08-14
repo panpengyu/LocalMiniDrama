@@ -230,21 +230,23 @@ function setupRouter(cfg, db, log) {
   });
 
   // ---------- 角色库模块 ----------
-  r.get('/character-library', charLibrary.list);
+  // S16-T02 性能优化：列表读接口挂缓存中间件（60s TTL），降低 sync-mysql 串行查询压力
+  const cacheSvc = require('../services/cacheService');
+  r.get('/character-library', cacheSvc.cacheMiddleware('lib:char', 60), charLibrary.list);
   r.post('/character-library', charLibrary.create);
   r.get('/character-library/:id', charLibrary.get);
   r.put('/character-library/:id', charLibrary.update);
   r.delete('/character-library/:id', charLibrary.delete);
 
   // ---------- 场景库模块 ----------
-  r.get('/scene-library', sceneLibrary.list);
+  r.get('/scene-library', cacheSvc.cacheMiddleware('lib:scene', 60), sceneLibrary.list);
   r.post('/scene-library', sceneLibrary.create);
   r.get('/scene-library/:id', sceneLibrary.get);
   r.put('/scene-library/:id', sceneLibrary.update);
   r.delete('/scene-library/:id', sceneLibrary.delete);
 
   // ---------- 道具库模块 ----------
-  r.get('/prop-library', propLibrary.list);
+  r.get('/prop-library', cacheSvc.cacheMiddleware('lib:prop', 60), propLibrary.list);
   r.post('/prop-library', propLibrary.create);
   r.get('/prop-library/:id', propLibrary.get);
   r.put('/prop-library/:id', propLibrary.update);
@@ -504,6 +506,14 @@ function setupRouter(cfg, db, log) {
   const openApiSpec = require('./openApiSpec');
   const openDocsRouter = require('./openDocs');
   r.use('/open/docs', openDocsRouter(openApiSpec));
+
+  // ---------- 素材推荐引擎（Sprint 16: S16-T01） ----------
+  const recommend = require('./recommend');
+  r.use('/', recommend.recommendRoutes(db, log));
+
+  // ---------- 帮助中心（Sprint 16: S16-T06） ----------
+  const help = require('./help');
+  r.use('/', help.helpRoutes(db, log));
 
   // ---------- CDN状态查询（Sprint 8: S8-T08） ----------
   r.get('/cdn/status', (_req, res) => {
