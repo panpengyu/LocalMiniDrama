@@ -20,15 +20,15 @@ const { loadConfig } = require('../src/config');
 function createTestDb() {
   const db = getDb(loadConfig().database);
   // 清理本测试可能残留的数据（高位 ID 区间）
-  db.prepare('DELETE FROM style_configs WHERE drama_id >= 99000').run();
-  db.prepare('DELETE FROM dramas WHERE id >= 99000').run();
+  db.prepare('DELETE FROM style_configs WHERE drama_id BETWEEN 998400 AND 998499').run();
+  db.prepare('DELETE FROM dramas WHERE id BETWEEN 998400 AND 998499').run();
   // 种子数据（与真实数据 id 区间隔离）
   db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
-    .run(99001, '测试短剧A', 'anime', 99000);
+    .run(998401, '测试短剧A', 'anime', 998400);
   db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
-    .run(99002, '测试短剧B', 'realistic', 99000);
+    .run(998402, '测试短剧B', 'realistic', 998400);
   db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
-    .run(99003, '测试短剧C', null, 99000);
+    .run(998403, '测试短剧C', null, 998400);
   return db;
 }
 
@@ -42,23 +42,23 @@ describe('S8-T01: 风格配置系统 CRUD', () => {
 
   test('1. 创建风格配置 — 正常流程', () => {
     const config = styleService.createStyleConfig(db, {
-      drama_id: 99001,
+      drama_id: 998401,
       global_style: 'anime',
       color_palette: ['#FF6B6B', '#4ECDC4', '#FFE66D'],
       line_weight: 'medium',
       shading_style: 'cel-shading',
       composition_rule: 'rule-of-thirds',
-      created_by: 99000,
+      created_by: 998400,
     });
     assert.ok(config.id);
-    assert.strictEqual(config.drama_id, 99001);
+    assert.strictEqual(config.drama_id, 998401);
     assert.strictEqual(config.global_style, 'anime');
     assert.deepStrictEqual(config.color_palette, ['#FF6B6B', '#4ECDC4', '#FFE66D']);
     assert.strictEqual(config.is_active, true);
   });
 
   test('2. 获取风格配置', () => {
-    const config = styleService.getStyleConfig(db, 99001);
+    const config = styleService.getStyleConfig(db, 998401);
     assert.ok(config);
     assert.strictEqual(config.global_style, 'anime');
   });
@@ -71,24 +71,24 @@ describe('S8-T01: 风格配置系统 CRUD', () => {
 
   test('4. 创建风格配置 — global_style 非法值应报错', () => {
     assert.throws(() => {
-      styleService.createStyleConfig(db, { drama_id: 99002, global_style: 'invalid_style' });
+      styleService.createStyleConfig(db, { drama_id: 998402, global_style: 'invalid_style' });
     }, /global_style/);
   });
 
   test('5. 创建风格配置 — line_weight 非法值应报错', () => {
     assert.throws(() => {
-      styleService.createStyleConfig(db, { drama_id: 99002, line_weight: 'extra_thick' });
+      styleService.createStyleConfig(db, { drama_id: 998402, line_weight: 'extra_thick' });
     }, /line_weight/);
   });
 
   test('6. 创建风格配置 — 重复创建应报错', () => {
     assert.throws(() => {
-      styleService.createStyleConfig(db, { drama_id: 99001, global_style: 'anime' });
+      styleService.createStyleConfig(db, { drama_id: 998401, global_style: 'anime' });
     }, /已有风格配置/);
   });
 
   test('7. 更新风格配置 — 修改 global_style 和 color_palette', () => {
-    const updated = styleService.updateStyleConfig(db, 99001, {
+    const updated = styleService.updateStyleConfig(db, 998401, {
       global_style: 'cinematic',
       color_palette: ['#1a1a2e', '#16213e'],
     });
@@ -103,14 +103,14 @@ describe('S8-T01: 风格配置系统 CRUD', () => {
   });
 
   test('9. 更新风格配置 — 禁用风格统一', () => {
-    const updated = styleService.updateStyleConfig(db, 99001, { is_active: false });
+    const updated = styleService.updateStyleConfig(db, 998401, { is_active: false });
     assert.strictEqual(updated.is_active, false);
   });
 
   test('10. 获取风格概要', () => {
     // 先重新启用
-    styleService.updateStyleConfig(db, 99001, { is_active: true });
-    const summary = styleService.getStyleSummary(db, 99001);
+    styleService.updateStyleConfig(db, 998401, { is_active: true });
+    const summary = styleService.getStyleSummary(db, 998401);
     assert.ok(summary);
     assert.strictEqual(summary.global_style, 'cinematic');
     assert.strictEqual(summary.is_active, true);
@@ -118,9 +118,9 @@ describe('S8-T01: 风格配置系统 CRUD', () => {
   });
 
   test('11. 删除风格配置', () => {
-    const deleted = styleService.deleteStyleConfig(db, 99001);
+    const deleted = styleService.deleteStyleConfig(db, 998401);
     assert.strictEqual(deleted, true);
-    const config = styleService.getStyleConfig(db, 99001);
+    const config = styleService.getStyleConfig(db, 998401);
     assert.strictEqual(config, null);
   });
 
@@ -136,13 +136,13 @@ describe('S8-T02: 风格统一引擎 — 提示词注入', () => {
   before(() => {
     db = createTestDb();
     styleService.createStyleConfig(db, {
-      drama_id: 99001,
+      drama_id: 998401,
       global_style: 'anime',
       color_palette: ['#FF6B6B', '#4ECDC4'],
       line_weight: 'medium',
       shading_style: 'cel-shading',
       composition_rule: 'rule-of-thirds',
-      created_by: 99000,
+      created_by: 998400,
     });
   });
   after(() => { closeDb(); });
@@ -153,14 +153,14 @@ describe('S8-T02: 风格统一引擎 — 提示词注入', () => {
   });
 
   test('14. injectStyleToPrompt — 禁用时返回原始 prompt', () => {
-    styleService.updateStyleConfig(db, 99001, { is_active: false });
-    const result = styleService.injectStyleToPrompt(db, 99001, 'a girl standing');
+    styleService.updateStyleConfig(db, 998401, { is_active: false });
+    const result = styleService.injectStyleToPrompt(db, 998401, 'a girl standing');
     assert.strictEqual(result, 'a girl standing');
-    styleService.updateStyleConfig(db, 99001, { is_active: true });
+    styleService.updateStyleConfig(db, 998401, { is_active: true });
   });
 
   test('15. injectStyleToPrompt — 正常注入风格参数', () => {
-    const result = styleService.injectStyleToPrompt(db, 99001, 'a girl standing');
+    const result = styleService.injectStyleToPrompt(db, 998401, 'a girl standing');
     assert.ok(result.includes('a girl standing'));
     assert.ok(result.includes('anime style'));
     assert.ok(result.includes('medium line weight'));
@@ -170,25 +170,25 @@ describe('S8-T02: 风格统一引擎 — 提示词注入', () => {
   });
 
   test('16. injectStyleToPrompt — 空 prompt 也能注入风格', () => {
-    const result = styleService.injectStyleToPrompt(db, 99001, '');
+    const result = styleService.injectStyleToPrompt(db, 998401, '');
     assert.ok(result.includes('anime style'));
     assert.ok(!result.startsWith(','));
   });
 
   test('17. injectStyleToPrompt — 角色覆盖生效', () => {
-    styleService.updateStyleConfig(db, 99001, {
+    styleService.updateStyleConfig(db, 998401, {
       character_overrides: [{ id: 42, style: 'realistic' }],
     });
-    const result = styleService.injectStyleToPrompt(db, 99001, 'a hero', { characterId: 42 });
+    const result = styleService.injectStyleToPrompt(db, 998401, 'a hero', { characterId: 42 });
     assert.ok(result.includes('realistic'));
     assert.ok(!result.includes('anime style'));
   });
 
   test('18. injectStyleToPrompt — 场景覆盖生效', () => {
-    styleService.updateStyleConfig(db, 99001, {
+    styleService.updateStyleConfig(db, 998401, {
       scene_overrides: [{ id: 7, style: 'watercolor' }],
     });
-    const result = styleService.injectStyleToPrompt(db, 99001, 'a castle', { sceneId: 7 });
+    const result = styleService.injectStyleToPrompt(db, 998401, 'a castle', { sceneId: 7 });
     assert.ok(result.includes('watercolor'));
   });
 
@@ -198,18 +198,18 @@ describe('S8-T02: 风格统一引擎 — 提示词注入', () => {
   });
 
   test('20. buildNegativePrompt — 追加风格统一负面词', () => {
-    styleService.updateStyleConfig(db, 99001, {
+    styleService.updateStyleConfig(db, 998401, {
       negative_prompt_suffix: 'deformed hands',
       is_active: true,
     });
-    const result = styleService.buildNegativePrompt(db, 99001, 'blurry');
+    const result = styleService.buildNegativePrompt(db, 998401, 'blurry');
     assert.ok(result.includes('blurry'));
     assert.ok(result.includes('deformed hands'));
     assert.ok(result.includes('inconsistent style'));
   });
 
   test('21. buildNegativePrompt — 无原始负面词也能构建', () => {
-    const result = styleService.buildNegativePrompt(db, 99001, null);
+    const result = styleService.buildNegativePrompt(db, 998401, null);
     assert.ok(result.includes('inconsistent style'));
   });
 });

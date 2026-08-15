@@ -1144,12 +1144,19 @@ async function getProxyCacheValidated(db, cacheKey, log, tag) {
   return null;
 }
 
+/** MySQL DATETIME 无时区语义：写入本地时间（YYYY-MM-DD HH:MM:SS），避免 UTC 字符串被按本地时区误读 */
+function mysqlNowLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 写入 image_proxy_cache 缓存记录 */
 function setProxyCache(db, cacheKey, proxyUrl) {
   try {
     db.prepare(
       'REPLACE INTO image_proxy_cache (cache_key, proxy_url, created_at) VALUES (?, ?, ?)'
-    ).run(cacheKey, proxyUrl, new Date().toISOString());
+    ).run(cacheKey, proxyUrl, mysqlNowLocal());
   } catch (_) {}
 }
 

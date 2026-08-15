@@ -6,9 +6,12 @@
  *
  * 覆盖范围：
  *   A. 后端 3D 字段校验（validate3DFields）
- *   B. 后端 canvas_layouts 表 3D 字段同步（sync3DFieldsToTable）
- *   C. 后端 saveCanvasLayout 完整流程（含3D字段持久化）
+ *   B. 后端 canvas_layouts 表 3D 字段同步（sync3DFieldsToTable）—— 真实 MySQL
+ *   C. 后端 saveCanvasLayout 完整流程（含3D字段持久化）—— 真实 MySQL
  *   D. 前端 canvasLayout.js 3D 工具函数（通过动态 import）
+ *
+ * 数据约束：B/C 部分所有测试数据真实写入 MySQL（configs/config.yaml，localminidrama），
+ * 使用高位测试 drama_id（99001-99005）隔离，before 清理残留、after 彻底清理。
  *
  * 运行命令: cd backend-node && node --test test/s9Director3D.test.js
  */
@@ -16,10 +19,11 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const Database = require('better-sqlite3');
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
 
 /* ============================================================
- * A. validate3DFields 单元测试
+ * A. validate3DFields 单元测试（纯函数，无 DB）
  * ============================================================ */
 
 describe('A. validate3DFields 3D字段校验', () => {
@@ -146,39 +150,41 @@ describe('A. validate3DFields 3D字段校验', () => {
 });
 
 /* ============================================================
- * B. sync3DFieldsToTable 单元测试（使用 SQLite 模拟）
+ * B + C 公共 MySQL 连接与清理（真实 MySQL，高位测试 drama_id 隔离）
  * ============================================================ */
+const T_DRAMA_IDS = [99001, 99002, 99003, 99004, 99005];
 
-function _createCanvasLayoutsTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-  // 模拟 canvas_layouts 表结构（与 MySQL migration 42 + 43 一致）
-  db.exec(`
-    CREATE TABLE canvas_layouts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER NOT NULL UNIQUE,
-      viewport TEXT,
-      nodes TEXT,
-      zone_collapsed TEXT,
-      view_mode TEXT NOT NULL DEFAULT '2d',
-      camera_3d TEXT,
-      camera_preset TEXT,
-      character_stage TEXT,
-      scene_depth TEXT,
-      timeline_3d TEXT,
-      meta TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  return db;
+function cleanupDb(db) {
+  const ph = T_DRAMA_IDS.map(() => '?').join(',');
+  db.prepare(`DELETE FROM canvas_layouts WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM canvas_versions WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM storyboard_props WHERE storyboard_id IN (SELECT id FROM storyboards WHERE episode_id IN (SELECT id FROM episodes WHERE drama_id IN (${ph})))`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM episode_characters WHERE episode_id IN (SELECT id FROM episodes WHERE drama_id IN (${ph}))`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM storyboards WHERE episode_id IN (SELECT id FROM episodes WHERE drama_id IN (${ph}))`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM scenes WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM props WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM characters WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM episodes WHERE drama_id IN (${ph})`).run(...T_DRAMA_IDS);
+  db.prepare(`DELETE FROM dramas WHERE id IN (${ph})`).run(...T_DRAMA_IDS);
 }
 
+/* ============================================================
+ * B. sync3DFieldsToTable 单元测试（真实 MySQL canvas_layouts 表）
+ * ============================================================ */
 describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
   const { _sync3DFieldsToTable } = require('../src/services/dramaService');
+  let db;
+
+  before(() => {
+    db = getDb(loadConfig().database);
+    cleanupDb(db);
+  });
+  after(() => {
+    cleanupDb(db);
+    closeDb();
+  });
 
   test('B1. 首次写入3D布局（INSERT）', () => {
-    const db = _createCanvasLayoutsTestDb();
     const fakeLog = { warn: () => {} };
     const layout = {
       viewport: { x: 10, y: 20, zoom: 0.75 },
@@ -196,11 +202,9 @@ describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
     const cam3D = JSON.parse(row.camera_3d);
     assert.strictEqual(cam3D.position.x, 15);
     assert.strictEqual(cam3D.target.z, 0);
-    db.close();
   });
 
-  test('B2. 重复写入触发 ON CONFLICT UPDATE（UPSERT）', () => {
-    const db = _createCanvasLayoutsTestDb();
+  test('B2. 重复写入触发 UPDATE（同 drama_id 不产生重复行）', () => {
     const fakeLog = { warn: () => {} };
 
     // 第一次写入
@@ -220,11 +224,9 @@ describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
     assert.strictEqual(rows.length, 1); // 不应产生重复行
     assert.strictEqual(rows[0].view_mode, '3d');
     assert.strictEqual(rows[0].camera_preset, 'top');
-    db.close();
   });
 
   test('B3. view_mode 缺失时默认 2d', () => {
-    const db = _createCanvasLayoutsTestDb();
     const fakeLog = { warn: () => {} };
     _sync3DFieldsToTable(db, 99003, {
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -232,11 +234,9 @@ describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
 
     const row = db.prepare('SELECT view_mode FROM canvas_layouts WHERE drama_id = ?').get(99003);
     assert.strictEqual(row.view_mode, '2d');
-    db.close();
   });
 
   test('B4. camera_preset 从 camera_3d.preset 推断', () => {
-    const db = _createCanvasLayoutsTestDb();
     const fakeLog = { warn: () => {} };
     _sync3DFieldsToTable(db, 99004, {
       view_mode: '3d',
@@ -246,11 +246,9 @@ describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
 
     const row = db.prepare('SELECT camera_preset FROM canvas_layouts WHERE drama_id = ?').get(99004);
     assert.strictEqual(row.camera_preset, 'front');
-    db.close();
   });
 
   test('B5. camera_3d 为 null 时 camera_preset 也为 null', () => {
-    const db = _createCanvasLayoutsTestDb();
     const fakeLog = { warn: () => {} };
     _sync3DFieldsToTable(db, 99005, {
       view_mode: '2d',
@@ -259,84 +257,33 @@ describe('B. sync3DFieldsToTable canvas_layouts表同步', () => {
     const row = db.prepare('SELECT camera_3d, camera_preset FROM canvas_layouts WHERE drama_id = ?').get(99005);
     assert.strictEqual(row.camera_3d, null);
     assert.strictEqual(row.camera_preset, null);
-    db.close();
   });
 });
 
 /* ============================================================
- * C. saveCanvasLayout 完整流程测试（含3D字段持久化）
+ * C. saveCanvasLayout 完整流程测试（含3D字段持久化）—— 真实 MySQL
  * ============================================================ */
-
-function _createDramaTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-  db.exec(`
-    CREATE TABLE dramas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT, description TEXT, genre TEXT, style TEXT, status TEXT DEFAULT 'draft',
-      total_episodes INTEGER, total_duration INTEGER, thumbnail TEXT, tags TEXT,
-      metadata TEXT, created_by INTEGER, enterprise_id INTEGER, team_id INTEGER,
-      deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    CREATE TABLE canvas_layouts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER NOT NULL UNIQUE,
-      viewport TEXT,
-      nodes TEXT,
-      zone_collapsed TEXT,
-      view_mode TEXT NOT NULL DEFAULT '2d',
-      camera_3d TEXT,
-      camera_preset TEXT,
-      character_stage TEXT,
-      scene_depth TEXT,
-      timeline_3d TEXT,
-      meta TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    -- getDrama() 关联查询所需的最小表集（空表即可，避免 SQLITE_ERROR）
-    CREATE TABLE episodes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER, title TEXT, episode_number INTEGER,
-      deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    CREATE TABLE storyboards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      episode_id INTEGER, storyboard_number INTEGER,
-      duration INTEGER, deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    CREATE TABLE storyboard_props (
-      storyboard_id INTEGER, prop_id INTEGER
-    );
-    CREATE TABLE characters (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER, name TEXT, sort_order INTEGER,
-      deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    CREATE TABLE episode_characters (
-      episode_id INTEGER, character_id INTEGER
-    );
-    CREATE TABLE scenes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER, episode_id INTEGER,
-      deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    CREATE TABLE props (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER, episode_id INTEGER,
-      deleted_at TEXT, created_at TEXT, updated_at TEXT
-    );
-    INSERT INTO dramas (id, title, metadata, created_at, updated_at) VALUES
-      (99001, '测试短剧-3D', '{}', '2026-08-11 00:00:00', '2026-08-11 00:00:00');
-  `);
-  return db;
-}
-
 describe('C. saveCanvasLayout 完整流程（含3D字段）', () => {
   const dramaService = require('../src/services/dramaService');
+  let db;
+
+  before(() => {
+    db = getDb(loadConfig().database);
+    cleanupDb(db);
+    // 种子 drama（title 为 NOT NULL 列）
+    db.prepare(
+      'INSERT INTO dramas (id, title, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(99001, '测试短剧-3D', '{}', '2026-08-11 00:00:00', '2026-08-11 00:00:00');
+    db.prepare(
+      'INSERT INTO dramas (id, title, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(99002, '测试短剧-3D-C3', '{}', '2026-08-11 00:00:00', '2026-08-11 00:00:00');
+  });
+  after(() => {
+    cleanupDb(db);
+    closeDb();
+  });
 
   test('C1. 保存含3D字段的布局 → metadata.canvas_layout 包含 view_mode/camera_3d', () => {
-    const db = _createDramaTestDb();
     const log = {
       info: () => {},
       warn: () => {},
@@ -377,12 +324,9 @@ describe('C. saveCanvasLayout 完整流程（含3D字段）', () => {
     assert.ok(clRow);
     assert.strictEqual(clRow.view_mode, '3d');
     assert.strictEqual(clRow.camera_preset, 'free');
-
-    db.close();
   });
 
   test('C2. 保存仅2D布局 → view_mode 默认为 2d，camera_3d 为 null', () => {
-    const db = _createDramaTestDb();
     const log = { info: () => {}, warn: () => {}, error: () => {} };
 
     const layout = {
@@ -396,28 +340,24 @@ describe('C. saveCanvasLayout 完整流程（含3D字段）', () => {
     const clRow = db.prepare('SELECT * FROM canvas_layouts WHERE drama_id = ?').get(99001);
     assert.strictEqual(clRow.view_mode, '2d');
     assert.strictEqual(clRow.camera_3d, null);
-    db.close();
   });
 
   test('C3. 非法 view_mode 抛出 BAD_REQUEST 不写入', () => {
-    const db = _createDramaTestDb();
     const log = { info: () => {}, warn: () => {}, error: () => {} };
 
     assert.throws(
-      () => dramaService.saveCanvasLayout(db, log, 99001, {
+      () => dramaService.saveCanvasLayout(db, log, 99002, {
         canvas_layout: { view_mode: 'invalid' }
       }),
       (err) => err.code === 'BAD_REQUEST'
     );
 
     // 确认未写入
-    const clRow = db.prepare('SELECT * FROM canvas_layouts WHERE drama_id = ?').get(99001);
-    assert.strictEqual(clRow, undefined);
-    db.close();
+    const clRow = db.prepare('SELECT * FROM canvas_layouts WHERE drama_id = ?').get(99002);
+    assert.strictEqual(clRow, null);
   });
 
   test('C4. 更新已有3D布局 → camera_preset 正确更新', () => {
-    const db = _createDramaTestDb();
     const log = { info: () => {}, warn: () => {}, error: () => {} };
 
     // 第一次保存：free 机位
@@ -445,7 +385,6 @@ describe('C. saveCanvasLayout 完整流程（含3D字段）', () => {
     const cam3D = JSON.parse(clRow.camera_3d);
     assert.strictEqual(cam3D.preset, 'top');
     assert.strictEqual(cam3D.position.y, 30);
-    db.close();
   });
 });
 

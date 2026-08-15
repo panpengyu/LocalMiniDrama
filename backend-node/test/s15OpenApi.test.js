@@ -31,8 +31,8 @@ let server;
 let baseUrl;
 const log = { info() {}, warn() {}, error() {}, errorw() {} };
 
-const TEST_USER_ID = 999003;
-const TEST_ADMIN_ID = 999004;
+const TEST_USER_ID = 999021;
+const TEST_ADMIN_ID = 999022;
 
 let fullKeySecret = '';   // 全 scope 密钥
 let limitedKeySecret = ''; // 仅 asset:read 密钥

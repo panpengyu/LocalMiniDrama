@@ -1,11 +1,14 @@
 // backend-node/test/screenwriterCoverage.test.js
 // 目标：补足 screenwriterService 覆盖率到 ≥90%
-// 模式：SQLite :memory: + mock aiClient，与 screenwriterService.test.js 保持一致
+// 模式：真实 MySQL（localminidrama） + mock aiClient
+// 数据约束：所有测试数据真实写入 MySQL（configs/config.yaml），before 清理残留、after 彻底清理
 'use strict';
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const Database = require('better-sqlite3');
+
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
 
 const aiClient = require(path.join(__dirname, '..', 'src', 'services', 'aiClient.js'));
 const origGenerateText = aiClient.generateText;
@@ -16,115 +19,23 @@ const swService = require(path.join(__dirname, '..', 'src', 'services', 'screenw
 const safeJson  = require(path.join(__dirname, '..', 'src', 'utils', 'safeJson.js'));
 const deepseek  = require(path.join(__dirname, '..', 'src', 'services', 'deepseekConfig.js'));
 
-const ALL_TABLES_SQL = `
-CREATE TABLE sw_outlines (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  outline_id TEXT NOT NULL UNIQUE,
-  user_id INTEGER, enterprise_id INTEGER, drama_id INTEGER,
-  title TEXT NOT NULL, logline TEXT, idea TEXT, source_idea TEXT,
-  genre TEXT, structure TEXT DEFAULT 'three_act', style TEXT DEFAULT 'hot',
-  episode_count INTEGER DEFAULT 10, target_audience TEXT,
-  themes_json TEXT, acts_json TEXT,
-  version INTEGER DEFAULT 1,
-  status TEXT DEFAULT 'draft',
-  error_message TEXT,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_characters (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  character_id TEXT NOT NULL UNIQUE,
-  outline_id TEXT, drama_id INTEGER, user_id INTEGER,
-  name TEXT NOT NULL, role TEXT NOT NULL,
-  age INTEGER, gender TEXT, appearance TEXT, personality TEXT,
-  background TEXT, motivation TEXT, internal_conflict TEXT, external_conflict TEXT,
-  arc TEXT, relationships_json TEXT, portrait_style TEXT,
-  keywords_json TEXT, version INTEGER DEFAULT 1,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_episodes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  episode_id TEXT NOT NULL UNIQUE,
-  outline_id TEXT, drama_id INTEGER, user_id INTEGER,
-  episode_number INTEGER, title TEXT, summary TEXT, cliffhanger TEXT,
-  duration_estimate TEXT,
-  status TEXT DEFAULT 'draft', error_message TEXT,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_scenes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  scene_id TEXT NOT NULL UNIQUE,
-  episode_id TEXT, outline_id TEXT,
-  scene_number INTEGER, location TEXT, description TEXT,
-  time_of_day TEXT, atmosphere TEXT, characters_json TEXT,
-  sort_order INTEGER,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_storyboards (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  frame_id TEXT NOT NULL UNIQUE,
-  outline_id TEXT, episode_id TEXT, scene_id TEXT,
-  frame_number INTEGER, shot_type TEXT, scene_description TEXT,
-  characters_json TEXT, dialogue TEXT, narration TEXT,
-  camera_movement TEXT, composition TEXT, lighting TEXT, duration_seconds INTEGER,
-  sort_order INTEGER,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_dialogues (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  dialogue_id TEXT NOT NULL UNIQUE,
-  outline_id TEXT, episode_id TEXT, frame_id TEXT, character_id TEXT,
-  character_name TEXT, line_order INTEGER, content TEXT, emotion TEXT,
-  tone TEXT, direction TEXT,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE drama_templates (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  template_id TEXT NOT NULL UNIQUE,
-  template_key TEXT, name TEXT, genre TEXT, style TEXT,
-  target_audience TEXT, prompt_example TEXT, parameters_json TEXT,
-  created_at TEXT, updated_at TEXT
-);
-CREATE TABLE sw_dialogue_emotions (emotion_key TEXT PRIMARY KEY, label_zh TEXT, prompt_hint TEXT);
-CREATE TABLE sw_shot_types       (shot_key    TEXT PRIMARY KEY, label_zh TEXT, prompt_hint TEXT);
-CREATE TABLE sw_genres           (genre_key   TEXT PRIMARY KEY, label_zh TEXT, description TEXT);
-CREATE TABLE sw_styles           (style_key   TEXT PRIMARY KEY, label_zh TEXT, description TEXT);
-CREATE TABLE sw_jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id TEXT NOT NULL UNIQUE,
-  bull_job_id TEXT,
-  user_id INTEGER,
-  enterprise_id INTEGER,
-  outline_id TEXT,
-  episode_id TEXT,
-  frame_id TEXT,
-  job_type TEXT,
-  status TEXT DEFAULT 'pending',
-  progress INTEGER DEFAULT 0,
-  phase TEXT,
-  payload_json TEXT,
-  params_json TEXT,
-  result_json TEXT,
-  error_message TEXT,
-  retry_count INTEGER DEFAULT 0,
-  max_retries INTEGER DEFAULT 3,
-  cost_points INTEGER DEFAULT 0,
-  started_at TEXT,
-  completed_at TEXT,
-  duration_ms INTEGER,
-  created_at TEXT,
-  updated_at TEXT
-);
-CREATE TABLE sw_chat_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT, outline_id TEXT, user_id INTEGER, enterprise_id INTEGER,
-  role TEXT, content TEXT, tokens INTEGER, tool_call_json TEXT, tool_result_json TEXT,
-  created_at TEXT
-);
-`;
+// ---- 清理 sw_* 测试表：只清本测试写入的脏数据（sw_* 表为 AI 编剧工作区，允许测试清空重建） ----
+function cleanupDb(db) {
+  if (!db) return;
+  const del = (sql) => { try { db.prepare(sql).run(); } catch (_) {} };
+  // 按 ol_ 前缀清理本文件生成的测试数据（与 screenwriterService 的 outline_ 前缀互不干扰）
+  del("DELETE FROM sw_dialogues WHERE outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_storyboards WHERE outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_scenes WHERE outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_episodes WHERE outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_characters WHERE outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_jobs WHERE job_id LIKE 'swjob_%' OR outline_id LIKE 'ol_%'");
+  del("DELETE FROM sw_outlines WHERE outline_id LIKE 'ol_%'");
+}
 
 function createTestDb() {
-  const db = new Database(':memory:');
-  db.exec(ALL_TABLES_SQL);
+  const db = getDb(loadConfig().database);
+  cleanupDb(db);
   return db;
 }
 
@@ -134,27 +45,26 @@ function uid(p = 'x') { return p + '_' + Date.now().toString(36) + '_' + Math.fl
 function seedOutline(db, extras = {}) {
   const id = extras.outlineId || uid('ol');
   db.prepare(`INSERT INTO sw_outlines
-    (outline_id, title, logline, structure, style, genre, source_idea, target_audience,
-     episode_count, themes_json, acts_json, version, status, created_at, updated_at)
-    VALUES (@outline_id,@title,@logline,@structure,@style,@genre,@source_idea,@target_audience,
-      @episode_count,@themes_json,@acts_json,@version,@status,@created_at,@updated_at)`).run({
-    outline_id: id,
-    title: extras.title || '测试标题',
-    logline: extras.logline || '测试梗概',
-    structure: extras.structure || 'three_act',
-    style: extras.style || 'sweet',
-    genre: extras.genre || 'urban_romance',
-    source_idea: 'idea',
-    target_audience: extras.targetAudience || '女频',
-    episode_count: Number(extras.episodeCount) || 8,
-    themes_json: JSON.stringify(extras.themes || ['逆袭','甜宠']),
-    acts_json: JSON.stringify(extras.acts || [
+    (outline_id, title, logline, structure, style, genre, idea, target_audience,
+     episode_count, themes_json, acts_json, status, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id,
+    extras.title || '测试标题',
+    extras.logline || '测试梗概',
+    extras.structure || 'three_act',
+    extras.style || 'sweet',
+    extras.genre || 'urban_romance',
+    'idea',
+    extras.targetAudience || '女频',
+    Number(extras.episodeCount) || 8,
+    JSON.stringify(extras.themes || ['逆袭','甜宠']),
+    JSON.stringify(extras.acts || [
       {act_number:1,name:'开始',summary:'起',key_events:['开场']},
       {act_number:2,name:'发展',summary:'承',key_events:['冲突']},
       {act_number:3,name:'结局',summary:'合',key_events:['圆满']}
     ]),
-    version: 1, status: 'draft', created_at: nowStr(), updated_at: nowStr(),
-  });
+    'draft', nowStr(), nowStr()
+  );
   return id;
 }
 
@@ -172,7 +82,7 @@ function getOutlineDetailDirect(db, id) {
     episodeCount: row.episode_count,
     themes: row.themes_json ? JSON.parse(row.themes_json) : [],
     acts: row.acts_json ? JSON.parse(row.acts_json) : [],
-    version: row.version, status: row.status,
+    status: row.status,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -199,7 +109,7 @@ function seedScene(db, outId, epId, num = 1) {
 describe('Sprint 1 gap coverage', () => {
   let db;
   before(() => { db = createTestDb(); });
-  after(() => { restoreAi(); });
+  after(() => { cleanupDb(db); closeDb(); restoreAi(); });
 
   describe('screenwriterService.updateOutline (PATCH /outlines/:id)', () => {
     it('更新 title / logline / structure / style / genre / targetAudience', () => {

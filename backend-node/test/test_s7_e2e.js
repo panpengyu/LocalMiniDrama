@@ -32,7 +32,6 @@ const CONFIG_PATH = path.resolve(__dirname, '..', 'configs', 'config.yaml');
 const REPORT_PATH = path.resolve(__dirname, 'test_s7_e2e_report.txt');
 
 // ========== 加载服务 ==========
-const Database = require('better-sqlite3');
 // 服务函数本身 accept "db" 接口（同步 prepare/run/get/all），我们用 sync-mysql 包装成同名接口
 function wrapSyncMysql(conn) {
   return {

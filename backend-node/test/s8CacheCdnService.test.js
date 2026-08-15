@@ -7,7 +7,6 @@
 
 const { test, describe, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
-const Database = require('better-sqlite3');
 
 const cacheService = require('../src/services/cacheService');
 const cdnService = require('../src/services/cdnService');

@@ -23,10 +23,10 @@ const path = require('path');
 const { getDb, closeDb } = require('../src/db');
 const { loadConfig } = require('../src/config');
 
-const TEST_DRAMA = 99001;
+const TEST_DRAMA = 998301;
 // 测试专用高位 ID
-const CID = { s2: 996005, s3: 996007, s4: 996009 };
-const SBID = { s1: null, s2: 996024, s3: 996010, s4: 996099 };
+const CID = { s2: 998305, s3: 998307, s4: 998309 };
+const SBID = { s1: null, s2: 998324, s3: 998310, s4: 998399 };
 
 function db() {
   return getDb(loadConfig().database);
@@ -36,9 +36,9 @@ function db() {
 function cleanup() {
   const d = db();
   d.prepare('DELETE FROM image_generations WHERE drama_id = ?').run(TEST_DRAMA);
-  d.prepare('DELETE FROM storyboard_characters WHERE storyboard_id BETWEEN 996000 AND 996999').run();
-  d.prepare('DELETE FROM storyboards WHERE id BETWEEN 996000 AND 996999').run();
-  d.prepare('DELETE FROM characters WHERE id BETWEEN 996000 AND 996999').run();
+  d.prepare('DELETE FROM storyboard_characters WHERE storyboard_id BETWEEN 998300 AND 998399').run();
+  d.prepare('DELETE FROM storyboards WHERE id BETWEEN 998300 AND 998399').run();
+  d.prepare('DELETE FROM characters WHERE id BETWEEN 998300 AND 998399').run();
 }
 
 // ---------- mock logger ----------

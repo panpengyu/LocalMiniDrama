@@ -24,8 +24,8 @@ const log = {
   error() {},
 };
 
-const TEST_DRAMA = 99001;
-const TEST_ID = 996001;
+const TEST_DRAMA = 998601;
+const TEST_ID = 998602;
 
 function db() {
   return getDb(loadConfig().database);

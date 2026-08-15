@@ -20,35 +20,36 @@ const swService = require('../src/services/screenwriterService');
 // ---- 使用真实 MySQL 数据库（清理本测试的高位/唯一标记数据） ----
 function createTestDb() {
   const db = getDb(loadConfig().database);
-  db.prepare('DELETE FROM sw_chat_messages').run();
-  db.prepare('DELETE FROM sw_chat_sessions').run();
-  db.prepare('DELETE FROM sw_dialogues').run();
-  db.prepare('DELETE FROM sw_storyboards').run();
-  db.prepare('DELETE FROM sw_scenes').run();
-  db.prepare('DELETE FROM sw_episodes').run();
-  db.prepare('DELETE FROM sw_characters').run();
-  db.prepare('DELETE FROM sw_outlines').run();
-  db.prepare("DELETE FROM sw_jobs WHERE job_id LIKE 'job_test_%'").run();
+  // 按 outline_ 前缀清理本文件生成的测试数据（与 screenwriterCoverage 的 ol_ 前缀互不干扰）
+  db.prepare("DELETE FROM sw_chat_messages WHERE session_id IN (SELECT session_id FROM sw_chat_sessions WHERE session_id LIKE 'swchat_%')").run();
+  db.prepare("DELETE FROM sw_chat_sessions WHERE session_id LIKE 'swchat_%'").run();
+  db.prepare("DELETE FROM sw_dialogues WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_storyboards WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_scenes WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_episodes WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_characters WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_outlines WHERE outline_id LIKE 'outline_%'").run();
+  db.prepare("DELETE FROM sw_jobs WHERE job_id LIKE 'job_test_%' OR outline_id LIKE 'outline_%'").run();
   db.prepare("DELETE FROM drama_templates WHERE template_id = 'tpl_test'").run();
-  db.prepare("DELETE FROM sw_genres WHERE genre_key = 'urban_romance'").run();
-  db.prepare("DELETE FROM sw_styles WHERE style_key = 'sweet'").run();
-  db.prepare("DELETE FROM sw_shot_types WHERE shot_key = 'medium'").run();
-  db.prepare("DELETE FROM sw_dialogue_emotions WHERE emotion_key = 'happy'").run();
+  db.prepare("DELETE FROM sw_genres WHERE genre_key = 'test_genre'").run();
+  db.prepare("DELETE FROM sw_styles WHERE style_key = 'test_style'").run();
+  db.prepare("DELETE FROM sw_shot_types WHERE shot_key = 'test_shot'").run();
+  db.prepare("DELETE FROM sw_dialogue_emotions WHERE emotion_key = 'test_emotion'").run();
   return db;
 }
 
 function seedDictData(db) {
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO drama_templates (template_id, category, key, name, description, prompt_system, prompt_example, output_schema, parameters_json, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run('tpl_test', 'structure', 'three_act', '测试模板', '测试用', 'test prompt', 'test example', '{}', '{}', 1, 1, now, now);
+  db.prepare('INSERT INTO drama_templates (template_id, category, `key`, name, description, prompt_system, prompt_example, output_schema, parameters_json, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('tpl_test', 'test_structure', 'test_three_act', '测试模板', '测试用', 'test prompt', 'test example', '{}', '{}', 1, 1, now, now);
   db.prepare('INSERT INTO sw_genres (genre_key, label_zh, description, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run('urban_romance', '都市爱情', '测试', 1, 1, now);
-  db.prepare('INSERT INTO sw_styles (style_key, label_zh, description, tone, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run('sweet', '甜宠', '测试', '甜蜜', 1, 1, now);
-  db.prepare('INSERT INTO sw_shot_types (shot_key, label_zh, description, purpose, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run('medium', '中景', '测试', '对话', 1, 1, now);
-  db.prepare('INSERT INTO sw_dialogue_emotions (emotion_key, label_zh, category, description, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run('happy', '开心', 'positive', '测试', 1, 1, now);
+    .run('test_genre', '都市爱情', '测试', 1, 1, now);
+  db.prepare('INSERT INTO sw_styles (style_key, label_zh, description, prompt_bias, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run('test_style', '甜宠', '测试', '甜蜜', 1, 1, now);
+  db.prepare('INSERT INTO sw_shot_types (shot_key, label_zh, description, default_duration, icon, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('test_shot', '中景', '测试', '3-5秒', 'MS', 1, 1, now);
+  db.prepare('INSERT INTO sw_dialogue_emotions (emotion_key, label_zh, description, tts_speed_modifier, tts_volume_modifier, tts_pitch_modifier, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('test_emotion', '开心', '测试', 1.0, 1.0, 0.0, 1, 1, now);
 }
 
 // ============ 测试开始 ============
@@ -332,7 +333,7 @@ describe('screenwriterService - CRUD 查询', () => {
   });
 
   it('listTemplates 按category过滤', () => {
-    const items = swService.listTemplates(db, 'structure');
+    const items = swService.listTemplates(db, 'test_structure');
     assert.ok(items.length >= 1);
     assert.ok(items.some((t) => t.templateId === 'tpl_test'));
     const empty = swService.listTemplates(db, 'nonexistent');
@@ -342,13 +343,13 @@ describe('screenwriterService - CRUD 查询', () => {
   it('listGenres 返回题材字典', () => {
     const items = swService.listGenres(db);
     assert.ok(items.length >= 1);
-    assert.ok(items.some((g) => g.key === 'urban_romance'), '应包含测试题材');
+    assert.ok(items.some((g) => g.key === 'test_genre'), '应包含测试题材');
   });
 
   it('listStyles 返回风格字典', () => {
     const items = swService.listStyles(db);
     assert.ok(items.length >= 1);
-    assert.ok(items.some((s) => s.key === 'sweet'), '应包含测试风格');
+    assert.ok(items.some((s) => s.key === 'test_style'), '应包含测试风格');
   });
 
   it('listShotTypes 返回镜头类型字典', () => {

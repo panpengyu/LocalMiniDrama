@@ -40,10 +40,10 @@ const OTHER_DRAMA = 88000;
 // 清理本测试产生的数据（高位 ID 区间）
 function cleanup() {
   const d = db();
-  d.prepare('DELETE FROM audio_align_logs WHERE drama_id IN (?, ?) OR storyboard_id >= 996000').run(DRAMA, OTHER_DRAMA);
-  d.prepare('DELETE FROM audio_generations WHERE storyboard_id >= 996000').run();
-  d.prepare('DELETE FROM storyboards WHERE id >= 996000').run();
-  d.prepare('DELETE FROM episodes WHERE id >= 996000').run();
+  d.prepare('DELETE FROM audio_align_logs WHERE drama_id IN (?, ?) OR storyboard_id BETWEEN 996000 AND 996999').run(DRAMA, OTHER_DRAMA);
+  d.prepare('DELETE FROM audio_generations WHERE storyboard_id BETWEEN 996000 AND 996999').run();
+  d.prepare('DELETE FROM storyboards WHERE id BETWEEN 996000 AND 996999').run();
+  d.prepare('DELETE FROM episodes WHERE id BETWEEN 996000 AND 996999').run();
 }
 
 // batchAlign 走 episodes JOIN（真实 storyboards 无 drama_id 列），需要 episode 记录
