@@ -26,6 +26,7 @@ const lifecycleService = require(path.resolve(__dirname, '..', 'src', 'services'
 const financeService = require(path.resolve(__dirname, '..', 'src', 'services', 'financeService.js'));
 const securityService = require(path.resolve(__dirname, '..', 'src', 'services', 'securityService.js'));
 const analyticsService = require(path.resolve(__dirname, '..', 'src', 'services', 'analyticsService.js'));
+const { snowflakeId } = require(path.resolve(__dirname, '..', 'src', 'utils', 'snowflake.js'));
 
 const U_MIN = 99510;
 const U_MAX = 99515;
@@ -155,9 +156,9 @@ describe('S12-T05 财务与计费', () => {
       // 无流水视为 0
       assert.equal(financeService.getUserBalance(db, ARREARS_UID), 0);
       db.prepare(
-        `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
-         VALUES (?, 'recharge', 'recharge', 100, 100, 'x'), (?, 'consume', 'image', -620, -520, 'x')`
-      ).run(ARREARS_UID, ARREARS_UID);
+        `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark)
+         VALUES (?, ?, 'recharge', 'recharge', 100, 100, 'x'), (?, ?, 'consume', 'image', -620, -520, 'x')`
+      ).run(snowflakeId(), ARREARS_UID, snowflakeId(), ARREARS_UID);
       assert.equal(financeService.getUserBalance(db, ARREARS_UID), -520);
     } finally {
       cleanupArrearsFixtures();
@@ -177,9 +178,9 @@ describe('S12-T05 财务与计费', () => {
        VALUES (?, 'arrears_unit', '欠费单测', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"})`
     ).run(ARREARS_UID);
     db.prepare(
-      `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
-       VALUES (?, 'consume', 'image', -300, -300, 'x')`
-    ).run(ARREARS_UID);
+      `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark)
+       VALUES (?, ?, 'consume', 'image', -300, -300, 'x')`
+    ).run(snowflakeId(), ARREARS_UID);
     try {
       financeService.notifyArrears(db, log, { threshold: 0, limit: 200 });
       const cnt1 = db.prepare('SELECT COUNT(*) c FROM platform_notifications WHERE user_id = ?').get(ARREARS_UID).c;
@@ -209,9 +210,9 @@ describe('S12-T05 财务与计费', () => {
               (?, 'solvent_g', '正常G', 'x', 'user', 1, ${db.type === 'mysql' ? 'NOW()' : "datetime('now')"})`
     ).run(ARREARS_UID, SOLVENT_UID);
     db.prepare(
-      `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark)
-       VALUES (?, 'consume', 'image', -300, -300, 'x'), (?, 'recharge', 'recharge', 500, 500, 'x')`
-    ).run(ARREARS_UID, SOLVENT_UID);
+      `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark)
+       VALUES (?, ?, 'consume', 'image', -300, -300, 'x'), (?, ?, 'recharge', 'recharge', 500, 500, 'x')`
+    ).run(snowflakeId(), ARREARS_UID, snowflakeId(), SOLVENT_UID);
     try {
       const arrearsUser = db.prepare('SELECT * FROM users WHERE id = ?').get(ARREARS_UID);
       const solventUser = db.prepare('SELECT * FROM users WHERE id = ?').get(SOLVENT_UID);

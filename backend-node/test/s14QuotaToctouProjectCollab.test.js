@@ -29,6 +29,7 @@ const { getDb, closeDb } = require(path.resolve(__dirname, '..', 'src', 'db', 'i
 const OWNER = 99721;            // 项目所有者（H7 项目数配额主体）
 const DRAMA = 9970001;          // H6 协作配额挂载的测试项目ID
 const COLLAB_BASE = 99730;      // H6 并发加入的目标用户ID基址（COLLAB_BASE+i）
+const { snowflakeId } = require(path.resolve(__dirname, '..', 'src', 'utils', 'snowflake.js'));
 
 let db;
 let cfg;
@@ -100,9 +101,9 @@ describe('[H7-并发] 项目数配额原子占位（真并行创建）', () => {
 
     // 预填到临界：LIMIT - 2 = 13
     const seed = db.prepare(
-      "INSERT INTO dramas (title, status, created_by, created_at, updated_at) VALUES (?, 'draft', ?, NOW(), NOW())"
+      "INSERT INTO dramas (id, title, status, created_by, created_at, updated_at) VALUES (?, ?, 'draft', ?, NOW(), NOW())"
     );
-    for (let i = 0; i < LIMIT - 2; i += 1) seed.run(`seed-${i}`, OWNER);
+    for (let i = 0; i < LIMIT - 2; i += 1) seed.run(snowflakeId(), `seed-${i}`, OWNER);
     const usedBefore = db.prepare('SELECT COUNT(*) c FROM dramas WHERE created_by = ? AND deleted_at IS NULL').get(OWNER).c;
     assert.equal(Number(usedBefore), 13);
 
@@ -120,8 +121,8 @@ describe('[H7-并发] 项目数配额原子占位（真并行创建）', () => {
         );
         if (Number(row.c) >= LIMIT) { await conn.rollback(); return false; }
         await conn.query(
-          "INSERT INTO dramas (title, status, created_by, created_at, updated_at) VALUES (?, 'draft', ?, NOW(), NOW())",
-          [`concurrent-${Math.random()}`, OWNER]
+          "INSERT INTO dramas (id, title, status, created_by, created_at, updated_at) VALUES (?, ?, 'draft', ?, NOW(), NOW())",
+          [snowflakeId(), `concurrent-${Math.random()}`, OWNER]
         );
         await conn.commit();
         return true;

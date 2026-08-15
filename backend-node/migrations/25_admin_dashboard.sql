@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS channels (
 
 -- 积分流水表（记录所有积分变更，支持按业务/日期统计）
 CREATE TABLE IF NOT EXISTS point_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
+  id BIGINT PRIMARY KEY,
+  user_id BIGINT,
   change_type VARCHAR(20) NOT NULL, -- consume / recharge / refund / adjust
   business_type VARCHAR(30) DEFAULT 'other', -- image / video / text / audio / other
   amount INTEGER NOT NULL DEFAULT 0, -- 变更积分（正数增加 / 负数扣除）
@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS point_logs (
 
 -- 充值订单表
 CREATE TABLE IF NOT EXISTS recharges (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id BIGINT PRIMARY KEY,
   order_no VARCHAR(64) NOT NULL UNIQUE,
-  user_id INTEGER,
+  user_id BIGINT,
   amount DECIMAL(10,2) NOT NULL DEFAULT 0.00, -- 支付金额（元）
   points INTEGER NOT NULL DEFAULT 0, -- 到账积分
   pay_method VARCHAR(20), -- wechat / alipay / manual

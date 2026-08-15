@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const membershipService = require('./membershipService');
 const financeService = require('./financeService');
 const settingsService = require('./settingsService');
+const { snowflakeId } = require('../utils/snowflake');
 
 // 支持的支付渠道
 const GATEWAYS = ['wechat', 'alipay', 'points'];
@@ -277,9 +278,9 @@ function deductPointsForOrder(db, order, amountYuan) {
 function recordRevenue(db, order, amountYuan, tradeNo) {
   const points = Math.round(amountYuan * financeService.POINTS_PER_YUAN);
   db.prepare(
-    `INSERT INTO recharges (order_no, user_id, amount, points, pay_method, pay_status, paid_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'paid', ${nowExpr(db)}, ${nowExpr(db)}, ${nowExpr(db)})`
-  ).run(order.order_no, order.user_id, amountYuan, points, order.pay_method);
+    `INSERT INTO recharges (id, order_no, user_id, amount, points, pay_method, pay_status, paid_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'paid', ${nowExpr(db)}, ${nowExpr(db)}, ${nowExpr(db)})`
+  ).run(snowflakeId(), order.order_no, order.user_id, amountYuan, points, order.pay_method);
   void tradeNo;
 }
 

@@ -27,6 +27,7 @@ const creatorService = require(path.resolve(__dirname, '..', 'src', 'services', 
 const templateReview = require(path.resolve(__dirname, '..', 'src', 'services', 'templateReviewService.js'));
 const settingsService = require(path.resolve(__dirname, '..', 'src', 'services', 'settingsService.js'));
 const financeService = require(path.resolve(__dirname, '..', 'src', 'services', 'financeService.js'));
+const { snowflakeId } = require(path.resolve(__dirname, '..', 'src', 'utils', 'snowflake.js'));
 
 const U_CREATOR = 2;  // 创作者（发布模板）
 const U_BUYER = 3;    // 买家A（下载/购买/评分）
@@ -85,9 +86,9 @@ function grantPoints(uid, points) {
   const cur = db.prepare('SELECT balance_after FROM point_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(uid);
   const balance = cur ? Number(cur.balance_after) || 0 : 0;
   db.prepare(
-    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark, created_at)
-     VALUES (?, 'recharge', 'test_s14', ?, ?, 'S14测试充值', NOW())`
-  ).run(uid, points, balance + points);
+    `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark, created_at)
+     VALUES (?, ?, 'recharge', 'test_s14', ?, ?, 'S14测试充值', NOW())`
+  ).run(snowflakeId(), uid, points, balance + points);
 }
 
 /**

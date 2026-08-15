@@ -3,8 +3,8 @@
 // 覆盖：启动孤儿任务清理（failOrphanedAsyncTasksOnStartup）+ 用户取消任务
 //
 // 说明：所有测试数据真实写入 MySQL（configs/config.yaml），
-//       不使用 mock 数据、不使用 SQLite。测试任务 id 使用唯一
-//       前缀（ldtest-）隔离真实任务，beforeEach 清理。
+//       不使用 mock 数据、不使用 SQLite。测试任务 id 使用独立数字
+//       区间（9996000~9996999）隔离真实任务，beforeEach 清理。
 // ============================================================
 'use strict';
 
@@ -15,7 +15,7 @@ const { getDb, closeDb } = require('../src/db');
 const { loadConfig } = require('../src/config');
 const taskService = require('../src/services/taskService');
 
-const PREFIX = 'ldtest-';
+const ID_BASE = 9996000; // 测试任务 ID 区间基址（async_tasks.id 为 BIGINT）
 
 function db() {
   return getDb(loadConfig().database);
@@ -23,7 +23,7 @@ function db() {
 
 // 清理本测试产生的任务
 function cleanup() {
-  db().prepare(`DELETE FROM async_tasks WHERE id LIKE '${PREFIX}%'`).run();
+  db().prepare(`DELETE FROM async_tasks WHERE id BETWEEN ${ID_BASE} AND ${ID_BASE + 999}`).run();
 }
 
 describe('taskService.failOrphanedAsyncTasksOnStartup', () => {
@@ -33,9 +33,9 @@ describe('taskService.failOrphanedAsyncTasksOnStartup', () => {
   it('marks pending and processing tasks as failed on startup', () => {
     const d = db();
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const idPending = PREFIX + 'pending';
-    const idProcessing = PREFIX + 'processing';
-    const idDone = PREFIX + 'done';
+    const idPending = ID_BASE;
+    const idProcessing = ID_BASE + 1;
+    const idDone = ID_BASE + 2;
     d.prepare(
       `INSERT INTO async_tasks (id, type, status, progress, message, resource_id, created_at, updated_at)
        VALUES (?, ?, ?, 0, '', ?, ?, ?)`
@@ -65,7 +65,7 @@ describe('taskService.failOrphanedAsyncTasksOnStartup', () => {
   it('cancelTask marks active task as failed', () => {
     const d = db();
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const idActive = PREFIX + 'active';
+    const idActive = ID_BASE + 3;
     d.prepare(
       `INSERT INTO async_tasks (id, type, status, progress, message, resource_id, created_at, updated_at)
        VALUES (?, ?, ?, 0, '', ?, ?, ?)`

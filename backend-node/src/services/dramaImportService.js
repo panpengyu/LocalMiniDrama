@@ -4,6 +4,7 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 const { randomUUID } = require('crypto');
 const storageLayout = require('./storageLayout');
+const { snowflakeId } = require('../utils/snowflake');
 
 function getStoragePath(cfg) {
   const raw = cfg?.storage?.local_path || './data/storage';
@@ -155,10 +156,12 @@ function importDrama(db, cfg, log, zipBuffer, user = null) {
 function _doImport(db, storagePath, files, data, d, title, metaStr, now, log, user = null) {
 
   // ---- 创建 drama ----
+  const dramaId = snowflakeId();
   const dramaInfo = db.prepare(
-    `INSERT INTO dramas (title, description, genre, style, status, tags, metadata, created_by, enterprise_id, team_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO dramas (id, title, description, genre, style, status, tags, metadata, created_by, enterprise_id, team_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
+    dramaId,
     title,
     d.description || null,
     d.genre || null,
@@ -172,7 +175,6 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log, us
     now,
     now
   );
-  const dramaId = dramaInfo.lastInsertRowid;
   const projectDir = storageLayout.buildProjectRelativeDir({
     id: dramaId,
     title,

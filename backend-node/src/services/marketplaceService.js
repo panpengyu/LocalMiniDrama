@@ -430,10 +430,12 @@ function applyTemplate(db, log, { userId, templateId, title }) {
       style_config: styleConfig,
       storyboard_rhythm: content.storyboard_rhythm || null,
     });
+    const dramaId = snowflakeId();
     const dramaRes = db.prepare(
-      `INSERT INTO dramas (title, description, genre, style, metadata, status, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)`
+      `INSERT INTO dramas (id, title, description, genre, style, metadata, status, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`
     ).run(
+      dramaId,
       title || t.title,
       t.description || t.summary || null,
       t.genre_type || null,
@@ -443,7 +445,7 @@ function applyTemplate(db, log, { userId, templateId, title }) {
       now,
       now
     );
-    const drama = { id: dramaRes.lastInsertRowid || dramaRes.insertId };
+    const drama = { id: dramaId };
     if (!drama.id) throw new Error('创建项目失败');
 
     if (characterPresets.length > 0) {

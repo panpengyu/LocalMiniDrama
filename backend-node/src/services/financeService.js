@@ -1,5 +1,7 @@
 'use strict';
 
+const { snowflakeId } = require('../utils/snowflake');
+
 /**
  * Sprint 12 - S12-T05 财务与计费增强
  *
@@ -180,9 +182,9 @@ function deductPointsAtomic(db, { userId, points, businessType, relatedId, remar
   }
   const balanceAfter = balanceBefore - need;
   db.prepare(
-    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
-     VALUES (?, 'consume', ?, ?, ?, ?, ?, ${nowExpr(db)})`
-  ).run(uid, businessType || 'consume', -need, balanceAfter, relatedId || null, remark || null);
+    `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
+     VALUES (?, ?, 'consume', ?, ?, ?, ?, ?, ${nowExpr(db)})`
+  ).run(snowflakeId(), uid, businessType || 'consume', -need, balanceAfter, relatedId || null, remark || null);
   return { needPoints: need, balanceBefore, balanceAfter };
 }
 

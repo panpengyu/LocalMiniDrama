@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { snowflakeId } = require('../utils/snowflake');
 
 const JWT_SECRET = 'localminidrama_jwt_secret_key_2026';
 const JWT_EXPIRES_IN = '7d';
@@ -48,9 +49,9 @@ function initAdmin(db) {
     
     if (!existing) {
       const insertStmt = db.prepare(
-        'INSERT INTO users (username, password, role, nickname, status, user_type) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO users (id, username, password, role, nickname, status, user_type) VALUES (?, ?, ?, ?, ?, ?, ?)'
       );
-      insertStmt.run(['admin', hashedPassword, 'super_admin', '系统管理员', 1, 'individual']);
+      insertStmt.run([snowflakeId(), 'admin', hashedPassword, 'super_admin', '系统管理员', 1, 'individual']);
       console.log('Admin created: admin/admin123');
     } else {
       const updateStmt = db.prepare('UPDATE users SET password = ?, role = ? WHERE username = ?');
@@ -81,13 +82,14 @@ function register(db, { phone, password, nickname }) {
   const hashedPassword = hashPassword(password);
   const username = phone;
   
+  const userId = snowflakeId();
   const insertStmt = db.prepare(
-    'INSERT INTO users (username, phone, password, role, nickname, status, user_type) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO users (id, username, phone, password, role, nickname, status, user_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
-  const result = insertStmt.run([username, phone, hashedPassword, 'user', nickname || '', 1, 'individual']);
+  const result = insertStmt.run([userId, username, phone, hashedPassword, 'user', nickname || '', 1, 'individual']);
   
   const newStmt = db.prepare('SELECT id, username, phone, role, nickname, status FROM users WHERE id = ?');
-  const user = newStmt.get([result.lastInsertRowid]);
+  const user = newStmt.get([userId]);
   
   const token = generateToken(user);
   return { user, token };

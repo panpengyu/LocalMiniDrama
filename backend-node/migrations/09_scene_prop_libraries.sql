@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS scene_libraries (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   location VARCHAR(255) NOT NULL DEFAULT '',
   time VARCHAR(255),
   prompt TEXT,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS scene_libraries (
 
 CREATE TABLE IF NOT EXISTS prop_libraries (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   name VARCHAR(255) NOT NULL DEFAULT '',
   description VARCHAR(2000),
   prompt TEXT,

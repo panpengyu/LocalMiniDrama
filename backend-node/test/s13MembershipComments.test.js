@@ -25,6 +25,7 @@ const membership = require(path.resolve(__dirname, '..', 'src', 'services', 'mem
 const payment = require(path.resolve(__dirname, '..', 'src', 'services', 'paymentService.js'));
 const quota = require(path.resolve(__dirname, '..', 'src', 'services', 'quotaService.js'));
 const comments = require(path.resolve(__dirname, '..', 'src', 'services', 'commentService.js'));
+const { snowflakeId } = require(path.resolve(__dirname, '..', 'src', 'utils', 'snowflake.js'));
 
 const T_DRAMA = 99411;
 const U_OWNER = 2;   // 项目创建者
@@ -59,9 +60,9 @@ function grantPoints(uid, points) {
   const cur = db.prepare('SELECT balance_after FROM point_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(uid);
   const balance = cur ? Number(cur.balance_after) || 0 : 0;
   db.prepare(
-    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark, created_at)
-     VALUES (?, 'recharge', 'test', ?, ?, 'S13测试充值', NOW())`
-  ).run(uid, points, balance + points);
+    `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark, created_at)
+     VALUES (?, ?, 'recharge', 'test', ?, ?, 'S13测试充值', NOW())`
+  ).run(snowflakeId(), uid, points, balance + points);
 }
 
 before(() => {

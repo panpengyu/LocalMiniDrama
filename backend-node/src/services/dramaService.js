@@ -4,6 +4,7 @@ const storageLayout = require('./storageLayout');
 const { resolveStylePreset } = require('../constants/generationStylePresets');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 const { AsyncQueue } = require('../utils/concurrency');
+const { snowflakeId } = require('../utils/snowflake');
 
 /* =========================================================================
  * P1-R6' 视频合成异步限流（与 BgmAsyncQueue 同模式，防止无界 setImmediate 打满 ffmpeg/CPU/DB连接池）
@@ -87,11 +88,12 @@ function insertDramaRow(db, log, req, user = null) {
     meta.storage_folder_label = storageLayout.sanitizeFolderLabel(req.title || '');
   }
   const metadataStr = Object.keys(meta).length ? JSON.stringify(meta) : null;
+  const dramaId = snowflakeId();
   const stmt = db.prepare(`
-    INSERT INTO dramas (title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
+    INSERT INTO dramas (id, title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
   `);
-  const info = stmt.run(
+  const info = stmt.run(dramaId,
     req.title || '',
     req.description || null,
     req.genre || null,
@@ -103,7 +105,7 @@ function insertDramaRow(db, log, req, user = null) {
     now,
     now
   );
-  const id = info.lastInsertRowid;
+  const id = dramaId;
   log.info('Drama created', { drama_id: id, created_by: user ? user.id : null });
   return id;
 }

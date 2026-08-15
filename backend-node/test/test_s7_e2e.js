@@ -144,10 +144,10 @@ function assert(cond, desc, e) {
   } else {
     WARN('drama 99100 不存在，创建临时测试项目');
     const info = db.prepare(
-      `INSERT INTO dramas (title, ${DRAMA_DESC}, ${DRAMA_GENRE}, created_by, enterprise_id, team_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run('E2E-S7 临时项目-迷雾中的真相', '端到端测试临时数据，执行后可手动清理', 'urban_romance', 99000, 1, 1, now(), now());
-    dramaId = info.lastInsertRowid;
+      `INSERT INTO dramas (id, title, ${DRAMA_DESC}, ${DRAMA_GENRE}, created_by, enterprise_id, team_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(99101, 'E2E-S7 临时项目-迷雾中的真相', '端到端测试临时数据，执行后可手动清理', 'urban_romance', 99000, 1, 1, now(), now());
+    dramaId = 99101;
     PASS(`临时项目创建 id=${dramaId}`);
   }
 

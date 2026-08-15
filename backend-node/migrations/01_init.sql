@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS dramas (
-  id INTEGER PRIMARY KEY AUTO_INCREMENT,
+  id BIGINT PRIMARY KEY,
   title VARCHAR(255) NOT NULL DEFAULT '',
   description TEXT,
   genre VARCHAR(255),
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS dramas (
 
 CREATE TABLE IF NOT EXISTS episodes (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER NOT NULL,
+  drama_id BIGINT NOT NULL,
   episode_number INTEGER DEFAULT 0,
   title VARCHAR(255) DEFAULT '',
   script_content TEXT,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS storyboards (
 
 CREATE TABLE IF NOT EXISTS characters (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER NOT NULL,
+  drama_id BIGINT NOT NULL,
   name VARCHAR(255) NOT NULL DEFAULT '',
   role VARCHAR(255),
   description TEXT,
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS episode_characters (
 
 CREATE TABLE IF NOT EXISTS scenes (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER NOT NULL,
+  drama_id BIGINT NOT NULL,
   episode_id INTEGER,
   location VARCHAR(255),
   time VARCHAR(255),
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS scenes (
 
 CREATE TABLE IF NOT EXISTS props (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER NOT NULL,
+  drama_id BIGINT NOT NULL,
   name VARCHAR(255) NOT NULL DEFAULT '',
   type VARCHAR(255),
   description TEXT,
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS ai_service_configs (
 );
 
 CREATE TABLE IF NOT EXISTS async_tasks (
-  id VARCHAR(36) PRIMARY KEY,
+  id BIGINT PRIMARY KEY,
   type VARCHAR(255) NOT NULL,
   status VARCHAR(255) NOT NULL,
   progress INTEGER DEFAULT 0,
@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS async_tasks (
 CREATE TABLE IF NOT EXISTS image_generations (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
   storyboard_id INTEGER,
-  drama_id INTEGER,
+  drama_id BIGINT,
   scene_id INTEGER,
   character_id INTEGER,
   provider VARCHAR(255),
@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS image_generations (
 
 CREATE TABLE IF NOT EXISTS video_generations (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   storyboard_id INTEGER,
   provider VARCHAR(255),
   prompt TEXT,
@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS video_generations (
 CREATE TABLE IF NOT EXISTS video_merges (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
   episode_id INTEGER,
-  drama_id INTEGER,
+  drama_id BIGINT,
   title VARCHAR(255),
   provider VARCHAR(255),
   model VARCHAR(255),
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS video_merges (
 
 CREATE TABLE IF NOT EXISTS character_libraries (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   name VARCHAR(255) NOT NULL DEFAULT '',
   category VARCHAR(255),
   image_url VARCHAR(500),
@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS character_libraries (
 
 CREATE TABLE IF NOT EXISTS scene_libraries (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   location VARCHAR(255) NOT NULL DEFAULT '',
   time VARCHAR(255),
   prompt TEXT,
@@ -262,7 +262,7 @@ CREATE TABLE IF NOT EXISTS scene_libraries (
 
 CREATE TABLE IF NOT EXISTS prop_libraries (
   id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  drama_id BIGINT,
   name VARCHAR(255) NOT NULL DEFAULT '',
   description TEXT,
   prompt TEXT,
@@ -278,8 +278,8 @@ CREATE TABLE IF NOT EXISTS prop_libraries (
 );
 
 CREATE TABLE IF NOT EXISTS assets (
-  id INTEGER PRIMARY KEY AUTO_INCREMENT,
-  drama_id INTEGER,
+  id BIGINT PRIMARY KEY,
+  drama_id BIGINT,
   name VARCHAR(255),
   type VARCHAR(255),
   category VARCHAR(255),

@@ -1,3 +1,5 @@
+const { snowflakeId } = require('../utils/snowflake');
+
 function list(db, query) {
   let sql = 'FROM assets WHERE deleted_at IS NULL';
   const params = [];
@@ -42,10 +44,12 @@ function getById(db, id) {
 
 function create(db, log, req) {
   const now = new Date().toISOString();
+  const assetId = snowflakeId();
   const info = db.prepare(
-    `INSERT INTO assets (drama_id, name, type, category, url, local_path, file_size, mime_type, width, height, duration, image_gen_id, video_gen_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO assets (id, drama_id, name, type, category, url, local_path, file_size, mime_type, width, height, duration, image_gen_id, video_gen_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
+    assetId,
     req.drama_id ?? null,
     req.name || '未命名',
     req.type || 'image',
@@ -62,7 +66,7 @@ function create(db, log, req) {
     now,
     now
   );
-  return getById(db, info.lastInsertRowid);
+  return getById(db, assetId);
 }
 
 function update(db, log, id, req) {

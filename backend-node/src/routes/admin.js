@@ -10,6 +10,7 @@
  */
 const response = require('../response');
 const alertService = require('../services/alertService');
+const { snowflakeId } = require('../utils/snowflake');
 
 /**
  * 生成一个"最近7天"内，按业务类型和消费/充值分类的演示数据。
@@ -96,10 +97,10 @@ function ensureDashboardDemoData(database) {
     const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
     const insertLog = database.prepare(
-      'INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at) VALUES (?,?,?,?,?,?,?,?)'
+      'INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at) VALUES (?,?,?,?,?,?,?,?,?)'
     );
     const insertRecharge = database.prepare(
-      'INSERT INTO recharges (order_no, user_id, amount, points, pay_method, pay_status, paid_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO recharges (id, order_no, user_id, amount, points, pay_method, pay_status, paid_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
     );
 
     let runningBalance = 500000;
@@ -124,6 +125,7 @@ function ensureDashboardDemoData(database) {
             runningBalance = Math.max(0, runningBalance - amount);
             const related = `${seg.business_type.toUpperCase()}_${dayTs.getTime()}_${k}`;
             insertLog.run(
+              snowflakeId(),
               pick(userIds),
               'consume',
               seg.business_type,
@@ -149,9 +151,10 @@ function ensureDashboardDemoData(database) {
         const payMethods = ['wechat', 'alipay', 'manual'];
         const pm = payMethods[rand(0, 2)];
         const uid = pick(userIds);
-        insertRecharge.run(orderNo, uid, amountYuan, rechargePoints, pm, 'paid', paidTs, paidTs, paidTs);
+        insertRecharge.run(snowflakeId(), orderNo, uid, amountYuan, rechargePoints, pm, 'paid', paidTs, paidTs, paidTs);
         // 对应充值流水
         insertLog.run(
+          snowflakeId(),
           uid,
           'recharge',
           'system',
@@ -521,11 +524,12 @@ function adminRoutes(db, log) {
       const bcrypt = require('bcrypt');
       const hashedPassword = await bcrypt.hash(password, 10);
       
+      const userId = snowflakeId();
       const result = db.prepare(
-        'INSERT INTO users (username, password_hash, nickname, role, user_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
-      ).run(username, hashedPassword, nickname || '', role || 'user', user_type || 'individual');
+        'INSERT INTO users (id, username, password_hash, nickname, role, user_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+      ).run(userId, username, hashedPassword, nickname || '', role || 'user', user_type || 'individual');
       
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
       response.success(res, { user, message: '创建成功' });
     } catch (err) {
       log.error('admin/users/create', { error: err.message });
@@ -700,6 +704,7 @@ function adminRoutes(db, log) {
       }
 
       const payload = filterByColumns('enterprises', {
+        id: snowflakeId(),
         name: String(name),
         short_name: req.body.short_name || null,
         logo: req.body.logo || null,
@@ -721,7 +726,7 @@ function adminRoutes(db, log) {
       let values = Object.values(payload);
       const result = db.prepare(sql).run(...values);
 
-      const eid = Number(result.lastInsertRowid || result.insertId || 0);
+      const eid = payload.id;
       const enterprise = db.prepare('SELECT * FROM enterprises WHERE id = ?').get(eid);
       response.success(res, { enterprise, message: '创建成功' });
     } catch (err) {
@@ -896,14 +901,15 @@ function adminRoutes(db, log) {
           // 用 createEnterprise 的白名单逻辑避免列不存在报错
           const fallbackName = '未分配工作室';
           const pay = filterByColumns('enterprises', {
+            id: snowflakeId(),
             name: fallbackName,
             short_name: '默认工作室',
             status: 1
           });
           const k = Object.keys(pay);
           const ins = db.prepare(`INSERT INTO enterprises (${k.join(', ')}) VALUES (${k.map(() => '?').join(', ')})`);
-          const r = ins.run(...Object.values(pay));
-          finalEid = Number(r.lastInsertRowid || r.insertId || 0);
+          ins.run(...Object.values(pay));
+          finalEid = pay.id;
           log.info('admin/teams/create/fallback-enterprise', {
             enterprise_id: finalEid,
             name: fallbackName
@@ -912,6 +918,7 @@ function adminRoutes(db, log) {
       }
 
       const payload = filterByColumns('teams', {
+        id: snowflakeId(),
         name: String(name),
         enterprise_id: finalEid,
         description: description || '',
@@ -920,7 +927,7 @@ function adminRoutes(db, log) {
       const keys = Object.keys(payload);
       const result = db.prepare(`INSERT INTO teams (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...Object.values(payload));
 
-      const teamId = Number(result.lastInsertRowid || result.insertId || 0);
+      const teamId = payload.id;
       const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId);
       response.success(res, { team, message: '创建成功' });
     } catch (err) {

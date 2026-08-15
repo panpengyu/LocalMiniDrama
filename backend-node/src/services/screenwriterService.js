@@ -1838,14 +1838,13 @@ async function createProject(db, log, params = {}) {
     themes: outline.themes,
   };
 
+  const dramaId = snowflakeId();
   const dramaIns = _runInsert(db,
-    `INSERT INTO dramas (title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, total_episodes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
-    [dramaTitle, outline.logline || outline.idea || null, outline.genre || null, outline.style || 'realistic',
+    `INSERT INTO dramas (id, title, description, genre, style, metadata, status, created_by, enterprise_id, team_id, total_episodes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+    [dramaId, dramaTitle, outline.logline || outline.idea || null, outline.genre || null, outline.style || 'realistic',
      JSON.stringify(metadata), userId, enterpriseId, teamId, swEps.length || 1, now, now]
   );
-  const dramaId = dramaIns?.lastInsertRowid || dramaIns?.insertId;
-  if (!dramaId) throw new Error('创建项目失败：无法获取 dramaId');
 
   // 4. 映射角色 sw_characters -> characters
   const charIdMap = {}; // sw character_id -> characters.id

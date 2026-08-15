@@ -35,6 +35,7 @@ const membership = require(path.resolve(__dirname, '..', 'src', 'services', 'mem
 const payment = require(path.resolve(__dirname, '..', 'src', 'services', 'paymentService.js'));
 const quota = require(path.resolve(__dirname, '..', 'src', 'services', 'quotaService.js'));
 const finance = require(path.resolve(__dirname, '..', 'src', 'services', 'financeService.js'));
+const { snowflakeId } = require(path.resolve(__dirname, '..', 'src', 'utils', 'snowflake.js'));
 
 // ---- 报告收集器 ----
 const report = [];
@@ -116,9 +117,9 @@ test('S13-E2E 用户全生命周期：注册→开通会员→生成内容→触
   const grantPoints = 5000;
   const balBefore = finance.getUserBalance(db, userId);
   db.prepare(
-    `INSERT INTO point_logs (user_id, change_type, business_type, amount, balance_after, remark, created_at)
-     VALUES (?, 'recharge', 'test', ?, ?, 'S13集成测试充值', NOW())`
-  ).run(userId, grantPoints, balBefore + grantPoints);
+    `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, remark, created_at)
+     VALUES (?, ?, 'recharge', 'test', ?, ?, 'S13集成测试充值', NOW())`
+  ).run(snowflakeId(), userId, grantPoints, balBefore + grantPoints);
   const balAfterGrant = finance.getUserBalance(db, userId);
   assert.equal(balAfterGrant, balBefore + grantPoints, '积分应真实入账');
   step(2, '充值积分', { 充值: grantPoints, 余额: balAfterGrant });

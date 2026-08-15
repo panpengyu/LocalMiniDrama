@@ -18,6 +18,7 @@ const path = require('path');
 const { Worker } = require('worker_threads');
 const { getDb, closeDb } = require('../src/db');
 const { loadConfig } = require('../src/config');
+const { snowflakeId } = require('../src/utils/snowflake');
 
 const TEST_USER_PREFIX = 'fix_anom_';
 
@@ -52,17 +53,19 @@ function nextUsername(tag) {
 }
 
 function seedUser(db, { username, nickname = '' }) {
-  const r = db.prepare(`INSERT INTO users (username, password, role, nickname) VALUES (?, ?, ?, ?)`)
-    .run(username, 'x', 'user', nickname);
-  return Number(r.lastInsertRowid);
+  const id = snowflakeId();
+  db.prepare(`INSERT INTO users (id, username, password, role, nickname) VALUES (?, ?, ?, ?, ?)`)
+    .run(id, username, 'x', 'user', nickname);
+  return id;
 }
 
 function seedLog(db, { user_id, amount, balance_after, change_type = 'decrease', business_type = 'test', remark = '' }) {
-  const r = db.prepare(
-    `INSERT INTO point_logs (user_id, amount, balance_after, change_type, business_type, remark)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(user_id, amount, balance_after, change_type, business_type, remark);
-  return Number(r.lastInsertRowid);
+  const id = snowflakeId();
+  db.prepare(
+    `INSERT INTO point_logs (id, user_id, amount, balance_after, change_type, business_type, remark)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, user_id, amount, balance_after, change_type, business_type, remark);
+  return id;
 }
 
 describe('fixDataAnomaly (真实 MySQL)', () => {

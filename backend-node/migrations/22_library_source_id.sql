@@ -1,6 +1,6 @@
-ALTER TABLE character_libraries ADD COLUMN drama_id INTEGER;
-ALTER TABLE scene_libraries ADD COLUMN drama_id INTEGER;
-ALTER TABLE prop_libraries ADD COLUMN drama_id INTEGER;
+ALTER TABLE character_libraries ADD COLUMN drama_id BIGINT;
+ALTER TABLE scene_libraries ADD COLUMN drama_id BIGINT;
+ALTER TABLE prop_libraries ADD COLUMN drama_id BIGINT;
 
 ALTER TABLE character_libraries ADD COLUMN source_id VARCHAR(36);
 ALTER TABLE scene_libraries ADD COLUMN source_id VARCHAR(36);
