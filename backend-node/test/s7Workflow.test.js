@@ -17,76 +17,51 @@
 // ============================================================
 'use strict';
 
-const test = require('node:test');
+const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+const { loadConfig } = require(path.resolve(__dirname, '..', 'src', 'config', 'index.js'));
+const { getDb, closeDb } = require(path.resolve(__dirname, '..', 'src', 'db', 'index.js'));
+const workflowService = require(path.resolve(__dirname, '..', 'src', 'services', 'workflowService.js'));
+
+// ============================================================
+// 数据约束：所有测试数据真实写入 MySQL（configs/config.yaml），
+// 不使用 mock / SQLite。before 清理残留，after 彻底清理。
+// ============================================================
+let db;
+
+function cleanup() {
+  if (!db) return;
+  const names = ['测试工作流', '通用模板', '项目专属', '其他项目', '原名', '新名称', '待删除', '三步工作流', 'WF', '两步工作流'];
+  const ph = names.map(() => '?').join(',');
+  // MySQL 不允许 DELETE 子查询直接引用同表，故分三步按定义名级联清理
+  db.prepare(`DELETE FROM workflow_step_logs WHERE instance_id IN (SELECT id FROM workflow_instances WHERE definition_id IN (SELECT id FROM workflow_definitions WHERE name IN (${ph})))`).run(...names);
+  db.prepare(`DELETE FROM workflow_instances WHERE definition_id IN (SELECT id FROM workflow_definitions WHERE name IN (${ph}))`).run(...names);
+  db.prepare(`DELETE FROM workflow_definitions WHERE name IN (${ph})`).run(...names);
+}
+
+before(() => {
+  db = getDb(loadConfig().database);
+});
+
+beforeEach(() => {
+  cleanup();
+});
+
+after(() => {
+  cleanup();
+  closeDb();
+});
 
 function makeDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's7wf-'));
-  const dbFile = path.join(dir, 'test.db');
-  const db = new Database(dbFile);
-  db.pragma('journal_mode = MEMORY');
-  db.exec(`
-    CREATE TABLE workflow_definitions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name VARCHAR(128) NOT NULL,
-      description TEXT,
-      drama_id BIGINT,
-      steps_config TEXT NOT NULL,
-      trigger_type VARCHAR(32) DEFAULT 'manual',
-      is_active INTEGER DEFAULT 1,
-      created_by BIGINT,
-      created_at DATETIME,
-      updated_at DATETIME
-    );
-    CREATE TABLE workflow_instances (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      definition_id BIGINT NOT NULL,
-      drama_id BIGINT,
-      episode_id BIGINT,
-      status VARCHAR(16) DEFAULT 'pending',
-      current_step_index INTEGER DEFAULT 0,
-      context TEXT,
-      total_steps INTEGER DEFAULT 0,
-      completed_steps INTEGER DEFAULT 0,
-      started_at DATETIME,
-      completed_at DATETIME,
-      error_message TEXT,
-      created_by BIGINT,
-      created_at DATETIME,
-      updated_at DATETIME
-    );
-    CREATE TABLE workflow_step_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      instance_id BIGINT NOT NULL,
-      step_index INTEGER NOT NULL,
-      step_type VARCHAR(64) NOT NULL,
-      step_name VARCHAR(128),
-      status VARCHAR(16) DEFAULT 'pending',
-      input_data TEXT,
-      output_data TEXT,
-      started_at DATETIME,
-      completed_at DATETIME,
-      duration_ms BIGINT,
-      retry_count INTEGER DEFAULT 0,
-      error_message TEXT,
-      reviewer_id BIGINT,
-      reviewed_at DATETIME,
-      review_note TEXT
-    );
-  `);
-  return { db, dir };
+  // 真实 MySQL 单例连接，不创建临时库
+  return { db };
 }
 
 function makeLog() {
   return { info: () => {}, warn: () => {}, error: () => {} };
 }
-
-const workflowService = require('../src/services/workflowService');
 
 // ============================================================
 // 1. 工作流定义 CRUD
@@ -117,8 +92,7 @@ test('S7-WF-01: createDefinition + getDefinition — 创建并获取工作流定
     assert.strictEqual(steps.length, 2);
     assert.strictEqual(steps[0].type, 'generate_outline');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -129,14 +103,14 @@ test('S7-WF-02: listDefinitions — 按 drama_id 筛选（含通用模板 NULL�
     workflowService.createDefinition(db, { name: '项目专属', drama_id: 99000, steps_config: [{ type: 'auto_edit' }], created_by: 1 });
     workflowService.createDefinition(db, { name: '其他项目', drama_id: 88000, steps_config: [{ type: 'auto_edit' }], created_by: 1 });
 
-    // drama_id=99000 应返回 通用模板 + 项目专属
+    // drama_id=99000 应返回 通用模板(通用/NULL) + 项目专属；真实库可能含种子通用模板，故验证包含性
     const list = workflowService.listDefinitions(db, { drama_id: 99000 });
-    assert.strictEqual(list.length, 2);
-    const names = list.map((d) => d.name).sort();
-    assert.deepStrictEqual(names, ['通用模板', '项目专属']);
+    const names = list.map((d) => d.name);
+    assert.ok(names.includes('通用模板'), '应包含通用模板(NULL)');
+    assert.ok(names.includes('项目专属'), '应包含项目专属(99000)');
+    assert.ok(!names.includes('其他项目'), '不应包含其他项目(88000)');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -152,8 +126,7 @@ test('S7-WF-03: updateDefinition — 更新名称和步骤配置', () => {
     const steps = JSON.parse(updated.steps_config);
     assert.strictEqual(steps.length, 2);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -169,8 +142,7 @@ test('S7-WF-04: deleteDefinition — 删除定义', () => {
     const ok2 = workflowService.deleteDefinition(db, def.id);
     assert.strictEqual(ok2, false);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -207,8 +179,7 @@ test('S7-WF-05: createInstance — 创建实例并预创建步骤日志', () => 
     assert.strictEqual(steps[1].step_type, 'generate_characters');
     assert.strictEqual(steps[2].step_type, 'auto_edit');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -220,8 +191,7 @@ test('S7-WF-06: createInstance — 定义不存在时抛异常', () => {
       workflowService.createInstance(db, log, 99999, {});
     }, /工作流定义不存在/);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -241,12 +211,11 @@ test('S7-WF-07: listInstances — 按 status 筛选', () => {
 
     const all = workflowService.listInstances(db, { drama_id: 99000 });
     assert.strictEqual(all.length, 2);
-    const completed = workflowService.listInstances(db, { status: 'completed' });
+    const completed = workflowService.listInstances(db, { drama_id: 99000, status: 'completed' });
     assert.strictEqual(completed.length, 1);
     assert.strictEqual(completed[0].id, inst2.id);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -267,8 +236,7 @@ test('S7-WF-08: pauseInstance — 只有 running 状态可暂停', () => {
     const paused = workflowService.pauseInstance(db, inst.id);
     assert.strictEqual(paused.status, 'paused');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -283,8 +251,7 @@ test('S7-WF-09: cancelInstance — 已完成/已取消不可再取消', () => {
     // 再次取消报错
     assert.throws(() => workflowService.cancelInstance(db, inst.id), /已完成或已取消/);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -302,8 +269,7 @@ test('S7-WF-10: skipStep — 跳过后状态变为 skipped', () => {
     assert.strictEqual(steps[0].status, 'skipped');
     assert.strictEqual(steps[1].status, 'pending');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -329,8 +295,7 @@ test('S7-WF-11: retryStep — 重置步骤状态 + 回退 current_step_index', a
     assert.strictEqual(steps[0].retry_count, 1);
     assert.strictEqual(steps[0].error_message, null);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -349,8 +314,7 @@ test('S7-WF-12: reviewStep — 通过审核', () => {
     assert.strictEqual(steps[0].reviewer_id, 99);
     assert.strictEqual(steps[0].review_note, '审核通过');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -370,8 +334,7 @@ test('S7-WF-13: reviewStep — 驳回审核（实例标记失败）', () => {
     assert.strictEqual(instAfter.status, 'failed');
     assert.ok(instAfter.error_message.includes('审核未通过'));
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -386,8 +349,7 @@ test('S7-WF-14: reviewStep — 非审核状态不可审核', () => {
       workflowService.reviewStep(db, inst.id, 0, { approved: true });
     }, /不在审核状态/);
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -476,8 +438,7 @@ test('S7-WF-18: runInstance — 全步骤成功完成 → completed', async () =
     // 执行后应该不是 pending（要么 running/completed，要么 failed 因依赖未 mock）
     assert.notStrictEqual(runningInst.status, 'pending');
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -494,8 +455,7 @@ test('S7-WF-19: runInstance — 已完成的工作流不可再执行', async () 
       /工作流已完成/
     );
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -511,8 +471,7 @@ test('S7-WF-20: runInstance — 已取消的工作流不可执行', async () => 
       /工作流已取消/
     );
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });
 
@@ -536,7 +495,6 @@ test('S7-WF-21: resumeInstance — 只有 paused 状态可恢复', async () => {
       // 预期可能报错（依赖未 mock），关键是验证状态检查通过了
     }
   } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 数据由 before/after 统一清理（真实 MySQL）
   }
 });

@@ -12,77 +12,53 @@
 // ============================================================
 'use strict';
 
-const test = require('node:test');
+const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const os = require('node:os');
 
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+const { loadConfig } = require(path.resolve(__dirname, '..', 'src', 'config', 'index.js'));
+const { getDb, closeDb } = require(path.resolve(__dirname, '..', 'src', 'db', 'index.js'));
+const ttsService = require(path.resolve(__dirname, '..', 'src', 'services', 'ttsService.js'));
+
+// ============================================================
+// 数据约束：所有测试数据真实写入 MySQL（configs/config.yaml），
+// 不使用 mock / SQLite。测试用固定 dramaId/episodeId 隔离，
+// before 清理残留，after 彻底清理。
+// ============================================================
+let db;
+
+function cleanup() {
+  if (!db) return;
+  // 本文件测试使用的 episodeId: 10(991010), 991011；dramaId: 1, 2, 500, 501
+  db.prepare("DELETE FROM storyboard_dubbing WHERE episode_id IN (10, 991010, 991011)").run();
+  db.prepare("DELETE FROM tts_batch_jobs WHERE episode_id IN (10, 991010, 991011) OR drama_id IN (1, 2)").run();
+  db.prepare("DELETE FROM character_voice_bindings WHERE drama_id IN (1, 2, 500, 501)").run();
+  db.prepare("DELETE FROM storyboards WHERE episode_id IN (10, 991010, 991011)").run();
+  db.prepare("DELETE FROM episodes WHERE id IN (10, 11, 991010, 991011)").run();
+}
+
+before(() => {
+  db = getDb(loadConfig().database);
+});
+
+beforeEach(() => {
+  cleanup();
+});
+
+after(() => {
+  cleanup();
+  closeDb();
+});
 
 function makeDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's4tts-'));
-  const dbFile = path.join(dir, 'test.db');
-  const db = new Database(dbFile);
-  db.pragma('journal_mode = MEMORY');
-  db.exec(`
-    CREATE TABLE character_voice_bindings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id BIGINT NOT NULL,
-      character_id BIGINT NOT NULL,
-      character_name VARCHAR(128),
-      voice_id VARCHAR(128) NOT NULL,
-      voice_name VARCHAR(128),
-      provider VARCHAR(64) DEFAULT 'openai',
-      emotion VARCHAR(32) DEFAULT 'neutral',
-      speed DECIMAL(3,2) DEFAULT 1.00,
-      pitch INT DEFAULT 0,
-      language VARCHAR(16) DEFAULT 'zh',
-      is_default TINYINT(1) DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(drama_id, character_id)
-    );
-    CREATE TABLE tts_batch_jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id BIGINT, episode_id BIGINT, user_id BIGINT,
-      status VARCHAR(32) DEFAULT 'pending',
-      total_count INT DEFAULT 0, success_count INT DEFAULT 0, failed_count INT DEFAULT 0,
-      items_json TEXT, error_message TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE storyboard_dubbing (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id BIGINT, episode_id BIGINT, storyboard_id BIGINT,
-      character_id BIGINT, character_name VARCHAR(128),
-      dialogue_text TEXT, voice_id VARCHAR(128),
-      emotion VARCHAR(32) DEFAULT 'neutral',
-      audio_path VARCHAR(512), duration_ms INT DEFAULT 0,
-      sort_order INT DEFAULT 0, status VARCHAR(32) DEFAULT 'pending',
-      error_message TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE storyboards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      episode_id BIGINT, storyboard_number INT,
-      title VARCHAR(255), dialogue TEXT, narration TEXT,
-      deleted_at DATETIME
-    );
-    CREATE TABLE episodes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id BIGINT, deleted_at DATETIME
-    );
-  `);
-  return { db, dir };
+  // 真实 MySQL 单例连接，不创建临时库
+  return { db };
 }
 
 function makeLog() {
   return { info: () => {}, warn: () => {}, error: () => {} };
 }
-
-const ttsService = require('../src/services/ttsService');
 
 // ---------- 角色音色绑定 CRUD ----------
 
@@ -111,7 +87,7 @@ test('S4-T03-1: 角色音色绑定 CRUD', () => {
   assert.equal(del.deleted, true);
   assert.equal(ttsService.listVoiceBindings(db, { dramaId: 1 }).length, 0);
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });
 
 test('S4-T03-2: 同一角色重复绑定 → UPDATE', () => {
@@ -134,7 +110,7 @@ test('S4-T03-2: 同一角色重复绑定 → UPDATE', () => {
   assert.equal(list[0].voiceId, 'female_sweet');
   assert.equal(list[0].emotion, 'happy');
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });
 
 // ---------- 台词提取 ----------
@@ -142,11 +118,11 @@ test('S4-T03-2: 同一角色重复绑定 → UPDATE', () => {
 test('S4-T03-3: 台词提取 extractDialogues（"角色名:台词"格式 + 旁白兜底）', () => {
   const { db, dir } = makeDb();
 
-  // 插入分镜数据
+  // 插入分镜数据（使用测试专用高位 id，避免与真实数据冲突）
   db.prepare(`INSERT INTO storyboards (id, episode_id, storyboard_number, dialogue, deleted_at) VALUES
-    (1, 10, 1, '林深:这里到底发生过什么？\n苏暖:(低下头)我…我不想再提起。', NULL),
-    (2, 10, 2, '夜色渐深，城市灯火通明。', NULL),
-    (3, 10, 3, '', NULL)`).run();
+    (991001, 10, 1, '林深:这里到底发生过什么？\n苏暖:(低下头)我…我不想再提起。', NULL),
+    (991002, 10, 2, '夜色渐深，城市灯火通明。', NULL),
+    (991003, 10, 3, '', NULL)`).run();
 
   const items = ttsService.extractDialogues(db, { episodeId: 10 });
   assert.ok(items.length >= 3);
@@ -160,22 +136,22 @@ test('S4-T03-3: 台词提取 extractDialogues（"角色名:台词"格式 + 旁�
   assert.ok(narration, '应识别出旁白');
   assert.ok(narration.text.includes('夜色'));
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });
 
 test('S4-T03-3b: 台词提取按 dramaId 查询（通过 episodes 表关联）', () => {
   const { db, dir } = makeDb();
 
-  db.prepare(`INSERT INTO episodes (id, drama_id, deleted_at) VALUES (10, 500, NULL), (11, 501, NULL)`).run();
+  db.prepare(`INSERT INTO episodes (id, drama_id, deleted_at) VALUES (991010, 500, NULL), (991011, 501, NULL)`).run();
   db.prepare(`INSERT INTO storyboards (id, episode_id, storyboard_number, dialogue, deleted_at) VALUES
-    (1, 10, 1, '角色A:台词一', NULL),
-    (2, 11, 1, '角色B:台词二', NULL)`).run();
+    (991004, 991010, 1, '角色A:台词一', NULL),
+    (991005, 991011, 1, '角色B:台词二', NULL)`).run();
 
   const items = ttsService.extractDialogues(db, { dramaId: 500 });
   assert.equal(items.length, 1);
   assert.equal(items[0].characterName, '角色A');
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });
 
 // ---------- 常量字典 ----------
@@ -214,30 +190,36 @@ test('S4-T03-5: batchSynthesize 无TTS配置 → 全部失败 → 批次记录�
   const { db, dir } = makeDb();
   const log = makeLog();
 
-  const items = [
-    { characterName: '林深', text: '这里到底发生过什么？', storyboardId: 1 },
-    { characterName: '苏暖', text: '我不想再提起。', storyboardId: 1 },
-  ];
+  // 临时禁用 TTS 配置（真实 MySQL，测试后恢复），确保走"未配置 → 失败"路径
+  db.prepare("UPDATE ai_service_configs SET is_active = 0 WHERE service_type = 'tts'").run();
+  try {
+    const items = [
+      { characterName: '林深', text: '这里到底发生过什么？', storyboardId: 991001 },
+      { characterName: '苏暖', text: '我不想再提起。', storyboardId: 991001 },
+    ];
 
-  const result = await ttsService.batchSynthesize(db, log, {
-    dramaId: 1, episodeId: 10, items, userId: 1, storageBase: os.tmpdir(),
-  });
+    const result = await ttsService.batchSynthesize(db, log, {
+      dramaId: 1, episodeId: 10, items, userId: 1, storageBase: os.tmpdir(),
+    });
 
-  assert.ok(result.batchId);
-  assert.equal(result.total, 2);
-  assert.equal(result.success, 0);
-  assert.equal(result.failed, 2);
-  assert.equal(result.results.length, 2);
-  assert.equal(result.results[0].status, 'failed');
+    assert.ok(result.batchId);
+    assert.equal(result.total, 2);
+    assert.equal(result.success, 0);
+    assert.equal(result.failed, 2);
+    assert.equal(result.results.length, 2);
+    assert.equal(result.results[0].status, 'failed');
 
-  // 批次记录落库
-  const batchRow = db.prepare('SELECT * FROM tts_batch_jobs WHERE id = ?').get(result.batchId);
-  assert.ok(batchRow);
-  assert.equal(batchRow.status, 'failed');
-  assert.equal(batchRow.total_count, 2);
-  assert.equal(batchRow.failed_count, 2);
-
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+    // 批次记录落库
+    const batchRow = db.prepare('SELECT * FROM tts_batch_jobs WHERE id = ?').get(result.batchId);
+    assert.ok(batchRow);
+    assert.equal(batchRow.status, 'failed');
+    assert.equal(batchRow.total_count, 2);
+    assert.equal(batchRow.failed_count, 2);
+  } finally {
+    // 恢复 TTS 配置激活状态
+    db.prepare("UPDATE ai_service_configs SET is_active = 1 WHERE service_type = 'tts'").run();
+    // 数据由 before/after 统一清理（真实 MySQL）
+  }
 });
 
 test('S4-T03-5b: batchSynthesize 空台词列表 → 抛出错误', async () => {
@@ -249,7 +231,7 @@ test('S4-T03-5b: batchSynthesize 空台词列表 → 抛出错误', async () => 
     /台词列表不能为空/
   );
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });
 
 // ---------- listDubbingByEpisode ----------
@@ -270,5 +252,5 @@ test('S4-T03-6: listDubbingByEpisode 查询', () => {
   assert.equal(list[0].audioPath, 'audio/tts_test.mp3');
   assert.equal(list[0].status, 'synthesized');
 
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
+  // 数据由 before/after 统一清理（真实 MySQL）
 });

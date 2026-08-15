@@ -9,41 +9,26 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
-const Database = require('better-sqlite3');
 
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
+
+/**
+ * 使用真实 MySQL 数据库（configs/config.yaml），测试数据以高位 ID 隔离。
+ * 不使用 mock、不使用 SQLite。
+ */
 function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-
-  db.exec(`
-    CREATE TABLE dramas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT,
-      style TEXT,
-      created_by INTEGER,
-      deleted_at TEXT
-    );
-    CREATE TABLE style_configs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER NOT NULL UNIQUE,
-      global_style TEXT NOT NULL DEFAULT 'anime',
-      color_palette TEXT,
-      line_weight TEXT NOT NULL DEFAULT 'medium',
-      shading_style TEXT NOT NULL DEFAULT 'cel-shading',
-      composition_rule TEXT NOT NULL DEFAULT 'rule-of-thirds',
-      character_overrides TEXT,
-      scene_overrides TEXT,
-      negative_prompt_suffix TEXT,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_by INTEGER,
-      created_at TEXT,
-      updated_at TEXT
-    );
-    INSERT INTO dramas (id, title, style, created_by) VALUES
-      (99001, '测试短剧A', 'anime', 99000),
-      (99002, '测试短剧B', 'realistic', 99000),
-      (99003, '测试短剧C', NULL, 99000);
-  `);
+  const db = getDb(loadConfig().database);
+  // 清理本测试可能残留的数据（高位 ID 区间）
+  db.prepare('DELETE FROM style_configs WHERE drama_id >= 99000').run();
+  db.prepare('DELETE FROM dramas WHERE id >= 99000').run();
+  // 种子数据（与真实数据 id 区间隔离）
+  db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
+    .run(99001, '测试短剧A', 'anime', 99000);
+  db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
+    .run(99002, '测试短剧B', 'realistic', 99000);
+  db.prepare('INSERT INTO dramas (id, title, style, created_by) VALUES (?, ?, ?, ?)')
+    .run(99003, '测试短剧C', null, 99000);
   return db;
 }
 
@@ -53,7 +38,7 @@ describe('S8-T01: 风格配置系统 CRUD', () => {
   let db;
 
   before(() => { db = createTestDb(); });
-  after(() => { db.close(); });
+  after(() => { closeDb(); });
 
   test('1. 创建风格配置 — 正常流程', () => {
     const config = styleService.createStyleConfig(db, {
@@ -160,7 +145,7 @@ describe('S8-T02: 风格统一引擎 — 提示词注入', () => {
       created_by: 99000,
     });
   });
-  after(() => { db.close(); });
+  after(() => { closeDb(); });
 
   test('13. injectStyleToPrompt — 无风格配置时返回原始 prompt', () => {
     const result = styleService.injectStyleToPrompt(db, 99999, 'a girl standing');

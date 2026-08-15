@@ -9,11 +9,16 @@
  *   - listConsistencyLogs: 校验历史查询
  *   - getCharacterConsistencyStats: 角色一致性统计
  *
- * 使用 SQLite in-memory 数据库 + mock AI 服务，确保测试环境独立。
+ * 说明：所有测试数据真实写入 MySQL（configs/config.yaml），
+ *       不使用 mock 数据、不使用 SQLite。测试数据使用高位 ID
+ *       （999xxx）隔离真实数据，beforeEach 清理。aiClient 为外部
+ *       AI 依赖 stub（仅拦截外部 AI API 调用）。
  */
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
 
 // ---- mock aiClient ----
 const aiClient = require('../src/services/aiClient');
@@ -39,86 +44,20 @@ const mockLog = {
   debug() {},
 };
 
-// ---- 创建内存 SQLite 数据库 ----
+// ---- 创建真实 MySQL 测试库（清理高位测试数据） ----
 function createTestDb() {
-  const db = new Database(':memory:');
-  db.exec(`
-    CREATE TABLE characters (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER DEFAULT 0,
-      name TEXT NOT NULL DEFAULT '',
-      role TEXT,
-      description TEXT,
-      personality TEXT,
-      appearance TEXT,
-      image_url TEXT,
-      local_path TEXT,
-      ref_image TEXT,
-      four_view_image_url TEXT,
-      identity_anchors TEXT,
-      face_embedding TEXT,
-      embedding_model TEXT,
-      embedding_generated_at TEXT,
-      consistency_threshold REAL DEFAULT 0.85,
-      sort_order INTEGER DEFAULT 0,
-      deleted_at TEXT,
-      created_at TEXT,
-      updated_at TEXT
-    );
-    CREATE TABLE character_libraries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL DEFAULT '',
-      image_url TEXT,
-      local_path TEXT,
-      ref_image TEXT,
-      four_view_image_url TEXT,
-      identity_anchors TEXT,
-      appearance TEXT,
-      face_embedding TEXT,
-      embedding_model TEXT,
-      embedding_generated_at TEXT,
-      consistency_threshold REAL DEFAULT 0.85,
-      deleted_at TEXT,
-      created_at TEXT,
-      updated_at TEXT
-    );
-    CREATE TABLE character_embeddings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      character_id INTEGER NOT NULL,
-      character_type TEXT DEFAULT 'project',
-      drama_id INTEGER,
-      view_angle TEXT DEFAULT 'front',
-      image_url TEXT,
-      embedding TEXT NOT NULL,
-      embedding_model TEXT,
-      embedding_dim INTEGER,
-      created_at TEXT,
-      updated_at TEXT
-    );
-    CREATE TABLE consistency_check_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      check_id TEXT NOT NULL UNIQUE,
-      drama_id INTEGER,
-      storyboard_id INTEGER,
-      character_id INTEGER,
-      generated_image_url TEXT,
-      reference_image_url TEXT,
-      similarity_score REAL NOT NULL DEFAULT 0,
-      threshold REAL DEFAULT 0.85,
-      passed INTEGER DEFAULT 0,
-      check_method TEXT DEFAULT 'cosine_embedding',
-      detail_json TEXT,
-      retry_count INTEGER DEFAULT 0,
-      created_at TEXT
-    );
-  `);
+  const db = getDb(loadConfig().database);
+  db.prepare('DELETE FROM consistency_check_logs WHERE drama_id >= 999000 OR storyboard_id >= 999000').run();
+  db.prepare('DELETE FROM character_embeddings WHERE drama_id >= 999000').run();
+  db.prepare('DELETE FROM characters WHERE drama_id >= 999000').run();
+  db.prepare("DELETE FROM character_libraries WHERE name LIKE 's2t08-%'").run();
   return db;
 }
 
 function insertTestCharacter(db, overrides = {}) {
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const defaults = {
-    drama_id: 1,
+    drama_id: 999001,
     name: '测试角色',
     role: 'protagonist',
     appearance: '黑色长发，蓝色眼睛，身穿白色长裙',
@@ -207,11 +146,11 @@ describe('consistencyService - 工具函数', () => {
 describe('consistencyService - S2-T07 generateCharacterEmbedding', () => {
   let db;
   before(() => { db = createTestDb(); });
-  after(() => { db.close(); restoreAi(); });
+  after(() => { closeDb(); restoreAi(); });
 
   it('角色不存在时抛出错误', async () => {
     await assert.rejects(
-      () => consistencyService.generateCharacterEmbedding(db, mockLog, 99999, { characterType: 'project' }),
+      () => consistencyService.generateCharacterEmbedding(db, mockLog, 999999, { characterType: 'project' }),
       /角色不存在/
     );
   });
@@ -279,7 +218,7 @@ describe('consistencyService - S2-T07 generateCharacterEmbedding', () => {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const ins = db.prepare(
       'INSERT INTO character_libraries (name, image_url, identity_anchors, appearance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('库角色', 'https://example.com/lib_char.png', JSON.stringify({ hair: '短发' }), '短发，圆脸', now, now);
+    ).run('s2t08-库角色', 'https://example.com/lib_char.png', JSON.stringify({ hair: '短发' }), '短发，圆脸', now, now);
     const libCharId = ins.lastInsertRowid;
 
     mockAi(JSON.stringify(makeVector(256, (i) => i / 256)));
@@ -300,24 +239,24 @@ describe('consistencyService - S2-T07 generateCharacterEmbedding', () => {
 describe('consistencyService - S2-T07 generateEmbeddingsForDrama', () => {
   let db;
   before(() => { db = createTestDb(); });
-  after(() => { db.close(); restoreAi(); });
+  after(() => { closeDb(); restoreAi(); });
 
   it('批量为剧中角色生成 embedding', async () => {
-    insertTestCharacter(db, { name: '角色A', drama_id: 100 });
-    insertTestCharacter(db, { name: '角色B', drama_id: 100 });
-    insertTestCharacter(db, { name: '其他剧角色', drama_id: 200 });
+    insertTestCharacter(db, { name: '角色A', drama_id: 999100 });
+    insertTestCharacter(db, { name: '角色B', drama_id: 999100 });
+    insertTestCharacter(db, { name: '其他剧角色', drama_id: 999200 });
 
     mockAi(JSON.stringify(makeVector(256, (i) => Math.cos(i))));
-    const result = await consistencyService.generateEmbeddingsForDrama(db, mockLog, 100);
+    const result = await consistencyService.generateEmbeddingsForDrama(db, mockLog, 999100);
 
-    assert.equal(result.dramaId, 100);
+    assert.equal(result.dramaId, 999100);
     assert.equal(result.total, 2);
     assert.equal(result.results.length, 2);
     assert.ok(result.results.every((r) => r.success));
   });
 
   it('剧中无角色时返回空结果', async () => {
-    const result = await consistencyService.generateEmbeddingsForDrama(db, mockLog, 999);
+    const result = await consistencyService.generateEmbeddingsForDrama(db, mockLog, 999999);
     assert.equal(result.total, 0);
     assert.equal(result.results.length, 0);
   });
@@ -331,11 +270,13 @@ describe('consistencyService - S2-T08 checkConsistency', () => {
   let charId;
 
   before(() => { db = createTestDb(); });
-  after(() => { db.close(); restoreAi(); });
+  after(() => { closeDb(); restoreAi(); });
 
   beforeEach(async () => {
-    // 每个测试前重新插入角色并生成 embedding
-    db.exec('DELETE FROM characters; DELETE FROM character_embeddings; DELETE FROM consistency_check_logs;');
+    // 每个测试前重新插入角色并生成 embedding（清理本测试区间数据）
+    db.prepare('DELETE FROM consistency_check_logs WHERE drama_id >= 999000').run();
+    db.prepare('DELETE FROM character_embeddings WHERE drama_id >= 999000').run();
+    db.prepare('DELETE FROM characters WHERE drama_id >= 999000').run();
     charId = insertTestCharacter(db, { name: '一致性测试角色', consistency_threshold: 0.8 });
 
     // 为角色生成 embedding（使用 mock）
@@ -465,20 +406,20 @@ describe('consistencyService - S2-T08 checkConsistency', () => {
     const similarEmbedding = makeVector(256, (i) => Math.sin(i * 0.1));
     mockAi(JSON.stringify(similarEmbedding));
 
-    const before = db.prepare('SELECT COUNT(*) as c FROM consistency_check_logs').get().c;
+    const before = db.prepare('SELECT COUNT(*) as c FROM consistency_check_logs WHERE character_id = ?').get(charId).c;
     await consistencyService.checkConsistency(db, mockLog, {
       characterId: charId,
       generatedImageUrl: 'https://example.com/gen_log.png',
-      storyboardId: 42,
-      dramaId: 1,
+      storyboardId: 999042,
+      dramaId: 999001,
     });
-    const after = db.prepare('SELECT COUNT(*) as c FROM consistency_check_logs').get().c;
+    const after = db.prepare('SELECT COUNT(*) as c FROM consistency_check_logs WHERE character_id = ?').get(charId).c;
 
     assert.equal(after, before + 1);
 
-    const row = db.prepare('SELECT * FROM consistency_check_logs WHERE storyboard_id = 42').get();
+    const row = db.prepare('SELECT * FROM consistency_check_logs WHERE storyboard_id = 999042').get();
     assert.ok(row);
-    assert.equal(row.drama_id, 1);
+    assert.equal(row.drama_id, 999001);
     assert.equal(row.character_id, charId);
     assert.ok(row.detail_json);
   });
@@ -493,18 +434,19 @@ describe('consistencyService - 校验历史与统计', () => {
 
   before(() => {
     db = createTestDb();
-    charId = insertTestCharacter(db, { name: '统计角色', drama_id: 50 });
+    charId = insertTestCharacter(db, { name: '统计角色', drama_id: 999050 });
     // 手动插入校验日志
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const ts = Date.now();
     const insertLog = db.prepare(
       `INSERT INTO consistency_check_logs (check_id, drama_id, storyboard_id, character_id, generated_image_url, reference_image_url, similarity_score, threshold, passed, check_method, detail_json, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    insertLog.run('cchk_001', 50, 101, charId, 'gen1.png', 'ref1.png', 0.95, 0.85, 1, 'cosine_embedding', '{"score":0.95}', now);
-    insertLog.run('cchk_002', 50, 102, charId, 'gen2.png', 'ref2.png', 0.78, 0.85, 0, 'visual_llm', '{"score":0.78}', now);
-    insertLog.run('cchk_003', 50, 103, charId, 'gen3.png', 'ref3.png', 0.90, 0.85, 1, 'cosine_embedding', '{"score":0.90}', now);
+    insertLog.run(`s2t08_${ts}_001`, 999050, 101, charId, 'gen1.png', 'ref1.png', 0.95, 0.85, 1, 'cosine_embedding', '{"score":0.95}', now);
+    insertLog.run(`s2t08_${ts}_002`, 999050, 102, charId, 'gen2.png', 'ref2.png', 0.78, 0.85, 0, 'visual_llm', '{"score":0.78}', now);
+    insertLog.run(`s2t08_${ts}_003`, 999050, 103, charId, 'gen3.png', 'ref3.png', 0.90, 0.85, 1, 'cosine_embedding', '{"score":0.90}', now);
   });
-  after(() => { db.close(); });
+  after(() => { closeDb(); });
 
   describe('listConsistencyLogs', () => {
     it('按 characterId 查询', () => {
@@ -515,7 +457,7 @@ describe('consistencyService - 校验历史与统计', () => {
     });
 
     it('按 dramaId 查询', () => {
-      const logs = consistencyService.listConsistencyLogs(db, { dramaId: 50 });
+      const logs = consistencyService.listConsistencyLogs(db, { dramaId: 999050 });
       assert.equal(logs.length, 3);
     });
 
@@ -562,7 +504,7 @@ describe('consistencyService - 校验历史与统计', () => {
     });
 
     it('无校验记录时返回空统计', () => {
-      const stats = consistencyService.getCharacterConsistencyStats(db, 99999);
+      const stats = consistencyService.getCharacterConsistencyStats(db, 999999);
       assert.equal(stats.totalChecks, 0);
       assert.equal(stats.avgScore, 0);
       assert.equal(stats.passRate, 0);
@@ -589,7 +531,7 @@ describe('consistencyService - getCharacterEmbedding', () => {
     db.prepare('UPDATE characters SET face_embedding = ?, embedding_model = ?, embedding_generated_at = ?, consistency_threshold = ? WHERE id = ?')
       .run(JSON.stringify(makeVector(128, (i) => i / 128)), 'test-model', now, 0.9, charId);
   });
-  after(() => { db.close(); });
+  after(() => { closeDb(); });
 
   it('返回角色的 embedding 信息', () => {
     const emb = consistencyService.getCharacterEmbedding(db, charId, 'project');
@@ -601,14 +543,14 @@ describe('consistencyService - getCharacterEmbedding', () => {
   });
 
   it('角色无 embedding 时返回 null', () => {
-    const emb = consistencyService.getCharacterEmbedding(db, 99999, 'project');
+    const emb = consistencyService.getCharacterEmbedding(db, 999999, 'project');
     assert.equal(emb, null);
   });
 
   it('支持 library 类型查询', () => {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const ins = db.prepare('INSERT INTO character_libraries (name, image_url, face_embedding, embedding_model, embedding_generated_at, consistency_threshold, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run('库角色2', 'lib.png', JSON.stringify(makeVector(64, (i) => i)), 'lib-model', now, 0.8, now, now);
+      .run('s2t08-库角色2', 'lib.png', JSON.stringify(makeVector(64, (i) => i)), 'lib-model', now, 0.8, now, now);
     const emb = consistencyService.getCharacterEmbedding(db, ins.lastInsertRowid, 'library');
     assert.ok(emb);
     assert.equal(emb.embedding.length, 64);

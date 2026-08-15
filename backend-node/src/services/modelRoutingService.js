@@ -312,9 +312,9 @@ function getModelStats(db, params = {}) {
     SUM(cost) as total_cost,
     AVG(quality_score) as avg_quality
     FROM ai_model_call_logs ${where}
-    GROUP BY model, service_type ${where ? 'HAVING ' + w.join(' AND ') : ''}
+    GROUP BY model, service_type, provider ${where ? 'HAVING ' + w.join(' AND ') : ''}
     ORDER BY total_calls DESC`;
-  // SQLite 不支持 HAVING 引用 WHERE 条件变量，简化处理
+  // MySQL only_full_group_by 要求 SELECT 的非聚合列必须出现在 GROUP BY 中
   const simpleSql = `SELECT
     model, service_type, provider,
     COUNT(*) as total_calls,
@@ -325,7 +325,7 @@ function getModelStats(db, params = {}) {
     SUM(cost) as total_cost,
     AVG(quality_score) as avg_quality
     FROM ai_model_call_logs ${where}
-    GROUP BY model, service_type
+    GROUP BY model, service_type, provider
     ORDER BY total_calls DESC`;
   const rows = p.length ? db.prepare(simpleSql).all(...p) : db.prepare(simpleSql).all();
   return rows.map(r => ({

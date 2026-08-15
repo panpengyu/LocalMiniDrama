@@ -8,33 +8,27 @@
 //   4) polishFramePrompt 提示词润色
 //   5) listGenerations/getGeneration 查询
 //   6) 分镜字典常量校验
+//
+// 说明：所有测试数据真实写入 MySQL（configs/config.yaml），
+//       不使用 mock 数据、不使用 SQLite。测试 drama_id 使用高位
+//       ID 隔离，beforeEach 清理。AI 客户端为外部依赖 stub（仅
+//       拦截外部 AI API 调用，不产生任何测试数据）。
 // ============================================================
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
 
-function makeDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's4sb-'));
-  const dbFile = path.join(dir, 'test.db');
-  const db = new Database(dbFile);
-  db.pragma('journal_mode = MEMORY');
-  db.exec(`
-    CREATE TABLE ai_storyboard_generations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      generation_id VARCHAR(64) NOT NULL,
-      drama_id BIGINT, episode_id BIGINT, user_id BIGINT,
-      script_text TEXT, style VARCHAR(32), frame_count INT,
-      status VARCHAR(32), result_json TEXT,
-      created_at DATETIME, updated_at DATETIME
-    );
-  `);
-  return { db, dir };
+function db() {
+  return getDb(loadConfig().database);
+}
+
+// 清理本测试产生的数据（高位 drama_id 区间）
+function cleanup() {
+  db().prepare('DELETE FROM ai_storyboard_generations WHERE drama_id IN (99100, 99101, 99200)').run();
 }
 
 function makeLog() {
@@ -47,9 +41,8 @@ function makeLog() {
   };
 }
 
-// Mock aiClient
+// AI 客户端外部依赖 stub（仅拦截外部 AI API 调用）
 let mockResponse = null;
-const originalRequire = require;
 const aiClientStub = {
   generateText: async () => mockResponse || '[]',
 };
@@ -57,8 +50,11 @@ require.cache[require.resolve('../src/services/aiClient')] = { exports: aiClient
 
 const sbGenService = require('../src/services/storyboardGenService');
 
+test.beforeEach(cleanup);
+test.after(() => closeDb());
+
 test('S4-T01-1: AI正常返回分镜数组 → 解析+规范化+落库', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   mockResponse = JSON.stringify([
     { frame_number: 1, shot_type: 'close_up', camera_movement: 'push', composition: 'rule_of_thirds',
@@ -69,9 +65,9 @@ test('S4-T01-1: AI正常返回分镜数组 → 解析+规范化+落库', async (
       prompt: 'comic panel, wide shot, epic', characters: [] },
   ]);
 
-  const result = await sbGenService.generate(db, log, {
+  const result = await sbGenService.generate(d, log, {
     scriptText: '林深推开门，看到满地碎片，他惊恐地后退。',
-    dramaId: 100, count: 2, style: 'vertical_916', userId: 1,
+    dramaId: 99100, count: 2, style: 'vertical_916', userId: 1,
   });
 
   assert.equal(result.count, 2);
@@ -82,24 +78,22 @@ test('S4-T01-1: AI正常返回分镜数组 → 解析+规范化+落库', async (
   assert.equal(result.frames[1].emotion_label, '史诗');
   assert.ok(result.generationId);
 
-  // 验证落库
-  const rows = db.prepare('SELECT * FROM ai_storyboard_generations').all();
+  // 验证落库（真实 MySQL）
+  const rows = d.prepare('SELECT * FROM ai_storyboard_generations WHERE drama_id = ?').all(99100);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].frame_count, 2);
   assert.equal(rows[0].status, 'completed');
-
-  db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T01-2: AI返回空 → 兜底分镜生成', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   mockResponse = '';
 
-  const result = await sbGenService.generate(db, log, {
+  const result = await sbGenService.generate(d, log, {
     scriptText: '一段没有标点的剧本文字',
     count: 5,
+    dramaId: 99100,
   });
 
   assert.ok(result.frames.length > 0);
@@ -107,63 +101,51 @@ test('S4-T01-2: AI返回空 → 兜底分镜生成', async () => {
   assert.equal(result.frames[0].frame_number, 1);
   assert.ok(result.frames[0].prompt);
   assert.ok(result.frames[0].visual_description);
-
-  db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T01-3: AI返回 {frames:[...]} 包装结构', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   mockResponse = JSON.stringify({ frames: [
     { frame_number: 1, shot_type: 'medium', visual_description: '测试', prompt: 'test' }
   ]});
 
-  const result = await sbGenService.generate(db, log, {
-    scriptText: '测试剧本', count: 1,
+  const result = await sbGenService.generate(d, log, {
+    scriptText: '测试剧本', count: 1, dramaId: 99101,
   });
 
   assert.equal(result.frames.length, 1);
   assert.equal(result.frames[0].shot_type, 'medium');
-
-  db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T01-4: polishFramePrompt 提示词润色', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   mockResponse = 'comic panel, masterpiece, best quality, close_up shot, tense atmosphere, detailed scene';
 
-  const result = await sbGenService.polishFramePrompt(db, log, {
+  const result = await sbGenService.polishFramePrompt(d, log, {
     frame: { shot_type: 'close_up', emotion: 'tense', visual_description: '主角惊恐' },
     style: 'vertical_916',
   });
 
   assert.ok(result.prompt);
   assert.ok(result.prompt.includes('comic panel'));
-
-  db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T01-5: listGenerations/getGeneration 查询', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   mockResponse = JSON.stringify([{ frame_number: 1, shot_type: 'medium' }]);
 
-  await sbGenService.generate(db, log, { scriptText: '测试', count: 1, dramaId: 200, userId: 5 });
+  await sbGenService.generate(d, log, { scriptText: '测试', count: 1, dramaId: 99200, userId: 5 });
 
-  const list = sbGenService.listGenerations(db, { dramaId: 200 });
+  const list = sbGenService.listGenerations(d, { dramaId: 99200 });
   assert.ok(list.length >= 1);
-  assert.equal(list[0].dramaId, 200);
+  assert.equal(list[0].dramaId, 99200);
 
-  const detail = sbGenService.getGeneration(db, list[0].generationId);
+  const detail = sbGenService.getGeneration(d, list[0].generationId);
   assert.ok(detail);
   assert.equal(detail.frames.length, 1);
-
-  db.close();
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T01-6: 分镜字典常量校验', () => {

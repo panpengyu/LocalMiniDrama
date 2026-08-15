@@ -7,45 +7,24 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
-const Database = require('better-sqlite3');
 
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
+
+/**
+ * 使用真实 MySQL 数据库（configs/config.yaml），测试数据以高位 ID 隔离。
+ * 不使用 mock、不使用 SQLite。
+ */
 function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-
-  db.exec(`
-    CREATE TABLE dramas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT,
-      created_by INTEGER,
-      deleted_at TEXT
-    );
-    CREATE TABLE bgm_tracks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      drama_id INTEGER,
-      episode_id INTEGER,
-      title TEXT NOT NULL,
-      mood TEXT NOT NULL DEFAULT 'neutral',
-      genre TEXT,
-      duration_sec INTEGER,
-      audio_url TEXT,
-      provider TEXT,
-      model TEXT,
-      prompt TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      progress INTEGER NOT NULL DEFAULT 0,
-      error_message TEXT,
-      tempo_bpm INTEGER,
-      instruments TEXT,
-      created_by INTEGER,
-      created_at TEXT,
-      updated_at TEXT
-    );
-    INSERT INTO dramas (id, title, created_by, deleted_at) VALUES
-      (99001, '测试短剧A', 99000, NULL),
-      (99002, '测试短剧B', 99000, NULL);
-  `);
-
+  const db = getDb(loadConfig().database);
+  // 清理本测试可能残留的数据（高位 ID 区间）
+  db.prepare('DELETE FROM bgm_tracks WHERE drama_id >= 99000').run();
+  db.prepare('DELETE FROM dramas WHERE id >= 99000').run();
+  // 种子数据（与真实数据 id 区间隔离）
+  db.prepare('INSERT INTO dramas (id, title, created_by, deleted_at) VALUES (?, ?, ?, ?)')
+    .run(99001, '测试短剧A', 99000, null);
+  db.prepare('INSERT INTO dramas (id, title, created_by, deleted_at) VALUES (?, ?, ?, ?)')
+    .run(99002, '测试短剧B', 99000, null);
   return db;
 }
 
@@ -55,7 +34,7 @@ describe('S8-T04: BGM生成接口', () => {
   let db;
 
   before(() => { db = createTestDb(); });
-  after(() => { db.close(); });
+  after(() => { closeDb(); });
 
   test('1. buildBgmPrompt — 构建生成提示词', () => {
     const prompt = bgmService.buildBgmPrompt('happy', { genre: 'orchestral', tempo_bpm: 120, instruments: ['piano', 'strings'] });

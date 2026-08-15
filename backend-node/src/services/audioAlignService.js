@@ -180,14 +180,29 @@ function alignStoryboard(db, log, params = {}) {
   db.prepare('UPDATE storyboards SET duration = ? WHERE id = ?')
     .run(adjustedDurationSec, Number(storyboard_id));
 
+  // 真实库 audio_align_logs.drama_id/episode_id 为 NOT NULL：
+  // 缺省时从 storyboards → episodes 反查归属，仍无则兜底 0
+  let logDramaId = params.drama_id || 0;
+  let logEpisodeId = params.episode_id || 0;
+  if (logDramaId === 0 || logEpisodeId === 0) {
+    const sbRow = db.prepare('SELECT episode_id FROM storyboards WHERE id = ?').get(Number(storyboard_id));
+    if (sbRow) {
+      if (sbRow.episode_id) logEpisodeId = sbRow.episode_id;
+      if (logEpisodeId) {
+        const ep = db.prepare('SELECT drama_id FROM episodes WHERE id = ?').get(logEpisodeId);
+        if (ep) logDramaId = ep.drama_id || 0;
+      }
+    }
+  }
+
   db.prepare(
     `INSERT INTO audio_align_logs
       (drama_id, episode_id, storyboard_id, audio_url, audio_duration_ms,
        original_duration_ms, adjusted_duration_ms, alignment_strategy, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    params.drama_id || null,
-    params.episode_id || null,
+    logDramaId,
+    logEpisodeId,
     Number(storyboard_id),
     audio_url || null,
     audioDurationMs || null,

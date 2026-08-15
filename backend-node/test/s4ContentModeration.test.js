@@ -12,46 +12,26 @@
 //   8) 审核记录落库+查询
 //   9) 人工复审
 //  10) 批量审核
+//
+// 说明：所有测试数据真实写入 MySQL（configs/config.yaml），
+//       不使用 mock 数据、不使用 SQLite。测试 user_id 使用高位
+//       ID（996xxx）隔离真实日志数据，beforeEach 清理。
 // ============================================================
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+const { getDb, closeDb } = require('../src/db');
+const { loadConfig } = require('../src/config');
 
-function makeDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 's4mod-'));
-  const dbFile = path.join(dir, 'test.db');
-  const db = new Database(dbFile);
-  db.pragma('journal_mode = MEMORY');
-  db.exec(`
-    CREATE TABLE content_moderation_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id BIGINT, drama_id BIGINT,
-      resource_type VARCHAR(32), resource_id BIGINT, resource_url VARCHAR(1024),
-      content_snapshot TEXT, provider VARCHAR(64), verdict VARCHAR(16),
-      risk_label VARCHAR(64), risk_score DECIMAL(5,2), confidence DECIMAL(5,2),
-      detail_json TEXT, mode VARCHAR(16), is_blocked TINYINT(1) DEFAULT 0,
-      reviewed_by BIGINT, reviewed_at DATETIME, review_note TEXT,
-      created_at DATETIME, updated_at DATETIME
-    );
-    CREATE TABLE content_moderation_rules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      mode VARCHAR(16), category VARCHAR(32), threshold DECIMAL(5,2),
-      action VARCHAR(16), is_active TINYINT(1) DEFAULT 1,
-      created_at DATETIME, updated_at DATETIME,
-      UNIQUE(mode, category)
-    );
-    INSERT INTO content_moderation_rules (mode, category, threshold, action) VALUES
-      ('strict','porn',30,'block'), ('strict','violence',40,'block'),
-      ('standard','porn',60,'block'), ('standard','violence',70,'block'),
-      ('loose','porn',80,'block'), ('loose','violence',85,'block');
-  `);
-  return { db, dir };
+function db() {
+  return getDb(loadConfig().database);
+}
+
+// 清理本测试产生的数据（高位 user_id 区间）
+function cleanup() {
+  db().prepare('DELETE FROM content_moderation_logs WHERE user_id >= 996000 AND user_id <= 996999').run();
 }
 
 function makeLog() {
@@ -61,6 +41,9 @@ function makeLog() {
 }
 
 const modService = require('../src/services/contentModerationService');
+
+test.beforeEach(cleanup);
+test.after(() => closeDb());
 
 test('S4-T08-1: 文本审核-安全内容', () => {
   const result = modService.moderateTextBuiltin('这是一段正常的剧本台词，主角走在街上。');
@@ -101,24 +84,23 @@ test('S4-T08-6: 图片审核-可疑URL', () => {
 });
 
 test('S4-T08-7: moderate() 统一入口-文本安全', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
-  const result = await modService.moderate(db, log, {
+  const result = await modService.moderate(d, log, {
     resourceType: 'text',
     contentSnapshot: '正常的剧本内容',
     mode: 'standard',
-    userId: 1,
+    userId: 996101,
   });
   assert.equal(result.verdict, 'safe');
   assert.equal(result.isBlocked, false);
   assert.ok(result.logId);
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T08-8: moderate() 统一入口-拦截违规', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
-  const result = await modService.moderate(db, log, {
+  const result = await modService.moderate(d, log, {
     resourceType: 'text',
     contentSnapshot: '色情裸体成人视频',
     mode: 'standard',
@@ -126,67 +108,60 @@ test('S4-T08-8: moderate() 统一入口-拦截违规', async () => {
   assert.equal(result.verdict, 'violation');
   assert.equal(result.isBlocked, true);
   assert.ok(result.logId);
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T08-9: 三种审核模式阈值差异', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   // "色情" 一个词：score=30
   // strict 阈值30 → block
-  const strictResult = await modService.moderate(db, log, {
+  const strictResult = await modService.moderate(d, log, {
     resourceType: 'text', contentSnapshot: '色情', mode: 'strict',
   });
   assert.equal(strictResult.isBlocked, true);
 
   // standard 阈值60 → 30 < 60 → safe
-  const standardResult = await modService.moderate(db, log, {
+  const standardResult = await modService.moderate(d, log, {
     resourceType: 'text', contentSnapshot: '色情', mode: 'standard',
   });
   assert.equal(standardResult.isBlocked, false);
 
   // loose 阈值80 → 30 < 80 → safe
-  const looseResult = await modService.moderate(db, log, {
+  const looseResult = await modService.moderate(d, log, {
     resourceType: 'text', contentSnapshot: '色情', mode: 'loose',
   });
   assert.equal(looseResult.isBlocked, false);
-
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T08-10: 审核记录落库+查询', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
-  await modService.moderate(db, log, { resourceType: 'text', contentSnapshot: '安全内容', mode: 'standard', userId: 10 });
-  await modService.moderate(db, log, { resourceType: 'text', contentSnapshot: '色情内容', mode: 'standard', userId: 10 });
+  await modService.moderate(d, log, { resourceType: 'text', contentSnapshot: '安全内容', mode: 'standard', userId: 996110 });
+  await modService.moderate(d, log, { resourceType: 'text', contentSnapshot: '色情内容', mode: 'standard', userId: 996110 });
 
-  const logs = modService.listLogs(db, { userId: 10 });
+  const logs = modService.listLogs(d, { userId: 996110 });
   assert.equal(logs.length, 2);
 
-  const detail = modService.getLog(db, logs[0].id);
+  const detail = modService.getLog(d, logs[0].id);
   assert.ok(detail);
   assert.ok(detail.contentSnapshot);
-
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T08-11: 人工复审', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
-  const r = await modService.moderate(db, log, { resourceType: 'text', contentSnapshot: '安全内容', mode: 'standard' });
-  const reviewed = modService.review(db, log, r.logId, { verdict: 'violation', reviewNote: '人工判定违规', reviewedBy: 99 });
+  const r = await modService.moderate(d, log, { resourceType: 'text', contentSnapshot: '安全内容', mode: 'standard' });
+  const reviewed = modService.review(d, log, r.logId, { verdict: 'violation', reviewNote: '人工判定违规', reviewedBy: 996199 });
   assert.equal(reviewed.verdict, 'violation');
   assert.equal(reviewed.isBlocked, true);
 
-  const detail = modService.getLog(db, r.logId);
+  const detail = modService.getLog(d, r.logId);
   assert.equal(detail.verdict, 'violation');
   assert.equal(detail.reviewNote, '人工判定违规');
-
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('S4-T08-12: 批量审核', async () => {
-  const { db, dir } = makeDb();
+  const d = db();
   const log = makeLog();
   const items = [
     { resourceType: 'text', contentSnapshot: '安全内容1' },
@@ -194,12 +169,10 @@ test('S4-T08-12: 批量审核', async () => {
     { resourceType: 'text', contentSnapshot: '色情裸体成人视频' },
     { resourceType: 'text', contentSnapshot: '安全内容2' },
   ];
-  const result = await modService.moderateBatch(db, log, items, 'standard');
+  const result = await modService.moderateBatch(d, log, items, 'standard');
   assert.equal(result.total, 3);
   assert.equal(result.results.length, 3);
   // 至少有一条违规
   const violations = result.results.filter(r => r.verdict === 'violation');
   assert.ok(violations.length >= 1);
-
-  db.close(); fs.rmSync(dir, { recursive: true, force: true });
 });
