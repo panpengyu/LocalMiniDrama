@@ -20,6 +20,7 @@
  */
 
 const aiConfigService = require('./aiConfigService');
+const abTestService = require('./abTestService');
 
 // ---------- 常量 ----------
 const CIRCUIT_FAILURE_THRESHOLD = 5;   // 连续失败5次触发熔断
@@ -191,7 +192,27 @@ function recordFailure(db, configId, model) {
  * @returns {object} { config, model, rule, isFallback, fallbackConfig, fallbackModel }
  */
 function routeModel(db, params = {}) {
-  const { taskType, qualityTier = 'standard', costBudget, preferModel } = params;
+  const { taskType, qualityTier = 'standard', costBudget, preferModel, userId } = params;
+
+  // 0. A/B 测试路由：同任务类型存在激活测试时优先走流量比例分组
+  if (taskType && !preferModel) {
+    const ab = abTestService.routeTask(db, { taskType, userId });
+    if (ab) {
+      const circuit = getCircuitState(db, ab.config.id, ab.model);
+      if (circuit.state !== 'open') {
+        return {
+          config: ab.config,
+          model: ab.model,
+          rule: null,
+          isFallback: false,
+          abGroup: ab.group,          // A/B 分组（写日志用）
+          abTestId: ab.test.id,
+          fallbackConfig: null,
+          fallbackModel: null,
+        };
+      }
+    }
+  }
 
   // 1. 若指定了 preferModel，直接查找对应配置
   if (preferModel) {
@@ -271,15 +292,15 @@ function routeModel(db, params = {}) {
  */
 function recordCallLog(db, params) {
   const { userId, dramaId, configId, serviceType, provider, model, taskType,
-    status, isFallback, latencyMs, cost, qualityScore, errorMessage, routingRuleKey } = params;
+    status, isFallback, latencyMs, cost, qualityScore, errorMessage, routingRuleKey, abGroup } = params;
   try {
     db.prepare(`INSERT INTO ai_model_call_logs
-      (user_id, drama_id, config_id, service_type, provider, model, task_type, status, is_fallback, latency_ms, cost, quality_score, error_message, routing_rule_key, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (user_id, drama_id, config_id, service_type, provider, model, task_type, status, is_fallback, latency_ms, cost, quality_score, error_message, routing_rule_key, ab_group, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       userId || null, dramaId || null, configId || null, serviceType || null,
       provider || null, model || null, taskType || null, status || 'success',
       isFallback ? 1 : 0, latencyMs || 0, cost || 0, qualityScore || null,
-      errorMessage || null, routingRuleKey || null, nowStr()
+      errorMessage || null, routingRuleKey || null, abGroup || null, nowStr()
     );
   } catch (_) {}
 

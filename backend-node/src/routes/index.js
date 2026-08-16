@@ -493,6 +493,10 @@ function setupRouter(cfg, db, log) {
   const dashboardRoutes = require('./dashboard');
   r.use('/', dashboardRoutes(db, log));
 
+  // ---------- 模型 A/B 测试与用量配额（Sprint 19: S19-T01/T02） ----------
+  const modelsRoutes = require('./models');
+  r.use('/', modelsRoutes(db, log));
+
   // ---------- 会员体系（Sprint 13: S13-T01~T05 等级/计费/支付/配额） ----------
   const membershipRoutes = require('./membership');
   r.use('/', membershipRoutes(db, log));

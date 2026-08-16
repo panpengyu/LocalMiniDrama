@@ -20,6 +20,8 @@ const routes = [
       { path: 'model-gateway/channel-list', name: 'ChannelList', component: () => import('@/views/model-gateway/ChannelList.vue'), meta: { title: '渠道列表' } },
       { path: 'model-gateway/request-logs', name: 'RequestLogs', component: () => import('@/views/model-gateway/RequestLogs.vue'), meta: { title: '请求记录' } },
       { path: 'model-gateway/task-queue', name: 'TaskQueue', component: () => import('@/views/model-gateway/TaskQueue.vue'), meta: { title: '任务队列' } },
+      { path: 'model-gateway/ab-test', name: 'AbTest', component: () => import('@/views/model-gateway/AbTest.vue'), meta: { title: 'A/B 测试' } },
+      { path: 'model-gateway/model-quota', name: 'ModelQuota', component: () => import('@/views/model-gateway/ModelQuota.vue'), meta: { title: '模型配额' } },
 
       { path: 'user-team/users', name: 'Users', component: () => import('@/views/user-team/Users.vue'), meta: { title: '用户管理' } },
       { path: 'user-team/teams', name: 'Teams', component: () => import('@/views/user-team/Teams.vue'), meta: { title: '团队管理' } },

@@ -107,7 +107,9 @@ const menuGroups = [
       { path: '/model-gateway/model-config', title: '模型配置' },
       { path: '/model-gateway/channel-list', title: '渠道列表' },
       { path: '/model-gateway/request-logs', title: '请求记录' },
-      { path: '/model-gateway/task-queue', title: '任务队列' }
+      { path: '/model-gateway/task-queue', title: '任务队列' },
+      { path: '/model-gateway/ab-test', title: 'A/B 测试' },
+      { path: '/model-gateway/model-quota', title: '模型配额' }
     ]
   },
   {
