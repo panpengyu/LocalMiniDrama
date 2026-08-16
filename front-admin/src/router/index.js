@@ -66,7 +66,9 @@ const routes = [
       { path: 'system/login-logs', name: 'LoginLogs', component: () => import('@/views/system/LoginLogs.vue'), meta: { title: '登录日志' } },
       { path: 'system/open-platform-apps', name: 'OpenPlatformApps', component: () => import('@/views/system/OpenPlatformApps.vue'), meta: { title: 'API应用审批' } },
       { path: 'system/monitor', name: 'SystemMonitor', component: () => import('@/views/system/Monitor.vue'), meta: { title: '系统监控大屏' } },
-      { path: 'operation/data-analytics', name: 'DataAnalytics', component: () => import('@/views/operation/DataAnalytics.vue'), meta: { title: '数据分析平台' } }
+      { path: 'operation/data-analytics', name: 'DataAnalytics', component: () => import('@/views/operation/DataAnalytics.vue'), meta: { title: '数据分析平台' } },
+      { path: 'operation/dashboard', name: 'OperationDashboard', component: () => import('@/views/operation/Dashboard.vue'), meta: { title: '自定义仪表盘' } },
+      { path: 'operation/report-subscribe', name: 'ReportSubscribe', component: () => import('@/views/operation/ReportSubscribe.vue'), meta: { title: '报表订阅' } }
     ]
   }
 ]

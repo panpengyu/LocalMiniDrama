@@ -506,6 +506,14 @@ function createApp() {
   // 挂载 API 路由（版本 v1）
   app.use('/api/v1', setupRouter(config, db, log));
 
+  // S18-T02 报表订阅调度器（node-cron，非致命：配置未启用/异常仅告警不中断启动）
+  try {
+    const reportJobService = require('./services/reportJobService');
+    reportJobService.start(db, log, config);
+  } catch (e) {
+    log.warn('[S18-T02] 报表调度器初始化失败（非致命）', { error: e.message });
+  }
+
   // Sprint 6: 模板系统 + 画布标注/书签路由
   const templateRoutes = require('./routes/templates');
   const canvasExtrasRoutes = require('./routes/canvasExtras');

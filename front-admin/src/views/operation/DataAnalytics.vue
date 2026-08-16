@@ -13,6 +13,21 @@
             <el-option :value="30" label="近 30 天" />
             <el-option :value="90" label="近 90 天" />
           </el-select>
+          <el-dropdown v-if="days" trigger="click" @command="handleExport">
+            <el-button type="primary" plain :loading="exporting">
+              <el-icon style="margin-right: 4px"><Download /></el-icon>数据导出
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="behavior">行为日报（CSV）</el-dropdown-item>
+                <el-dropdown-item command="events">事件明细（CSV）</el-dropdown-item>
+                <el-dropdown-item command="events_dist">事件分布（CSV）</el-dropdown-item>
+                <el-dropdown-item divided command="behavior_xlsx">行为日报（XLSX）</el-dropdown-item>
+                <el-dropdown-item command="events_xlsx">事件明细（XLSX）</el-dropdown-item>
+                <el-dropdown-item command="events_dist_xlsx">事件分布（XLSX）</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button :loading="loading" @click="loadAll">刷新</el-button>
         </div>
       </div>
@@ -190,11 +205,13 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis } from '@element-plus/icons-vue'
+import { DataAnalysis, Download } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { analyticsAPI } from '@/api/analytics'
+import { reportsAPI } from '@/api/reports'
 
 const loading = ref(false)
+const exporting = ref(false)
 const days = ref(30)
 const behavior = ref(null)
 const funnel = ref(null)
@@ -379,6 +396,19 @@ async function loadAll() {
     ElMessage.error(e?.message || '加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function handleExport(cmd) {
+  exporting.value = true
+  try {
+    const [data, type] = cmd.split('_')
+    await reportsAPI.exportFile(type || 'csv', data, days.value)
+    ElMessage.success('导出成功，已开始下载')
+  } catch (e) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 

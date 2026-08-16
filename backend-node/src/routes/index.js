@@ -485,6 +485,14 @@ function setupRouter(cfg, db, log) {
   const trackingRoutes = require('./tracking');
   r.use('/', trackingRoutes(db, log));
 
+  // ---------- 报表订阅与数据导出（Sprint 18: S18-T02） ----------
+  const reportsRoutes = require('./reports');
+  r.use('/', reportsRoutes(db, log, cfg));
+
+  // ---------- 自定义仪表盘布局（Sprint 18: S18-T02） ----------
+  const dashboardRoutes = require('./dashboard');
+  r.use('/', dashboardRoutes(db, log));
+
   // ---------- 会员体系（Sprint 13: S13-T01~T05 等级/计费/支付/配额） ----------
   const membershipRoutes = require('./membership');
   r.use('/', membershipRoutes(db, log));

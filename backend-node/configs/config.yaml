@@ -64,3 +64,23 @@ queue:
   bgm_concurrency: 4
   merge_concurrency: 2
   enabled: true
+# S18-T02 报表推送（SMTP 邮件 / 钉钉 webhook；未配置时自动降级为记录失败日志，不影响业务）
+notify:
+  smtp:
+    enabled: false
+    host: smtp.example.com
+    port: 465
+    secure: true
+    user: ''
+    pass: ''
+    from: 'LocalMiniDrama 报表 <noreply@example.com>'
+    transport: ''            # 可选：json（测试用，不真正联网；空则走真实 SMTP）
+  dingtalk:
+    webhook: ''
+    secret: ''               # 加签密钥（机器人安全设置里生成），留空表示不签名
+  retry:
+    max_attempts: 3          # 发送失败最大重试次数
+    interval_ms: 300000      # 重试间隔 5 分钟
+  cron:
+    enabled: true            # 是否启用 node-cron 调度器
+    timezone: Asia/Shanghai
