@@ -44,6 +44,14 @@ export const membershipAPI = {
   },
   listOrders(params) {
     return request.get('/membership/orders', { params: params || {} })
+  },
+
+  // ---------- S17-T02 优惠券 ----------
+  redeemCoupon(code) {
+    return request.post('/membership/coupons/redeem', { code })
+  },
+  listMyCoupons() {
+    return request.get('/membership/coupons')
   }
 }
 

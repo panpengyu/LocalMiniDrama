@@ -26,6 +26,7 @@
   "dependencies": {
     "@volcengine/openapi": "^1.36.1",
     "adm-zip": "^0.5.16",
+    "alipay-sdk": "^4.14.0",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.6.0",
     "bull": "^4.16.5",

@@ -23,11 +23,47 @@
 const response = require('../response');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const financeService = require('../services/financeService');
+const wechatPayV3 = require('../services/wechatPayV3');
+const alipayService = require('../services/alipayService');
 
 function financeRoutes(db, log) {
   const express = require('express');
   const router = express.Router();
   const superAdmin = [requireAuth, requireRole(['super_admin'])];
+
+  // S17-T03/T06 支付配置连通性自检（系统管理「测试支付」）：微信 v3 密钥/证书自检 + 支付宝 RSA2 签名自检
+  // ?channel=wechat|alipay|all（默认 all）
+  router.post('/admin/finance/payment/test', ...superAdmin, (req, res) => {
+    try {
+      const channel = (req.query.channel || (req.body && req.body.channel) || 'all').toLowerCase();
+      const wechat = wechatPayV3.selfCheck(db);
+      const alipay = alipayService.selfCheck(db);
+      const result = { channels: {} };
+      let ok = true;
+      const failures = [];
+      if (channel === 'all' || channel === 'wechat') {
+        result.channels.wechat = wechat;
+        if (!wechat.ok) { ok = false; failures.push(`微信：${wechat.message}`); }
+      }
+      if (channel === 'all' || channel === 'alipay') {
+        result.channels.alipay = alipay;
+        if (!alipay.configured || (alipay.sign_verified === false)) {
+          ok = false;
+          failures.push(`支付宝：${alipay.message}`);
+        }
+      }
+      result.ok = ok;
+      result.message = ok ? '支付渠道自检全部通过' : `支付渠道自检未通过：${failures.join('；')}`;
+      if (ok) {
+        response.success(res, result);
+      } else {
+        response.error(res, 400, 'PAYMENT_SELFCHECK_FAILED', result.message, { channels: result.channels });
+      }
+    } catch (err) {
+      log.error('[S17-T03] 支付配置自检失败', { error: err.message });
+      response.internalError(res, err.message);
+    }
+  });
 
   router.get('/admin/finance/overview', ...superAdmin, (req, res) => {
     try {

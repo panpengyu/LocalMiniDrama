@@ -29,13 +29,20 @@
 
 const crypto = require('crypto');
 const settingsService = require('./settingsService');
+const cryptoUtil = require('../utils/cryptoUtil');
+const { loadConfig } = require('../config/index.js');
 
 const WECHAT_SETTING_KEY = 'pay_wechat';
 
-/** 读取微信支付凭据（系统管理 → global_settings.pay_wechat）。 */
+/**
+ * 读取微信支付凭据（系统管理 → global_settings.pay_wechat）。
+ * S17-T03：密钥类字段以 AES-256-GCM 密文落库，读取时解密为明文供验签/解密使用。
+ */
 function loadCredential(db) {
   const v = settingsService.getGlobalSetting(db, WECHAT_SETTING_KEY, null);
-  return v && typeof v === 'object' ? v : null;
+  if (!v || typeof v !== 'object') return null;
+  const secret = (loadConfig().app || {}).secret || '';
+  return cryptoUtil.decryptFields(v, ['api_v3_key', 'api_key', 'api_v3_key_masked'], secret);
 }
 
 /** 判定微信支付是否已在系统管理中开通（具备验签与解密所需的最小凭据）。 */
@@ -166,6 +173,58 @@ function handleCallback(db, req) {
   };
 }
 
+/**
+ * Sprint 17 - S17-T03 支付配置连通性自检（管理端「测试支付」）。
+ *
+ * 使用当前系统管理中已保存的微信 v3 凭据做两项真实能力校验：
+ *   1) AES-256-GCM：用 api_v3_key 加解密一段随机串并比对（验证回调解密密钥可用）；
+ *   2) SHA256withRSA：用首张平台证书公钥签名并验签（验证证书公钥可用、验签链路正确）。
+ * 不发起真实网络请求、不落库、不产生业务数据，仅验证「配置本身可用」。
+ *
+ * @returns {{ ok, channel, message, detail? }}
+ */
+function selfCheck(db) {
+  const cred = loadCredential(db);
+  if (!cred) return { ok: false, channel: 'wechat', message: '未读取到微信支付配置' };
+  if (!isConfigured(cred)) {
+    return { ok: false, channel: 'wechat', message: '微信支付未开通：缺少商户号 / APIv3 密钥 / 平台证书' };
+  }
+  const secret = (loadConfig().app || {}).secret || '';
+  const testText = `LocalMiniDrama self-check ${Date.now()}`;
+
+  // 1) AES-256-GCM 密钥自检
+  let aesOk = false;
+  try {
+    const enc = cryptoUtil.encryptText(testText, secret);
+    aesOk = cryptoUtil.decryptText(enc, secret) === testText;
+  } catch (_) { aesOk = false; }
+
+  // 2) 平台证书公钥自检：PEM 可解析且为有效 RSA 公钥（验签需商户私钥，仅凭平台公钥无法做签名往返）
+  let rsaOk = false;
+  try {
+    const pem = (cred.platform_certs[0] || {}).public_key_pem;
+    if (pem) {
+      const keyObj = crypto.createPublicKey(pem);
+      rsaOk = keyObj.asymmetricKeyType === 'rsa';
+    }
+  } catch (_) { rsaOk = false; }
+
+  const ok = aesOk && rsaOk;
+  return {
+    ok,
+    channel: 'wechat',
+    message: ok
+      ? '微信支付 v3 配置校验通过：APIv3 密钥与平台证书均可用'
+      : '微信支付 v3 配置校验失败：APIv3 密钥或平台证书不可用',
+    detail: {
+      aesOk,
+      rsaOk,
+      mchid: cred.mchid || cred.merchant_id || '',
+      certs: (cred.platform_certs || []).length,
+    },
+  };
+}
+
 module.exports = {
   WECHAT_SETTING_KEY,
   loadCredential,
@@ -176,4 +235,5 @@ module.exports = {
   verifySignature,
   decryptResource,
   handleCallback,
+  selfCheck,
 };

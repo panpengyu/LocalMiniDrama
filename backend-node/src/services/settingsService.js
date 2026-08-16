@@ -61,11 +61,14 @@ function getGlobalSetting(db, key, defaultValue = null) {
 function setGlobalSetting(db, key, value) {
   const now = new Date().toISOString();
   const str = JSON.stringify(value);
-  // 双数据库兼容：MySQL 用 ON DUPLICATE KEY UPDATE；SQLite 用 ON CONFLICT DO UPDATE（唯一键为 `key`）
   if (db.type === 'mysql') {
-    db.prepare(
-      'INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = ?, updated_at = ?'
-    ).run(key, str, now, str, now);
+    // 说明：实测 sync-mysql 对 INSERT ... ON DUPLICATE KEY UPDATE 的参数绑定在
+    // 值含 base64 等特殊字符时存在缺陷（changes 误报但行未更新，S17-T03 复现）。
+    // 改为「UPDATE 未命中则 INSERT」两步法，语义等价且对任意字符安全。
+    const up = db.prepare('UPDATE global_settings SET value = ?, updated_at = ? WHERE `key` = ?').run(str, now, key);
+    if (!(up && up.changes)) {
+      db.prepare('INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?)').run(key, str, now);
+    }
   } else {
     db.prepare(
       'INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(`key`) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'

@@ -11,6 +11,7 @@
 const settingsService = require('../services/settingsService');
 const response = require('../response');
 const { loadConfig } = require('../config');
+const cryptoUtil = require('../utils/cryptoUtil');
 const { resolveVideoGenerationTimeoutMinutes } = require('../config/videoGeneration');
 
 /**
@@ -128,12 +129,17 @@ function updateGenerationSettings(db) {
  *
  * 返回微信/支付宝商户凭据的「脱敏」视图：密钥类字段只返回是否已配置（configured）与掩码，
  * 绝不回传明文密钥，避免二次泄露。前端据此渲染「已开通 / 未开通」与占位输入框。
+ * S17-T03：密钥以 AES-256-GCM 密文落库，脱敏视图识别 ENC 前缀显示「已加密存储」。
  */
 function getPaymentSettings(db) {
   return (req, res) => {
     const wechat = settingsService.getGlobalSetting(db, 'pay_wechat', null) || {};
     const alipay = settingsService.getGlobalSetting(db, 'pay_alipay', null) || {};
-    const mask = (v) => (v ? `${String(v).slice(0, 2)}****${String(v).slice(-2)}` : '');
+    const mask = (v) => {
+      if (!v) return '';
+      if (String(v).startsWith(cryptoUtil.PREFIX)) return 'encrypted(已加密存储)';
+      return `${String(v).slice(0, 2)}****${String(v).slice(-2)}`;
+    };
     response.success(res, {
       wechat: {
         configured: !!(wechat.mchid || wechat.merchant_id) && !!wechat.api_v3_key
@@ -150,6 +156,7 @@ function getPaymentSettings(db) {
         app_id: alipay.app_id || '',
         notify_url: alipay.notify_url || '',
         api_key_mask: mask(alipay.api_key),
+        sandbox: !!alipay.sandbox, // S17-T06：沙箱/正式环境开关
       },
     });
   };
@@ -163,6 +170,7 @@ function getPaymentSettings(db) {
  */
 function updatePaymentSettings(db, log) {
   return (req, res) => {
+    const secret = (loadConfig().app || {}).secret || '';
     const b = req.body || {};
     // —— 微信支付 v3 ——
     if (b.wechat && typeof b.wechat === 'object') {
@@ -176,7 +184,8 @@ function updatePaymentSettings(db, log) {
         if (String(w.api_v3_key).length !== 32) {
           return response.badRequest(res, '微信 APIv3 密钥必须为 32 字节');
         }
-        next.api_v3_key = String(w.api_v3_key);
+        // S17-T03：AES-256-GCM 加密落库，读取处解密
+        next.api_v3_key = cryptoUtil.encryptText(String(w.api_v3_key), secret);
         next.api_key = next.api_v3_key; // 兼容既有「已开通」判定字段
       }
       if (w.platform_certs !== undefined) {
@@ -189,7 +198,7 @@ function updatePaymentSettings(db, log) {
         }
         next.platform_certs = w.platform_certs.map((c) => ({
           serial_no: c.serial_no || c.serialNo,
-          public_key_pem: c.public_key_pem || c.pem,
+          public_key_pem: cryptoUtil.encryptText(c.public_key_pem || c.pem, secret),
         }));
       }
       settingsService.setGlobalSetting(db, 'pay_wechat', next);
@@ -203,10 +212,11 @@ function updatePaymentSettings(db, log) {
       if (a.merchant_id !== undefined) next.merchant_id = String(a.merchant_id || '');
       if (a.app_id !== undefined) next.app_id = String(a.app_id || '');
       if (a.notify_url !== undefined) next.notify_url = String(a.notify_url || '');
-      if (a.api_key !== undefined && a.api_key !== '') next.api_key = String(a.api_key);
-      if (a.alipay_public_key !== undefined) next.alipay_public_key = String(a.alipay_public_key || '');
+      if (a.api_key !== undefined && a.api_key !== '') next.api_key = cryptoUtil.encryptText(String(a.api_key), secret);
+      if (a.alipay_public_key !== undefined) next.alipay_public_key = cryptoUtil.encryptText(String(a.alipay_public_key || ''), secret);
+      if (a.sandbox !== undefined) next.sandbox = !!a.sandbox; // S17-T06：沙箱/正式环境开关
       settingsService.setGlobalSetting(db, 'pay_alipay', next);
-      if (log) log.info('[S13-T04] 支付宝凭据已更新', { merchant_id: next.merchant_id });
+      if (log) log.info('[S13-T04] 支付宝凭据已更新', { merchant_id: next.merchant_id, sandbox: next.sandbox });
     }
     return getPaymentSettings(db)(req, res);
   };

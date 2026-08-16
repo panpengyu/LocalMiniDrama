@@ -159,7 +159,16 @@ function createApp() {
   app.use(express.json({ limit: '10mb' }));
   
   // 解析 URL 编码的请求体
-  app.use(express.urlencoded({ extended: true }));
+  // S17-T06: verify 钩子保存原始 body，供支付宝回调 RSA2 验签（checkNotifySignV2
+  // 要求「未解码」参数，与微信支付 v3 的 rawBody 需求一致）。
+  app.use(
+    express.urlencoded({
+      extended: true,
+      verify: (req, _res, buf) => {
+        if (buf && buf.length) req.rawBody = buf.toString('utf8');
+      },
+    })
+  );
 
   // 配置 CORS（跨域资源共享）
   app.use(

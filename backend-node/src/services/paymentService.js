@@ -23,6 +23,8 @@ const crypto = require('crypto');
 const membershipService = require('./membershipService');
 const financeService = require('./financeService');
 const settingsService = require('./settingsService');
+const couponService = require('./couponService');
+const alipayService = require('./alipayService');
 const { snowflakeId } = require('../utils/snowflake');
 
 // 支持的支付渠道
@@ -78,9 +80,25 @@ function createOrder(db, log, opts) {
   // 金额计算（含升级折抵）
   const { amount, orderType, basePrice, credit } = membershipService.computeOrderAmount(db, userId, plan, cycle);
 
+  // S17-T02 优惠券抵扣：先生成订单号（核销需绑定订单），原子核销后计算实付金额。
+  // 优惠券在升级折抵之后叠加：original_amount=折抵后应付，amount=实付，discount_amount=券抵扣。
+  const orderNo = genOrderNo();
+  let couponId = null;
+  let couponCode = null;
+  let discountAmount = 0;
+  if (opts.couponCode) {
+    const c = couponService.consumeCoupon(db, userId, opts.couponCode, orderNo, amount);
+    couponId = c.coupon.id;
+    couponCode = c.coupon.code;
+    discountAmount = c.discount;
+    if (log) log.info('[S17-T02] 订单优惠券抵扣', { orderNo, couponCode, discount: discountAmount });
+  }
+  const originalAmount = amount;
+  const payAmount = +Math.max(0, amount - discountAmount).toFixed(2);
+
   // 积分渠道下单前置预检：余额不足直接拒绝，避免遗留无法支付的 pending 订单
-  if (payMethod === 'points' && amount > 0) {
-    const needPoints = Math.round(amount * financeService.POINTS_PER_YUAN);
+  if (payMethod === 'points' && payAmount > 0) {
+    const needPoints = Math.round(payAmount * financeService.POINTS_PER_YUAN);
     const balance = financeService.getUserBalance(db, userId);
     if (balance < needPoints) {
       const err = new Error(`积分不足：需 ${needPoints} 积分，当前 ${balance}`);
@@ -89,18 +107,26 @@ function createOrder(db, log, opts) {
     }
   }
 
-  const orderNo = genOrderNo();
-  const res = db.prepare(
-    `INSERT INTO membership_orders
-       (order_no, user_id, plan_id, level_code, billing_cycle, order_type, amount, pay_method, pay_status, remark, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ${nowExpr(db)}, ${nowExpr(db)})`
-  ).run(
-    orderNo, userId, plan.id, plan.level_code, cycle, orderType, amount, payMethod,
-    opts.remark || null
-  );
-  const orderId = res.lastInsertRowid || res.insertId;
+  let orderId;
+  try {
+    const res = db.prepare(
+      `INSERT INTO membership_orders
+         (order_no, user_id, plan_id, level_code, billing_cycle, order_type, amount, pay_method, pay_status, remark,
+          coupon_id, coupon_code, original_amount, discount_amount, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ${nowExpr(db)}, ${nowExpr(db)})`
+    ).run(
+      orderNo, userId, plan.id, plan.level_code, cycle, orderType, payAmount, payMethod,
+      opts.remark || null,
+      couponId, couponCode, originalAmount, discountAmount
+    );
+    orderId = res.lastInsertRowid || res.insertId;
+  } catch (err) {
+    // 订单落库失败时回退优惠券核销，避免用户券被占用
+    if (couponCode) { try { couponService.releaseCoupon(db, orderNo); } catch (_) { /* ignore */ } }
+    throw err;
+  }
 
-  if (log) log.info('[S13-T04] 会员订单创建', { orderNo, userId, level: plan.level_code, cycle, orderType, amount, payMethod });
+  if (log) log.info('[S13-T04] 会员订单创建', { orderNo, userId, level: plan.level_code, cycle, orderType, amount: payAmount, payMethod });
 
   // 记录期望的自动续费意向（支付成功后落库到 user_memberships）
   const wantAutoRenew = cycle !== 'lifetime' && !!opts.autoRenew;
@@ -147,8 +173,38 @@ function preparePayment(db, log, order, { autoRenew } = {}) {
       message: `${order.pay_method === 'wechat' ? '微信支付' : '支付宝'}尚未开通，请在系统设置中配置商户凭据` };
   }
 
-  // 已配置凭据：生成预支付会话标识占位（真实实现处应调用官方 SDK 下单换取 prepay_id）。
-  // 此处仅生成本地待支付会话号并落库，供回调按 order_no 关联；不返回任何伪造的收银台参数。
+  // —— S17-T06 支付宝真实接入：调用官方 SDK 统一下单（alipay.trade.page.pay），
+  //    返回 RSA2 签名的支付串与收银台地址；凭据异常时抛错（不伪造任何支付参数）。
+  if (order.pay_method === 'alipay' && alipayService.isConfigured(alipayService.loadCredential(db))) {
+    try {
+      const pay = alipayService.createPagePay(db, order);
+      // 支付宝无 prepay_id 概念；以「ALI:」前缀 + 网关标识记录本次下单会话，回调按 order_no 关联
+      const prepayId = `ALI:${pay.sandbox ? 'sandbox' : 'prod'}:${order.order_no}`;
+      db.prepare(
+        `UPDATE membership_orders SET prepay_id = ?, updated_at = ${nowExpr(db)} WHERE id = ?`
+      ).run(prepayId, order.id);
+      if (log) log.info('[S17-T06] 支付宝统一下单成功', { order_no: order.order_no, sandbox: pay.sandbox });
+      return {
+        configured: true,
+        method: 'alipay',
+        amount,
+        order_no: order.order_no,
+        pay_url: pay.pay_url,
+        sdk_params: pay.sdkParams,
+        sandbox: pay.sandbox,
+        gateway: pay.gateway,
+        message: '支付宝收银台已生成，请完成支付',
+      };
+    } catch (e) {
+      if (log) log.error('[S17-T06] 支付宝统一下单失败', { order_no: order.order_no, error: e.message });
+      const err = new Error(e.message || '支付宝下单失败');
+      err.code = e.code || 'ALIPAY_ORDER_FAILED';
+      throw err;
+    }
+  }
+
+  // 微信支付 / 支付宝未走 SDK 分支：生成本地待支付会话标识并落库，供回调按 order_no 关联；
+  // 不返回任何伪造的收银台参数（避免 mock）。
   const prepayId = `${order.pay_method}_${order.order_no}`;
   db.prepare(
     `UPDATE membership_orders SET prepay_id = ?, updated_at = ${nowExpr(db)} WHERE id = ?`
@@ -295,6 +351,18 @@ function closeExpiredOrders(db, log, minutes = 30) {
   ).run(minutes);
   const n = res.changes || 0;
   if (log && n > 0) log.info('[S13-T04] 关闭超时会员订单', { closed: n });
+
+  // S17-T02：被关闭订单使用的优惠券回退为「已领取」，用户可再次使用
+  if (n > 0) {
+    const rows = db.prepare(
+      `SELECT order_no FROM membership_orders
+       WHERE pay_status = 'closed' AND coupon_id IS NOT NULL
+       ORDER BY updated_at DESC LIMIT ?`
+    ).all(n) || [];
+    let released = 0;
+    for (const r of rows) released += couponService.releaseCoupon(db, r.order_no);
+    if (log && released > 0) log.info('[S17-T02] 关闭订单回退优惠券', { released });
+  }
   return n;
 }
 
@@ -319,6 +387,183 @@ function listUserOrders(db, userId, { limit = 20, offset = 0 } = {}) {
   return { items, total };
 }
 
+/**
+ * 管理端订单查询（S17-T04）：支持状态/渠道/关键字/时间区间/用户筛选，分页倒序。
+ * @returns {{ items, total }}
+ */
+function listAdminOrders(db, { keyword, payStatus, payMethod, userId, dateFrom, dateTo, limit = 20, offset = 0 } = {}) {
+  const lim = Math.min(200, Math.max(1, Number(limit) || 20));
+  const off = Math.max(0, Number(offset) || 0);
+  const conds = [];
+  const args = [];
+  if (keyword) {
+    conds.push('(o.order_no LIKE ? OR o.trade_no LIKE ? OR u.username LIKE ? OR u.nickname LIKE ?)');
+    const kw = `%${keyword}%`;
+    args.push(kw, kw, kw, kw);
+  }
+  if (payStatus) { conds.push('o.pay_status = ?'); args.push(String(payStatus)); }
+  if (payMethod) { conds.push('o.pay_method = ?'); args.push(String(payMethod)); }
+  if (userId) { conds.push('o.user_id = ?'); args.push(Number(userId)); }
+  if (dateFrom) { conds.push('o.created_at >= ?'); args.push(String(dateFrom)); }
+  if (dateTo) { conds.push('o.created_at <= ?'); args.push(String(dateTo)); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+  const items = db.prepare(
+    `SELECT o.*, p.name AS plan_name, u.username, u.nickname
+     FROM membership_orders o
+     LEFT JOIN membership_plans p ON p.id = o.plan_id
+     LEFT JOIN users u ON u.id = o.user_id
+     ${where}
+     ORDER BY o.created_at DESC, o.id DESC
+     LIMIT ? OFFSET ?`
+  ).all(...args, lim, off) || [];
+  const total = db.prepare(
+    `SELECT COUNT(*) c FROM membership_orders o
+     LEFT JOIN users u ON u.id = o.user_id
+     ${where}`
+  ).get(...args).c || 0;
+  return { items, total };
+}
+
+/** 管理端订单汇总（支付状态/渠道分布，供看板统计）。 */
+function adminOrderStats(db, { dateFrom, dateTo } = {}) {
+  const conds = [];
+  const args = [];
+  if (dateFrom) { conds.push('created_at >= ?'); args.push(String(dateFrom)); }
+  if (dateTo) { conds.push('created_at <= ?'); args.push(String(dateTo)); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const byStatus = db.prepare(
+    `SELECT pay_status, COUNT(*) c, COALESCE(SUM(amount),0) total FROM membership_orders ${where} GROUP BY pay_status`
+  ).all(...args) || [];
+  const byMethod = db.prepare(
+    `SELECT pay_method, COUNT(*) c, COALESCE(SUM(amount),0) total FROM membership_orders
+     WHERE pay_status = 'paid' ${where ? `AND ${where.slice(6)}` : ''} GROUP BY pay_method`
+  ).all(...args) || [];
+  return { by_status: byStatus, by_method: byMethod };
+}
+
+/**
+ * 管理端单笔关单（S17-T04）：仅 pending 状态可关；关单后回退优惠券。
+ * 已在支付渠道侧取消的订单（无 prepay）同样适用。
+ */
+function closeOrder(db, log, orderNo, operatorId, reason = '') {
+  const order = db.prepare('SELECT * FROM membership_orders WHERE order_no = ?').get(String(orderNo));
+  if (!order) {
+    const err = new Error('订单不存在');
+    err.code = 'ORDER_NOT_FOUND';
+    throw err;
+  }
+  if (order.pay_status === 'paid' || order.pay_status === 'refunded') {
+    const err = new Error(`订单状态为 ${order.pay_status}，不可关单`);
+    err.code = 'ORDER_NOT_CLOSABLE';
+    throw err;
+  }
+  if (order.pay_status === 'closed') return { order, alreadyClosed: true };
+
+  db.prepare(
+    `UPDATE membership_orders SET pay_status = 'closed',
+       refund_reason = ?, refunded_at = NULL, updated_at = ${nowExpr(db)}
+     WHERE id = ? AND pay_status = 'pending'`
+  ).run(reason ? `管理员关单：${reason}` : '管理员手动关单', order.id);
+
+  // 回退优惠券（S17-T02）：关单后用户券重新可领可用
+  let couponReleased = false;
+  if (order.coupon_id) {
+    try { couponReleased = couponService.releaseCoupon(db, order.order_no) > 0; } catch (_) { /* ignore */ }
+  }
+  if (log) log.info('[S17-T04] 管理端关单', { order_no: order.order_no, operator: operatorId, reason, couponReleased });
+  return { order: getOrder(db, order.id), alreadyClosed: false, couponReleased };
+}
+
+/**
+ * 管理端退款（S17-T04）：仅 paid 状态可退。
+ * 支付宝走官方 SDK（alipay.trade.refund）；微信渠道若平台未接入退款则明确拒绝（不 mock）。
+ * 退款成功后订单置 refunded，并回滚 recharges 收入口径（该笔计入负数收入，保持账单可对账）。
+ */
+async function refundOrder(db, log, orderNo, operatorId, reason = '') {
+  const order = db.prepare('SELECT * FROM membership_orders WHERE order_no = ?').get(String(orderNo));
+  if (!order) {
+    const err = new Error('订单不存在');
+    err.code = 'ORDER_NOT_FOUND';
+    throw err;
+  }
+  if (order.pay_status !== 'paid') {
+    const err = new Error(`订单状态为 ${order.pay_status}，仅已支付订单可退款`);
+    err.code = 'ORDER_NOT_REFUNDABLE';
+    throw err;
+  }
+  if (Number(order.amount) <= 0) {
+    const err = new Error('订单金额为 0，无需退款');
+    err.code = 'ZERO_AMOUNT';
+    throw err;
+  }
+
+  let gatewayResult = null;
+  if (order.pay_method === 'alipay') {
+    gatewayResult = await alipayService.refund(db, order, { reason: reason || '管理端订单退款' });
+    if (!gatewayResult.ok) {
+      if (log) log.error('[S17-T04] 支付宝退款失败', { order_no: order.order_no, ...gatewayResult });
+      const err = new Error(gatewayResult.msg || '支付宝退款失败');
+      err.code = gatewayResult.code || 'ALIPAY_REFUND_FAILED';
+      throw err;
+    }
+  } else if (order.pay_method === 'wechat') {
+    const err = new Error('微信支付渠道暂未接入线上退款，请联系客服线下处理');
+    err.code = 'WECHAT_REFUND_UNSUPPORTED';
+    throw err;
+  }
+  // points 渠道：积分支付无资金退款，直接标记退款并退回积分
+  // 注：积分退回由积分服务在下方事务中统一处理
+
+  const runTx = () => {
+    db.prepare(
+      `UPDATE membership_orders SET pay_status = 'refunded',
+         refund_reason = ?, refunded_at = ${nowExpr(db)}, updated_at = ${nowExpr(db)}
+       WHERE id = ? AND pay_status = 'paid'`
+    ).run(reason || '管理端退款', order.id);
+
+    // 会员状态回滚：当前活跃会员且由本订单开通 → 取消（保留至到期，不立即失效，避免误伤后续续费）
+    // 简化策略：标记会员为 refunded（内部记账用），到期后自然过期
+    const member = db.prepare('SELECT * FROM user_memberships WHERE user_id = ?').get(order.user_id);
+    if (member && String(member.last_order_id || '') === String(order.id)) {
+      db.prepare(
+        `UPDATE user_memberships SET auto_renew = 0, updated_at = ${nowExpr(db)} WHERE id = ?`
+      ).run(member.id);
+    }
+
+    // recharges 收入回滚：原「已支付」流水置为 refunded（财务口径 paid 过滤后自动剔除，保持对账完整）
+    const points = Math.round(Number(order.amount) * financeService.POINTS_PER_YUAN);
+    if (order.pay_method === 'wechat' || order.pay_method === 'alipay') {
+      db.prepare(
+        `UPDATE recharges SET pay_status = 'refunded', updated_at = ${nowExpr(db)} WHERE order_no = ?`
+      ).run(order.order_no);
+    }
+    if (order.pay_method === 'points') {
+      // 积分支付退款：等额退回积分余额（point_logs 追加一条 refund 正向流水）
+      const refundPoints = Math.abs(points);
+      const balanceBefore = financeService.getUserBalance(db, order.user_id);
+      const balanceAfter = balanceBefore + refundPoints;
+      db.prepare(
+        `INSERT INTO point_logs (id, user_id, change_type, business_type, amount, balance_after, related_id, remark, created_at)
+         VALUES (?, ?, 'refund', 'membership_refund', ?, ?, ?, ?, ${nowExpr(db)})`
+      ).run(snowflakeId(), order.user_id, refundPoints, balanceAfter, order.order_no,
+        `订单退款退回积分(${order.level_code}/${order.billing_cycle})`);
+    }
+  };
+
+  try {
+    if (db.transaction) db.transaction(runTx)(); else runTx();
+  } catch (e) {
+    if (log) log.error('[S17-T04] 退款事务失败', { order_no: order.order_no, error: e.message });
+    throw e;
+  }
+  if (log) log.info('[S17-T04] 管理端退款完成', {
+    order_no: order.order_no, operator: operatorId, amount: order.amount,
+    method: order.pay_method, reason, gateway: gatewayResult ? gatewayResult.refundTradeNo || gatewayResult.ok : null,
+  });
+  return { order: getOrder(db, order.id), gateway: gatewayResult };
+}
+
 module.exports = {
   GATEWAYS,
   genOrderNo,
@@ -328,4 +573,8 @@ module.exports = {
   closeExpiredOrders,
   getOrder,
   listUserOrders,
+  listAdminOrders,
+  adminOrderStats,
+  closeOrder,
+  refundOrder,
 };

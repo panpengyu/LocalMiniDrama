@@ -57,6 +57,102 @@ function getPlanById(db, id) {
   return row ? decoratePlan(row) : null;
 }
 
+/**
+ * Sprint 17 - T17-01 充值套餐管理：新增套餐（管理端 RechargePlans 页面）。
+ *
+ * 说明：充值套餐即会员套餐（membership_plans 表），字段与文档中 recharge_plans
+ *      （名称/价格/额度/等级/状态/排序）一一对应，复用既有表避免数据孤岛，
+ *      且用户端会员中心（/membership/plans）下单直接读取该表，新增即对用户可见。
+ * 数据全部落地 MySQL，无 mock。
+ */
+function createPlan(db, data) {
+  const b = data || {};
+  const levelCode = String(b.level_code || '').trim();
+  if (!levelCode) {
+    const err = new Error('缺少等级代码 level_code（唯一，如 premium）');
+    err.code = 'INVALID_ARGS';
+    throw err;
+  }
+  if (db.prepare('SELECT id FROM membership_plans WHERE level_code = ?').get(levelCode)) {
+    const err = new Error(`等级代码「${levelCode}」已存在`);
+    err.code = 'DUPLICATE_LEVEL';
+    throw err;
+  }
+  const quotaConfig = b.quota_config !== undefined
+    ? (typeof b.quota_config === 'string' ? b.quota_config : JSON.stringify(b.quota_config))
+    : '{}';
+  const benefits = b.benefits !== undefined
+    ? (typeof b.benefits === 'string' ? b.benefits : JSON.stringify(b.benefits))
+    : '[]';
+  const info = db.prepare(`INSERT INTO membership_plans
+      (level_code, level_rank, name, subtitle, price_monthly, price_yearly, price_lifetime,
+       quota_config, benefits, badge_color, sort_order, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    levelCode,
+    b.level_rank == null ? 0 : Number(b.level_rank),
+    String(b.name || levelCode),
+    b.subtitle || null,
+    b.price_monthly == null ? null : Number(b.price_monthly),
+    b.price_yearly == null ? null : Number(b.price_yearly),
+    b.price_lifetime == null ? null : Number(b.price_lifetime),
+    quotaConfig,
+    benefits,
+    b.badge_color || null,
+    b.sort_order == null ? 0 : Number(b.sort_order),
+    b.enabled === undefined ? 1 : (b.enabled ? 1 : 0)
+  );
+  return getPlanById(db, Number(info.lastInsertRowid));
+}
+
+/**
+ * Sprint 17 - T17-01 充值套餐管理：更新套餐（价格/配额/权益/上下架等动态字段）。
+ * 仅更新传入的字段；未传字段保持不变。返回更新后的套餐。
+ */
+function updatePlan(db, id, data) {
+  const pid = Number(id);
+  if (!getPlanById(db, pid)) {
+    const err = new Error('套餐不存在');
+    err.code = 'PLAN_NOT_FOUND';
+    throw err;
+  }
+  const b = data || {};
+  const updates = [];
+  const params = [];
+  const numFields = ['level_rank', 'price_monthly', 'price_yearly', 'price_lifetime', 'sort_order'];
+  const strFields = ['name', 'subtitle', 'badge_color'];
+  for (const f of numFields) if (b[f] !== undefined) { updates.push(`${f} = ?`); params.push(b[f] === null ? null : Number(b[f])); }
+  for (const f of strFields) if (b[f] !== undefined) { updates.push(`${f} = ?`); params.push(b[f]); }
+  if (b.quota_config !== undefined) { updates.push('quota_config = ?'); params.push(typeof b.quota_config === 'string' ? b.quota_config : JSON.stringify(b.quota_config)); }
+  if (b.benefits !== undefined) { updates.push('benefits = ?'); params.push(typeof b.benefits === 'string' ? b.benefits : JSON.stringify(b.benefits)); }
+  if (b.enabled !== undefined) { updates.push('enabled = ?'); params.push(b.enabled ? 1 : 0); }
+  if (updates.length) {
+    params.push(pid);
+    db.prepare(`UPDATE membership_plans SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  }
+  return getPlanById(db, pid);
+}
+
+/**
+ * Sprint 17 - T17-01 充值套餐管理：删除套餐。
+ * 已被订单/会员引用时仅下架（软删除，避免破坏历史数据），否则物理删除。
+ */
+function deletePlan(db, id) {
+  const pid = Number(id);
+  if (!getPlanById(db, pid)) {
+    const err = new Error('套餐不存在');
+    err.code = 'PLAN_NOT_FOUND';
+    throw err;
+  }
+  const refOrder = db.prepare('SELECT id FROM membership_orders WHERE plan_id = ? LIMIT 1').get(pid);
+  const refMem = db.prepare('SELECT id FROM user_memberships WHERE plan_id = ? LIMIT 1').get(pid);
+  if (refOrder || refMem) {
+    db.prepare(`UPDATE membership_plans SET enabled = 0, updated_at = ${nowExpr(db)} WHERE id = ?`).run(pid);
+    return { id: pid, disabled: true, reason: '套餐已被订单或会员引用，已改为下架（软删除）' };
+  }
+  db.prepare('DELETE FROM membership_plans WHERE id = ?').run(pid);
+  return { id: pid, deleted: true };
+}
+
 /** 解析 JSON 字段，附带便捷读取。 */
 function decoratePlan(row) {
   let quota = {};
@@ -273,6 +369,10 @@ module.exports = {
   getPlanByLevel,
   getPlanById,
   priceForCycle,
+  // S17-T01 充值套餐管理
+  createPlan,
+  updatePlan,
+  deletePlan,
   // S13-T02
   getUserMembership,
   classifyOrderType,

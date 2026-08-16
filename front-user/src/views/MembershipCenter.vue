@@ -133,6 +133,45 @@
       </div>
     </section>
 
+    <!-- S17-T02 优惠券 -->
+    <section class="coupon-section">
+      <div class="section-head">
+        <h3>优惠券</h3>
+        <span class="coupon-tip">兑换后下单可抵扣，每张券每个账号限领一次</span>
+      </div>
+      <div class="coupon-redeem">
+        <el-input
+          v-model="redeemCode"
+          placeholder="输入兑换码，如 NEWYEAR2026"
+          clearable
+          class="redeem-input"
+          @keyup.enter="onRedeem"
+        />
+        <el-button type="primary" :loading="redeeming" @click="onRedeem">兑换</el-button>
+        <el-button text :icon="Refresh" @click="loadCoupons">刷新</el-button>
+      </div>
+      <el-table :data="coupons" v-loading="loadingCoupons" class="coupon-table" empty-text="暂无优惠券，输入兑换码兑换">
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column prop="code" label="券码" width="130" />
+        <el-table-column label="优惠" width="120">
+          <template #default="{ row }">{{ fmtCouponValue(row) }}</template>
+        </el-table-column>
+        <el-table-column label="使用门槛" width="120">
+          <template #default="{ row }">{{ row.min_spend > 0 ? `满 ¥${Number(row.min_spend).toFixed(2)}` : '无门槛' }}</template>
+        </el-table-column>
+        <el-table-column label="有效期至" width="160">
+          <template #default="{ row }">{{ row.end_at ? formatDate(row.end_at) : '长期' }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'used' ? 'info' : 'success'">
+              {{ row.status === 'used' ? '已使用' : '可用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
+
     <!-- 订单/账单记录 -->
     <section class="orders-section">
       <div class="section-head">
@@ -190,6 +229,12 @@
         <div class="pb-row">
           <span class="pb-label">原价</span>
           <span class="pb-value">¥{{ Number(priceOf(selectedPlan)).toFixed(2) }}</span>
+        </div>
+        <div class="pb-row">
+          <span class="pb-label">优惠券</span>
+          <el-select v-model="selectedCouponId" placeholder="不使用优惠券" clearable class="coupon-select" size="small">
+            <el-option v-for="c in usableCoupons" :key="c.id" :label="`${c.name}（${c.code}）`" :value="c.id" />
+          </el-select>
         </div>
 
         <div class="pb-pay">
@@ -249,6 +294,14 @@ const selectedPlan = ref(null)
 const payMethod = ref('wechat')
 const autoRenewOnPurchase = ref(false)
 const purchasing = ref(false)
+
+// S17-T02 优惠券状态
+const redeemCode = ref('')
+const redeeming = ref(false)
+const loadingCoupons = ref(false)
+const coupons = ref([])
+const selectedCouponId = ref(null)
+const usableCoupons = computed(() => coupons.value.filter(c => c.status === 'claimed'))
 
 const currentBadgeColor = computed(() => mine.value?.plan?.badge_color || 'linear-gradient(135deg,#a855f7,#6366f1)')
 
@@ -368,18 +421,57 @@ function openPurchase(plan) {
   selectedPlan.value = plan
   payMethod.value = 'wechat'
   autoRenewOnPurchase.value = false
+  selectedCouponId.value = null
   purchaseVisible.value = true
+}
+
+// S17-T02 优惠券：兑换 / 列表 / 展示
+async function loadCoupons() {
+  loadingCoupons.value = true
+  try {
+    const res = await membershipAPI.listMyCoupons()
+    coupons.value = (res && res.items) || []
+  } catch (e) {
+    /* 拦截器已提示 */
+  } finally {
+    loadingCoupons.value = false
+  }
+}
+
+function fmtCouponValue(row) {
+  return row.type === 'percent' ? `${Number(row.value).toFixed(0)}% 折扣` : `减 ¥${Number(row.value).toFixed(2)}`
+}
+
+async function onRedeem() {
+  const code = redeemCode.value.trim()
+  if (!code) {
+    ElMessage.warning('请输入兑换码')
+    return
+  }
+  redeeming.value = true
+  try {
+    await membershipAPI.redeemCoupon(code)
+    ElMessage.success('兑换成功')
+    redeemCode.value = ''
+    await loadCoupons()
+  } catch (e) {
+    /* 拦截器已提示 */
+  } finally {
+    redeeming.value = false
+  }
 }
 
 async function confirmPurchase() {
   if (!selectedPlan.value) return
   purchasing.value = true
   try {
+    const selectedCoupon = usableCoupons.value.find(c => c.id === selectedCouponId.value)
     const created = await membershipAPI.createOrder({
       level_code: selectedPlan.value.level_code,
       cycle: cycle.value,
       pay_method: payMethod.value,
-      auto_renew: autoRenewOnPurchase.value
+      auto_renew: autoRenewOnPurchase.value,
+      coupon_code: selectedCoupon ? selectedCoupon.code : undefined
     })
     const order = created?.order
     const gateway = created?.gateway
@@ -400,7 +492,7 @@ async function settleOrder(order, gateway) {
     if (res) {
       ElMessage.success('开通成功，已生效')
       purchaseVisible.value = false
-      await Promise.all([loadMine(), loadOrders()])
+      await Promise.all([loadMine(), loadOrders(), loadCoupons()])
     }
     return
   }
@@ -411,10 +503,37 @@ async function settleOrder(order, gateway) {
     await loadOrders()
     return
   }
-  // 现金渠道已开通：真实收银台在此接入官方 SDK，占位提示
+  // 支付宝：官方 SDK 统一下单（S17-T06），返回真实收银台地址 → 新窗口打开并轮询支付结果
+  if (order.pay_method === 'alipay' && gateway && gateway.pay_url) {
+    window.open(gateway.pay_url, '_blank', 'noopener,noreferrer')
+    ElMessage.info('已打开支付宝收银台，请在新窗口完成支付；支付成功后会员将自动开通')
+    purchaseVisible.value = false
+    await waitOrderPaid(order.order_no)
+    await loadOrders()
+    return
+  }
+  // 微信渠道已开通：订单保留为待支付，待回调开通（真实收银台需商户资质与备案后接入）
   ElMessage.info('订单已创建，请在收银台完成支付')
   purchaseVisible.value = false
   await loadOrders()
+}
+
+// 轮询订单支付状态（支付宝收银台支付完成后，后台回调自动开通会员）
+async function waitOrderPaid(orderNo, maxSeconds = 300) {
+  const started = Date.now()
+  while (Date.now() - started < maxSeconds * 1000) {
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const res = await membershipAPI.listOrders({ limit: 20 })
+      const found = (res?.items || []).find(o => String(o.order_no) === String(orderNo))
+      if (found && found.pay_status === 'paid') {
+        ElMessage.success('支付成功，会员已开通')
+        await loadMine()
+        return
+      }
+      if (found && ['closed', 'refunded'].includes(found.pay_status)) return
+    } catch (_) { /* 网络抖动继续轮询 */ }
+  }
 }
 
 async function resumePay(row) {
@@ -457,6 +576,7 @@ onMounted(() => {
   loadMine()
   loadPlans()
   loadOrders()
+  loadCoupons()
 })
 </script>
 
@@ -663,6 +783,29 @@ onMounted(() => {
   --el-button-hover-border-color: #4f46e5;
   font-weight: 600;
 }
+
+/* ---------- S17-T02 Coupons ---------- */
+.coupon-section { margin-top: 36px; }
+.coupon-tip {
+  font-size: 12px;
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.08);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.coupon-redeem {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  max-width: 520px;
+}
+.redeem-input { flex: 1; }
+.coupon-table {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+}
+.coupon-select { width: 100%; }
 
 /* ---------- Orders ---------- */
 .orders-section { margin-top: 8px; }

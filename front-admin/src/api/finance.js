@@ -39,6 +39,58 @@ export const financeAPI = {
   },
   dailyReports(days = 30) {
     return request.get('/admin/finance/daily-reports', { params: { days } })
+  },
+  // ============ Sprint 17 - T17-01 充值套餐（会员套餐）管理 ============
+  listRechargePlans() {
+    return request.get('/admin/membership/plans')
+  },
+  createRechargePlan(data) {
+    return request.post('/admin/membership/plans', data)
+  },
+  updateRechargePlan(id, data) {
+    return request.put(`/admin/membership/plans/${id}`, data)
+  },
+  deleteRechargePlan(id) {
+    return request.delete(`/admin/membership/plans/${id}`)
+  },
+  // ============ Sprint 17 - T17-02 优惠券管理 ============
+  listCoupons(params) {
+    return request.get('/admin/membership/coupons', { params })
+  },
+  createCoupon(data) {
+    return request.post('/admin/membership/coupons', data)
+  },
+  updateCoupon(id, data) {
+    return request.put(`/admin/membership/coupons/${id}`, data)
+  },
+  disableCoupon(id) {
+    return request.delete(`/admin/membership/coupons/${id}`)
+  },
+  couponRedemptions(id, params) {
+    return request.get(`/admin/membership/coupons/${id}/redemptions`, { params })
+  },
+  // ============ Sprint 17 - T17-03 支付配置 ============
+  getPaymentSettings() {
+    return request.get('/settings/payment')
+  },
+  updatePaymentSettings(data) {
+    return request.put('/settings/payment', data)
+  },
+  testPayment(channel = 'all') {
+    return request.post('/admin/finance/payment/test', null, { params: { channel } })
+  },
+  // ============ Sprint 17 - T17-04 支付订单管理 ============
+  listOrders(params = {}) {
+    return request.get('/admin/membership/orders', { params })
+  },
+  orderStats(params = {}) {
+    return request.get('/admin/membership/orders/stats', { params })
+  },
+  closeOrder(orderNo, data = {}) {
+    return request.post(`/admin/membership/orders/${orderNo}/close`, data)
+  },
+  refundOrder(orderNo, data = {}) {
+    return request.post(`/admin/membership/orders/${orderNo}/refund`, data)
   }
 }
 
