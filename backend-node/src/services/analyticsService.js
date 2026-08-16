@@ -17,6 +17,9 @@
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// S18-T01 事件埋点：聚合统计委托 trackingService（避免 SQL 重复）
+const trackingService = require('./trackingService');
+
 function dateExpr(db, col = 'created_at') {
   return db.type === 'mysql'
     ? `DATE_FORMAT(${col}, '%Y-%m-%d')`
@@ -245,6 +248,68 @@ function retentionAnalysis(db, { cohortDays = 14 } = {}) {
 }
 
 // ------------------------------------------------------------
+// 5) 事件转化漏斗与事件总览（S18-T01，基于 tracking_events）
+// ------------------------------------------------------------
+/**
+ * 事件转化漏斗：按事件序列计算每步参与用户数（严格逐步交集）。
+ * 身份键 = user_id（登录用户）；未登录回退 anonymous_id。
+ * @param {Array} steps [{ event, label }] 事件步骤序列
+ */
+function eventFunnel(db, { steps = [], days = 30 } = {}) {
+  const since = new Date(Date.now() - days * DAY_MS).toISOString();
+  if (!Array.isArray(steps) || !steps.length) {
+    return { days, steps: [], overall_rate: 0 };
+  }
+  let passed = null; // 上一步通过用户的身份键集合
+  const result = [];
+  for (const s of steps) {
+    const name = s && s.event ? String(s.event) : null;
+    if (!name) break;
+    const rows = safeAll(
+      db,
+      'SELECT DISTINCT user_id, anonymous_id FROM tracking_events WHERE event = ? AND created_at >= ?',
+      name, since
+    );
+    const users = new Set();
+    for (const r of rows) {
+      if (r.user_id != null && r.user_id !== '') users.add('u' + r.user_id);
+      else if (r.anonymous_id) users.add('a' + r.anonymous_id);
+    }
+    // 严格转化：仅保留上一步已通过的用户
+    if (passed) {
+      for (const k of [...users]) {
+        if (!passed.has(k)) users.delete(k);
+      }
+    }
+    passed = users;
+    const prev = result.length ? result[result.length - 1].users : null;
+    result.push({
+      event: name,
+      label: (s && s.label) || name,
+      users: users.size,
+      conversion_rate: prev == null ? 100 : (prev > 0 ? Number(((users.size / prev) * 100).toFixed(2)) : 0),
+    });
+  }
+  const first = result.length ? result[0].users : 0;
+  const last = result.length ? result[result.length - 1].users : 0;
+  return {
+    days,
+    steps: result,
+    overall_rate: first > 0 ? Number(((last / first) * 100).toFixed(2)) : 0,
+  };
+}
+
+/**
+ * 事件总览：聚合统计 + 转化漏斗一次拉取（供 DataAnalytics.vue 事件区块）。
+ */
+function eventOverview(db, { steps = [], days = 30 } = {}) {
+  return {
+    stats: trackingService.stats(db, { days }),
+    funnel: eventFunnel(db, { steps, days }),
+  };
+}
+
+// ------------------------------------------------------------
 // 汇总总览（供前端一次拉取）
 // ------------------------------------------------------------
 function overview(db, { days = 30 } = {}) {
@@ -261,5 +326,7 @@ module.exports = {
   creationFunnel,
   modelEffect,
   retentionAnalysis,
+  eventFunnel,
+  eventOverview,
   overview,
 };

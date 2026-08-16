@@ -36,6 +36,13 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
+// S18-T01：事件埋点 SDK（匿名身份持久化 + 自动页面浏览 + 批量冲刷）
+// 组件内可经 window.__tracking.track('event', attrs) 上报业务事件
+import { createTracking } from '@localmini/shared'
+const tracking = createTracking({ tokenKey: 'user_token', router })
+tracking.init()
+window.__tracking = tracking
+
 import { useUserStore } from '@/stores/user'
 const userStore = useUserStore()
 userStore.loadUser()

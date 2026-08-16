@@ -32,6 +32,12 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
+// S18-T01：事件埋点 SDK（管理端操作审计匿名埋点）
+import { createTracking } from '@localmini/shared'
+const tracking = createTracking({ tokenKey: 'admin_token', router })
+tracking.init()
+window.__tracking = tracking
+
 import { useAdminUserStore } from '@/stores/adminUser'
 const userStore = useAdminUserStore()
 userStore.loadUser()

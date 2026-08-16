@@ -68,6 +68,42 @@ function analyticsRoutes(db, log) {
     }
   });
 
+  // S18-T01 事件转化漏斗（基于 tracking_events）：?days=30&steps=page_view,login,create_drama
+  router.get('/admin/analytics/event-funnel', ...superAdmin, (req, res) => {
+    try {
+      const steps = String(req.query.steps || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((event) => ({ event, label: event }));
+      response.success(res, analyticsService.eventFunnel(db, {
+        steps,
+        days: Number(req.query.days) || 30,
+      }));
+    } catch (err) {
+      log.error('[S18-T01] 事件漏斗分析失败', { error: err.message });
+      response.internalError(res, err.message);
+    }
+  });
+
+  // S18-T01 事件总览（聚合统计 + 漏斗一次拉取）
+  router.get('/admin/analytics/event-overview', ...superAdmin, (req, res) => {
+    try {
+      const steps = String(req.query.steps || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((event) => ({ event, label: event }));
+      response.success(res, analyticsService.eventOverview(db, {
+        steps,
+        days: Number(req.query.days) || 30,
+      }));
+    } catch (err) {
+      log.error('[S18-T01] 事件总览失败', { error: err.message });
+      response.internalError(res, err.message);
+    }
+  });
+
   return router;
 }
 
