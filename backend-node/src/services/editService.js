@@ -231,6 +231,41 @@ async function autoEdit(db, log, params = {}) {
     throw new Error('[EDIT-000] fps 范围 1-120');
   }
 
+  // === [S20-T03] 效果参数解析（字幕/水印/调色），全部可空，非法值报错 ===
+  const COLOR_GRADES = ['none', 'vivid', 'warm', 'cool', 'bw', 'sepia'];
+  const WM_POSITIONS = ['top-left', 'top-right', 'top-center', 'bottom-left', 'bottom-right', 'bottom-center', 'center'];
+  const clampNum = (v, min, max) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : 0;
+  };
+  const effects = {
+    subtitle_enabled: params.subtitle_enabled === true || params.subtitle_enabled === 1 || params.subtitle_enabled === '1' || params.subtitle_enabled === 'true',
+    subtitle_text: typeof params.subtitle_text === 'string' ? String(params.subtitle_text).trim().slice(0, 500) : '',
+    subtitle_style: typeof params.subtitle_style === 'string' && params.subtitle_style ? String(params.subtitle_style).slice(0, 500) : JSON.stringify({ fontsize: 42, position: 'bottom', color: 'white' }),
+    watermark_text: typeof params.watermark_text === 'string' ? String(params.watermark_text).trim().slice(0, 200) : '',
+    watermark_position: WM_POSITIONS.includes(params.watermark_position) ? params.watermark_position : 'bottom-right',
+    color_grade: COLOR_GRADES.includes(params.color_grade) ? params.color_grade : 'none',
+    brightness: clampNum(params.brightness, -0.5, 0.5),
+    contrast: clampNum(params.contrast, -0.5, 0.5),
+    saturation: clampNum(params.saturation, -1, 1),
+    sfx_matches: Array.isArray(params.sfx_matches) ? params.sfx_matches.slice(0, 20) : null,
+  };
+  if (params.color_grade !== undefined && params.color_grade !== null && !COLOR_GRADES.includes(params.color_grade)) {
+    throw new Error('[EDIT-000] color_grade 非法，可选: ' + COLOR_GRADES.join('/'));
+  }
+  if (params.watermark_text !== undefined && params.watermark_text !== null && typeof params.watermark_text !== 'string') {
+    throw new Error('[EDIT-000] watermark_text 必须为字符串');
+  }
+  if (effects.subtitle_enabled && !effects.subtitle_text) {
+    throw new Error('[EDIT-000] subtitle_enabled=true 时 subtitle_text 必填');
+  }
+  console.log(`[${traceId}] [STAGE#1] S20 效果参数`, {
+    subtitle_enabled: effects.subtitle_enabled, subtitle_text_len: effects.subtitle_text.length,
+    watermark_text_len: effects.watermark_text.length, watermark_position: effects.watermark_position,
+    color_grade: effects.color_grade, brightness: effects.brightness, contrast: effects.contrast,
+    saturation: effects.saturation, sfx_matches: effects.sfx_matches ? effects.sfx_matches.length : 0,
+  });
+
   // 预检测 ffmpeg
   const ffmpegAvailable = isToolAvailable(process.env.FFMPEG_PATH || 'ffmpeg');
   if (!ffmpegAvailable) {
@@ -251,6 +286,17 @@ async function autoEdit(db, log, params = {}) {
   })();
   if (existingCols.includes('transition_default')) { insertCols.push('transition_default'); insertVals.push(params.transition_default || 'fade'); }
   if (existingCols.includes('beat_sync'))          { insertCols.push('beat_sync');          insertVals.push(params.beat_sync !== false ? 1 : 0); }
+  // S20-T03 效果参数落库
+  if (existingCols.includes('subtitle_enabled'))   { insertCols.push('subtitle_enabled');   insertVals.push(effects.subtitle_enabled ? 1 : 0); }
+  if (existingCols.includes('subtitle_text'))      { insertCols.push('subtitle_text');      insertVals.push(effects.subtitle_text || null); }
+  if (existingCols.includes('subtitle_style'))     { insertCols.push('subtitle_style');     insertVals.push(effects.subtitle_style); }
+  if (existingCols.includes('watermark_text'))     { insertCols.push('watermark_text');     insertVals.push(effects.watermark_text || null); }
+  if (existingCols.includes('watermark_position')) { insertCols.push('watermark_position'); insertVals.push(effects.watermark_position); }
+  if (existingCols.includes('color_grade'))        { insertCols.push('color_grade');        insertVals.push(effects.color_grade); }
+  if (existingCols.includes('brightness'))         { insertCols.push('brightness');         insertVals.push(effects.brightness || null); }
+  if (existingCols.includes('contrast'))           { insertCols.push('contrast');           insertVals.push(effects.contrast || null); }
+  if (existingCols.includes('saturation'))         { insertCols.push('saturation');         insertVals.push(effects.saturation || null); }
+  if (existingCols.includes('sfx_matches'))        { insertCols.push('sfx_matches');        insertVals.push(effects.sfx_matches ? JSON.stringify(effects.sfx_matches) : null); }
   const taskInfo = db.prepare(
     `INSERT INTO edit_tasks (${insertCols.join(', ')}) VALUES (${insertCols.map(()=>'?').join(', ')})`
   ).run(...insertVals);
@@ -310,8 +356,8 @@ async function autoEdit(db, log, params = {}) {
       clips = clips.filter(c => c.video_url || c.image_url);
     }
 
-    const ffmpegArgs = buildFFmpegArgs(clips, outputPath, { resolution, fps });
-    console.log(`[${traceId}] [STAGE#4-DONE] 构建完成 args=${ffmpegArgs.length} 个参数`);
+    const ffmpegArgs = buildFFmpegArgs(clips, outputPath, { resolution, fps, effects, workDir: outputDir, tag: String(taskId) });
+    console.log(`[${traceId}] [STAGE#4-DONE] 构建完成 args=${ffmpegArgs.length} 个参数，effects=${effects ? 'on' : 'off'}`);
     db.prepare('UPDATE edit_tasks SET progress = 50 WHERE id = ?').run(taskId);
 
     // === [STAGE#5] 执行 ffmpeg ===
@@ -393,6 +439,10 @@ function resolveClipInput(clip) {
  */
 function buildFFmpegArgs(clips, outputPath, options = {}) {
   const { resolution, fps } = options;
+  // S20-T03 效果参数（字幕/水印/调色）与 textfile 工作目录
+  const effects = options.effects;
+  const workDir = options.workDir;
+  const tag = options.tag;
   const [width, height] = resolution.split('x');
 
   const args = [];
@@ -444,8 +494,13 @@ function buildFFmpegArgs(clips, outputPath, options = {}) {
     filterParts.push(`${labels}concat=n=${clips.length}:v=1:a=0[outv]`);
   }
 
+  // [S20-T03] 效果后处理：调色 → 字幕 → 水印（链式叠加到 [outv]，输出 [vfx]）
+  const effectsChain = buildEffectsFilters(effects, workDir, tag);
+  if (effectsChain) filterParts.push(effectsChain);
+  const finalLabel = effectsChain ? 'vfx' : 'outv';
+
   args.push('-filter_complex', filterParts.join(';'));
-  args.push('-map', '[outv]');
+  args.push('-map', `[${finalLabel}]`);
   args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23');
   args.push('-r', String(fps));
   args.push('-pix_fmt', 'yuv420p');
@@ -453,6 +508,112 @@ function buildFFmpegArgs(clips, outputPath, options = {}) {
   args.push('-y', outputPath);
 
   return args;
+}
+
+// ---------------------------------------------------------------------------
+// [S20-T03] 效果滤镜工具：调色 / 字幕 / 水印
+// - 全部基于用户提供的文本参数（无任何第三方版权素材）
+// - 字幕与水印使用 textfile + drawtext，避免引号/冒号转义问题
+// - 返回过滤链片段（无任何效果时返回 null）
+// ---------------------------------------------------------------------------
+
+const FONT_CANDIDATES = [
+  '/System/Library/Fonts/PingFang.ttc',
+  '/System/Library/Fonts/STHeiti Light.ttc',
+  '/System/Library/Fonts/Helvetica.ttc',
+  'C:/Windows/Fonts/msyh.ttc',
+  'C:/Windows/Fonts/msyh.ttf',
+  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+];
+
+/** 探测可用的中文字体（drawtext 需要字体文件） */
+function detectFont() {
+  for (const p of FONT_CANDIDATES) {
+    try { if (fs.existsSync(p)) return p; } catch (_) { /* ignore */ }
+  }
+  return 'Sans';
+}
+
+/** 转义 ffmpeg filter 值中的特殊字符 */
+function escFilterVal(v) {
+  return String(v).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/\n/g, ' ');
+}
+
+const COLOR_GRADE_CHAINS = {
+  vivid: 'eq=brightness=0.02:contrast=1.08:saturation=1.25',
+  warm: 'eq=brightness=0.03:contrast=1.05:saturation=1.1,hue=h=-12',
+  cool: 'eq=brightness=0.02:contrast=1.06:saturation=1.05,hue=h=14',
+  bw: 'eq=saturation=0,format=gray',
+  sepia: 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,eq=saturation=1.2',
+};
+
+const WM_POS_EXPR = {
+  'top-left': 'x=24:y=24',
+  'top-right': 'x=w-text_w-24:y=24',
+  'top-center': 'x=(w-text_w)/2:y=24',
+  'bottom-left': 'x=24:y=h-text_h-24',
+  'bottom-right': 'x=w-text_w-24:y=h-text_h-24',
+  'bottom-center': 'x=(w-text_w)/2:y=h-text_h-24',
+  'center': 'x=(w-text_w)/2:y=(h-text_h)/2',
+};
+
+/**
+ * 构建效果后处理滤镜链（追加在 concat 输出 [outv] 之后）。
+ * @param {object} effects  { subtitle_enabled, subtitle_text, subtitle_style, watermark_text, watermark_position, color_grade, brightness, contrast, saturation }
+ * @param {string} workDir  任务输出目录（用于写入 textfile）
+ * @param {string} tag      任务标识（textfile 命名去重）
+ * @returns {string|null}   滤镜链输出标签（如 'vfx'），无效果返回 null
+ */
+function buildEffectsFilters(effects, workDir, tag) {
+  if (!effects || typeof effects !== 'object') return null;
+  const chains = [];
+
+  // 调色（预设 + 自定义滑杆合并）
+  const grade = COLOR_GRADE_CHAINS[effects.color_grade || 'none'];
+  const b = Number(effects.brightness) || 0;
+  const c = Number(effects.contrast) || 0;
+  const s = Number(effects.saturation) || 0;
+  const hasCustom = Math.abs(b) > 0.0001 || Math.abs(c) > 0.0001 || Math.abs(s) > 0.0001;
+  let gradeChain = grade || null;
+  if (hasCustom) {
+    const eq = `eq=brightness=${b.toFixed(3)}:contrast=${(1 + c).toFixed(3)}:saturation=${(1 + s).toFixed(3)}`;
+    gradeChain = gradeChain ? `${gradeChain},${eq}` : eq;
+  }
+  if (gradeChain) chains.push(gradeChain);
+
+  // 字幕
+  if (effects.subtitle_enabled && effects.subtitle_text && workDir && tag) {
+    let style = {};
+    if (typeof effects.subtitle_style === 'string' && effects.subtitle_style.startsWith('{')) {
+      try { style = JSON.parse(effects.subtitle_style); } catch (_) { /* 保持默认 */ }
+    }
+    const fontsize = Number(style.fontsize) || 42;
+    const position = style.position === 'top' ? 'y=48' : style.position === 'center' ? 'y=(h-text_h)/2' : 'y=h-text_h-48';
+    const fontcolor = style.color || 'white';
+    const fontPath = detectFont();
+    const textPath = path.join(workDir, `subtitle_${tag}.txt`);
+    fs.writeFileSync(textPath, effects.subtitle_text, 'utf8');
+    chains.push(
+      `drawtext=textfile=${escFilterVal(textPath)}:fontfile=${escFilterVal(fontPath)}:fontsize=${fontsize}:fontcolor=${fontcolor}:x=(w-text_w)/2:${position}:box=1:boxcolor=black@0.55:boxborderw=14:line_spacing=6`
+    );
+  }
+
+  // 水印
+  if (effects.watermark_text && workDir && tag) {
+    const posExpr = WM_POS_EXPR[effects.watermark_position] || WM_POS_EXPR['bottom-right'];
+    const fontPath = detectFont();
+    const textPath = path.join(workDir, `watermark_${tag}.txt`);
+    fs.writeFileSync(textPath, effects.watermark_text, 'utf8');
+    chains.push(
+      `drawtext=textfile=${escFilterVal(textPath)}:fontfile=${escFilterVal(fontPath)}:fontsize=30:fontcolor=white@0.7:${posExpr}`
+    );
+  }
+
+  if (chains.length === 0) return null;
+  // 返回形如 `[outv]eq=...,drawtext=...[vfx]` 的完整滤镜链
+  return `[outv]${chains.join(',')}[vfx]`;
 }
 
 /**

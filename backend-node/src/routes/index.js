@@ -46,6 +46,7 @@ const workflowRoutes = require('./workflows');
 const editRoutes = require('./edit');
 const styleRoutes = require('./styles');
 const bgmRoutes = require('./bgm');
+const sfxRoutes = require('./sfx');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -309,6 +310,9 @@ function setupRouter(cfg, db, log) {
   r.post('/upload/image', uploadModule.multerSingle, uploadHandlers.uploadImage);
   // S20-T02 语音评论：音频上传（mp3/wav/m4a/ogg/webm，≤10MB）
   r.post('/upload/audio', uploadModule.multerAudioSingle, uploadHandlers.uploadImage);
+
+  // ---------- S20-T04 音效智能匹配 ----------
+  r.use('/sfx', sfxRoutes(db, log));
 
   // ---------- 剧集模块 ----------
   r.post('/episodes/:episode_id/storyboards', drama.generateStoryboard);

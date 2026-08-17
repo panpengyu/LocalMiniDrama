@@ -133,6 +133,124 @@
         </div>
       </div>
 
+      <!-- ============ S20-T03 效果参数 + S20-T04 音效匹配 ============ -->
+      <el-collapse v-model="fxCollapse" class="fx-collapse">
+        <el-collapse-item name="fx">
+          <template #title>
+            <div class="collapse-title fx-title">
+              <el-icon><MagicStick /></el-icon>
+              <span>剪辑效果参数</span>
+              <span class="collapse-count fx-count">{{ fxActiveCount }}</span>
+            </div>
+          </template>
+          <div class="fx-grid">
+            <!-- 字幕 -->
+            <div class="fx-card">
+              <div class="fx-card-header">
+                <el-icon><Reading /></el-icon><span>字幕</span>
+                <el-switch v-model="subtitleEnabled" size="small" class="fx-switch" />
+              </div>
+              <el-input
+                v-model="subtitleText"
+                size="small"
+                type="textarea"
+                :rows="2"
+                placeholder="自定义字幕文本，留空则用分镜旁白/对白"
+                :disabled="!subtitleEnabled"
+              />
+              <div class="fx-slider-row">
+                <span class="fx-label">字号</span>
+                <el-slider v-model="subtitleFontsize" :min="24" :max="64" :disabled="!subtitleEnabled" />
+                <span class="fx-value">{{ subtitleFontsize }}</span>
+              </div>
+              <div class="fx-select-row">
+                <span class="fx-label">位置</span>
+                <el-select v-model="subtitlePosition" size="small" :disabled="!subtitleEnabled">
+                  <el-option label="底部" value="bottom" />
+                  <el-option label="居中" value="center" />
+                  <el-option label="顶部" value="top" />
+                </el-select>
+              </div>
+            </div>
+            <!-- 水印 -->
+            <div class="fx-card">
+              <div class="fx-card-header">
+                <el-icon><Stamp /></el-icon><span>水印</span>
+              </div>
+              <el-input v-model="watermarkText" size="small" placeholder="水印文字，如：本地短剧助手" />
+              <div class="fx-select-row">
+                <span class="fx-label">位置</span>
+                <el-select v-model="watermarkPosition" size="small">
+                  <el-option label="右上角" value="top-right" />
+                  <el-option label="左上角" value="top-left" />
+                  <el-option label="右下角" value="bottom-right" />
+                  <el-option label="左下角" value="bottom-left" />
+                  <el-option label="居中" value="center" />
+                </el-select>
+              </div>
+            </div>
+            <!-- 调色 -->
+            <div class="fx-card">
+              <div class="fx-card-header">
+                <el-icon><Brush /></el-icon><span>调色</span>
+              </div>
+              <el-radio-group v-model="colorGrade" size="small" class="fx-radio">
+                <el-radio-button label="none">原片</el-radio-button>
+                <el-radio-button label="vivid">鲜艳</el-radio-button>
+                <el-radio-button label="warm">暖色</el-radio-button>
+                <el-radio-button label="cool">冷色</el-radio-button>
+                <el-radio-button label="bw">黑白</el-radio-button>
+                <el-radio-button label="sepia">怀旧</el-radio-button>
+              </el-radio-group>
+              <div class="fx-slider-row">
+                <span class="fx-label">亮度</span>
+                <el-slider v-model="brightness" :min="-0.5" :max="0.5" :step="0.01" />
+                <span class="fx-value">{{ brightness.toFixed(2) }}</span>
+              </div>
+              <div class="fx-slider-row">
+                <span class="fx-label">对比度</span>
+                <el-slider v-model="contrast" :min="-0.5" :max="0.5" :step="0.01" />
+                <span class="fx-value">{{ contrast.toFixed(2) }}</span>
+              </div>
+              <div class="fx-slider-row">
+                <span class="fx-label">饱和度</span>
+                <el-slider v-model="saturation" :min="-1" :max="1" :step="0.01" />
+                <span class="fx-value">{{ saturation.toFixed(2) }}</span>
+              </div>
+            </div>
+            <!-- 音效匹配 -->
+            <div class="fx-card fx-sfx-card">
+              <div class="fx-card-header">
+                <el-icon><Headset /></el-icon><span>音效匹配</span>
+                <span class="fx-tip">仅匹配本项目自有素材库，无版权音效</span>
+              </div>
+              <div class="sfx-search">
+                <el-input
+                  v-model="sfxQuery"
+                  size="small"
+                  placeholder="描述情绪/场景，如：紧张、温馨、战斗"
+                  @keyup.enter="searchSfx"
+                />
+                <el-button size="small" :loading="sfxLoading" @click="searchSfx">搜索</el-button>
+              </div>
+              <div v-if="sfxResults.length" class="sfx-list">
+                <el-checkbox-group v-model="selectedSfxIds" class="sfx-group">
+                  <el-checkbox v-for="item in sfxResults" :key="item.id" :value="item.id" class="sfx-item">
+                    <div class="sfx-item-main">
+                      <span class="sfx-name">{{ item.name }}</span>
+                      <span class="sfx-tags">{{ item.tags.join(' / ') }}</span>
+                      <span class="sfx-score">匹配度 {{ item.score }}</span>
+                    </div>
+                  </el-checkbox>
+                </el-checkbox-group>
+              </div>
+              <div v-else-if="sfxSearched" class="sfx-empty">未找到匹配音效（请先在素材库上传并打标签）</div>
+              <div v-else class="sfx-hint">输入情绪或场景关键词，从用户自有素材中匹配音效</div>
+            </div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+
       <!-- ============ 选中片段详情面板 ============ -->
       <div v-if="selectedClip" class="clip-detail-panel">
         <div class="detail-header">
@@ -263,9 +381,13 @@
  */
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { VideoPlay, VideoCamera, Picture, Sort, Loading } from '@element-plus/icons-vue'
+import {
+  VideoPlay, VideoCamera, Picture, Sort, Loading,
+  MagicStick, Reading, Stamp, Brush, Headset,
+} from '@element-plus/icons-vue'
 import { editAPI } from '@/api/edit'
 import { dramaAPI } from '@/api/drama'
+import { sfxAPI } from '@/api/sfx'
 
 const props = defineProps({
   dramaId: { type: Number, required: true },
@@ -289,6 +411,49 @@ const editing = ref(false)
 const aligning = ref(false)
 const loadingClips = ref(false)
 const historyCollapse = ref(['history'])
+
+/* ---------- S20-T03 效果参数 / S20-T04 音效匹配 ---------- */
+const fxCollapse = ref([]) // 默认收起，点击展开
+const subtitleEnabled = ref(false)
+const subtitleText = ref('')
+const subtitleFontsize = ref(42)
+const subtitlePosition = ref('bottom')
+const watermarkText = ref('')
+const watermarkPosition = ref('top-right')
+const colorGrade = ref('none')
+const brightness = ref(0)
+const contrast = ref(0)
+const saturation = ref(0)
+const sfxQuery = ref('')
+const sfxLoading = ref(false)
+const sfxSearched = ref(false)
+const sfxResults = ref([])
+const selectedSfxIds = ref([])
+
+/** 已启用效果数（用于折叠标题角标） */
+const fxActiveCount = computed(() => {
+  let n = 0
+  if (subtitleEnabled.value && subtitleText.value) n += 1
+  if (watermarkText.value) n += 1
+  if (colorGrade.value !== 'none' || brightness.value !== 0 || contrast.value !== 0 || saturation.value !== 0) n += 1
+  if (selectedSfxIds.value.length) n += 1
+  return n
+})
+
+async function searchSfx() {
+  if (!sfxQuery.value.trim()) return ElMessage.warning('请输入情绪或场景关键词')
+  sfxLoading.value = true
+  sfxSearched.value = true
+  try {
+    const res = await sfxAPI.match({ query: sfxQuery.value.trim(), limit: 8, mode: 'normal' })
+    sfxResults.value = Array.isArray(res) ? res : (res?.data || [])
+  } catch (e) {
+    sfxResults.value = []
+    ElMessage.error(e?.message || '音效匹配失败')
+  } finally {
+    sfxLoading.value = false
+  }
+}
 
 let pollTimer = null
 let dragIndex = null
@@ -324,6 +489,22 @@ function onDialogClose() {
   stopPolling()
   selectedClipIndex.value = null
   currentTask.value = null
+  // S20-T03/T04 重置效果参数与音效选择
+  fxCollapse.value = []
+  subtitleEnabled.value = false
+  subtitleText.value = ''
+  subtitleFontsize.value = 42
+  subtitlePosition.value = 'bottom'
+  watermarkText.value = ''
+  watermarkPosition.value = 'top-right'
+  colorGrade.value = 'none'
+  brightness.value = 0
+  contrast.value = 0
+  saturation.value = 0
+  sfxQuery.value = ''
+  sfxSearched.value = false
+  sfxResults.value = []
+  selectedSfxIds.value = []
 }
 
 /* ---------- 数据加载 ---------- */
@@ -414,6 +595,28 @@ async function startAutoEdit() {
       beat_sync: beatSync.value,
     }
     if (selectedEpisodeId.value) payload.episode_id = selectedEpisodeId.value
+    // S20-T03 效果参数透传
+    payload.subtitle_enabled = subtitleEnabled.value
+    payload.subtitle_text = subtitleText.value.trim()
+    if (subtitleEnabled.value) {
+      payload.subtitle_style = JSON.stringify({
+        fontsize: subtitleFontsize.value,
+        position: subtitlePosition.value,
+        color: 'white',
+      })
+    }
+    payload.watermark_text = watermarkText.value.trim()
+    payload.watermark_position = watermarkPosition.value
+    payload.color_grade = colorGrade.value
+    payload.brightness = brightness.value
+    payload.contrast = contrast.value
+    payload.saturation = saturation.value
+    // S20-T04 音效匹配结果随任务提交（仅用户自有素材）
+    if (selectedSfxIds.value.length) {
+      payload.sfx_matches = sfxResults.value
+        .filter((s) => selectedSfxIds.value.includes(s.id))
+        .map((s) => ({ id: s.id, name: s.name, tags: s.tags, score: s.score, suggestedStrength: s.suggestedStrength }))
+    }
 
     const result = await editAPI.autoEdit(payload)
 
@@ -675,6 +878,125 @@ function truncate(str, len) {
   font-size: 12px;
 }
 .beat-label { white-space: nowrap; }
+
+/* ============ S20-T03 效果参数面板 ============ */
+.fx-collapse {
+  background: rgba(15, 15, 22, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+  padding: 0 8px;
+}
+.collapse-title.fx-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #e4e4e7;
+  font-size: 14px;
+}
+.fx-count {
+  font-size: 11px;
+  color: #a1a1aa;
+  background: rgba(99, 102, 241, 0.18);
+  border-radius: 8px;
+  padding: 0 7px;
+  line-height: 16px;
+}
+.fx-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 6px 0 10px;
+}
+@media (max-width: 1100px) {
+  .fx-grid { grid-template-columns: 1fr; }
+}
+.fx-card {
+  background: rgba(30, 30, 40, 0.55);
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fx-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #c4b5fd;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fx-switch { margin-left: auto; }
+.fx-tip {
+  font-size: 11px;
+  color: #71717a;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.fx-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fx-slider-row .el-slider { flex: 1; margin: 0 4px; }
+.fx-label { font-size: 12px; color: #a1a1aa; width: 42px; flex-shrink: 0; }
+.fx-value {
+  font-size: 12px;
+  color: #c4b5fd;
+  width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fx-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fx-select-row .el-select { flex: 1; }
+.fx-radio { flex-wrap: wrap; }
+.sfx-search { display: flex; gap: 6px; }
+.sfx-list {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sfx-group { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.sfx-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-right: 0;
+  height: auto;
+  padding: 6px 8px;
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 6px;
+}
+.sfx-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sfx-name { color: #e4e4e7; font-size: 13px; font-weight: 500; }
+.sfx-tags { color: #8b8b94; font-size: 12px; }
+.sfx-score {
+  font-size: 11px;
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+.sfx-empty, .sfx-hint {
+  font-size: 12px;
+  color: #8b8b94;
+  padding: 10px 2px;
+  line-height: 1.6;
+}
 
 /* ============ 时间线编辑器 ============ */
 .timeline-editor {

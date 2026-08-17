@@ -61,6 +61,17 @@ function editRoutes(db, log) {
         fps: body.fps,
         transition_default: body.transition_default,
         beat_sync: body.beat_sync,
+        // S20-T03 剪辑效果参数透传（字幕/水印/调色/音效匹配）
+        subtitle_enabled: body.subtitle_enabled,
+        subtitle_text: body.subtitle_text,
+        subtitle_style: body.subtitle_style,
+        watermark_text: body.watermark_text,
+        watermark_position: body.watermark_position,
+        color_grade: body.color_grade,
+        brightness: body.brightness,
+        contrast: body.contrast,
+        saturation: body.saturation,
+        sfx_matches: body.sfx_matches,
       });
       console.log(`[${reqId}] [DONE] 剪辑任务完成 task_id=${result.task_id} status=${result.status}，耗时 ${Date.now() - t0}ms`);
       response.created(res, result);
