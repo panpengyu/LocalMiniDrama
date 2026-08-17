@@ -25,7 +25,7 @@
             />
           </el-form-item>
           
-          <el-form-item prop="password">
+          <el-form-item prop="password" v-if="!needTwoFa">
             <el-input 
               v-model="form.password" 
               type="password"
@@ -35,6 +35,22 @@
               show-password
             />
           </el-form-item>
+
+          <template v-if="needTwoFa">
+            <el-alert type="info" :closable="false" show-icon class="twofa-tip"
+              title="该账户已启用两步验证，请输入身份验证器中的 6 位动态码。" />
+            <el-form-item prop="code" class="mt16">
+              <el-input
+                v-model="twoFaCode"
+                maxlength="6"
+                placeholder="6 位动态码"
+                prefix-icon="Key"
+                size="large"
+                class="code-input"
+                @keyup.enter="handleTwoFaLogin"
+              />
+            </el-form-item>
+          </template>
           
           <el-form-item>
             <el-button 
@@ -42,9 +58,9 @@
               size="large" 
               class="btn-login"
               :loading="loading"
-              @click="handleLogin"
+              @click="needTwoFa ? handleTwoFaLogin() : handleLogin()"
             >
-              <el-icon><CircleCheck /></el-icon>登录
+              <el-icon><CircleCheck /></el-icon>{{ needTwoFa ? '完成验证' : '登录' }}
             </el-button>
           </el-form-item>
         </el-form>
@@ -80,6 +96,9 @@ const router = useRouter()
 const userStore = useUserStore()
 const formRef = ref(null)
 const loading = ref(false)
+const needTwoFa = ref(false)
+const tempToken = ref('')
+const twoFaCode = ref('')
 
 const form = reactive({
   username: '',
@@ -110,11 +129,46 @@ async function handleLogin() {
     const data = await response.json()
     
     if (data.success) {
+      if (data.data.needTwoFa) {
+        // 进入第二步：等待动态码
+        needTwoFa.value = true
+        tempToken.value = data.data.tempToken
+        twoFaCode.value = ''
+        ElMessage.info(data.data.message || '请输入验证器动态码')
+        return
+      }
       userStore.login(data.data.user, data.data.token)
       ElMessage.success(data.data.message || '登录成功')
       router.push('/')
     } else {
       ElMessage.error(data.error?.message || '登录失败')
+    }
+  } catch (error) {
+    ElMessage.error('网络错误，请稍后重试')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleTwoFaLogin() {
+  if (!/^\d{6}$/.test(twoFaCode.value)) {
+    ElMessage.warning('请输入 6 位动态码')
+    return
+  }
+  loading.value = true
+  try {
+    const response = await fetch('/api/v1/auth/login/2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken: tempToken.value, code: twoFaCode.value })
+    })
+    const data = await response.json()
+    if (data.success) {
+      userStore.login(data.data.user, data.data.token)
+      ElMessage.success(data.data.message || '登录成功')
+      router.push('/')
+    } else {
+      ElMessage.error(data.error?.message || '验证失败')
     }
   } catch (error) {
     ElMessage.error('网络错误，请稍后重试')
@@ -228,5 +282,20 @@ async function handleLogin() {
 
 .tip-alert {
   font-size: 12px;
+}
+
+.twofa-tip {
+  margin: 0 24px 8px;
+  font-size: 12px;
+}
+
+.mt16 {
+  margin-top: 16px;
+}
+
+.code-input :deep(.el-input__inner) {
+  letter-spacing: 4px;
+  text-align: center;
+  font-family: Menlo, Consolas, monospace;
 }
 </style>

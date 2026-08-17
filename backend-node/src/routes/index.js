@@ -90,8 +90,14 @@ function setupRouter(cfg, db, log) {
   // ---------- 认证模块 ----------
   r.post('/auth/register', auth.register);
   r.post('/auth/login', auth.login);
+  r.post('/auth/login/2fa', auth.login2fa);
   r.post('/auth/logout', auth.logout);
   r.get('/auth/profile', auth.profile);
+  // ---------- S19-T03 安全：2FA 绑定 / 修改密码 ----------
+  r.get('/auth/2fa/setup', requireAuth, auth.twoFaSetup);
+  r.post('/auth/2fa/verify', requireAuth, auth.twoFaVerify);
+  r.post('/auth/2fa/disable', requireAuth, auth.twoFaDisable);
+  r.post('/auth/change-password', requireAuth, auth.changePassword);
   
   r.get('/admin-test', (req, res) => {
     res.json({ success: true, message: 'admin test', user: req.user ? { id: req.user.id, role: req.user.role } : null });

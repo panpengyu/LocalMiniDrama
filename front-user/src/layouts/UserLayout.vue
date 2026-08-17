@@ -48,6 +48,9 @@
               <el-dropdown-item @click="$router.push('/membership')">
                 <el-icon><Trophy /></el-icon>会员中心
               </el-dropdown-item>
+              <el-dropdown-item @click="$router.push('/account-security')">
+                <el-icon><Lock /></el-icon>账户安全
+              </el-dropdown-item>
               <el-dropdown-item divided @click="handleLogout">
                 <el-icon><SwitchButton /></el-icon>退出登录
               </el-dropdown-item>
@@ -74,7 +77,7 @@
 <script setup>import { ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy, ShoppingBag, Star, Key, QuestionFilled } from '@element-plus/icons-vue';
+import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy, ShoppingBag, Star, Key, Lock, QuestionFilled } from '@element-plus/icons-vue';
 import { useUserStore } from '@/stores/user';
 import { useTheme } from '@localmini/shared/composables/useTheme';
 const router = useRouter();

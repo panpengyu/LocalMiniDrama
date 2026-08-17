@@ -188,7 +188,9 @@ const menuGroups = [
       { path: '/system/operation-logs', title: '操作日志' },
       { path: '/system/login-logs', title: '登录日志' },
       { path: '/system/open-platform-apps', title: 'API应用审批' },
-      { path: '/system/monitor', title: '系统监控大屏' }
+      { path: '/system/monitor', title: '系统监控大屏' },
+      { path: '/system/security-policy', title: '安全策略' },
+      { path: '/system/online-sessions', title: '在线会话' }
     ]
   }
 ]

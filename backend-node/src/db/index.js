@@ -74,14 +74,21 @@ function getDb(config) {
         
         /**
          * 格式化日期值
-         * 将 ISO 格式日期转换为 MySQL 日期格式
-         * 
+         * 将 ISO 8601 时间戳字符串转换为 MySQL DATETIME 格式（YYYY-MM-DD HH:mm:ss）。
+         *
+         * 注意：必须用「精确前缀」匹配形如 2026-08-17T10:00:00 的时间戳，
+         * 不能仅凭字符串同时包含 'T' 和 'Z' 判断——否则会误伤普通文本
+         * （如 bcrypt 密码哈希、TOTP base32 密钥、JSON 配置等偶然含 T/Z 的字符串），
+         * 造成写入数据被截断/替换的严重损坏。
+         *
          * @param {any} value - 参数值
          * @returns {any} 格式化后的值
          */
+        const ISO_DATETIME_RE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/;
         const formatDate = (value) => {
-          if (typeof value === 'string' && value.includes('T') && value.includes('Z')) {
-            return value.replace('T', ' ').replace('Z', '').substring(0, 19);
+          if (typeof value === 'string') {
+            const m = ISO_DATETIME_RE.exec(value);
+            if (m) return `${m[1]} ${m[2]}`;
           }
           return value;
         };

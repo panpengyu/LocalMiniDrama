@@ -72,6 +72,12 @@ const router = createRouter({
           meta: { title: 'AI 配置' }
         },
         {
+          path: 'account-security',
+          name: 'account-security',
+          component: () => import('@/views/AccountSecurity.vue'),
+          meta: { title: '账户安全' }
+        },
+        {
           path: 'membership',
           name: 'membership',
           component: () => import('@/views/MembershipCenter.vue'),
