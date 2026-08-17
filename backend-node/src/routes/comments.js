@@ -73,6 +73,8 @@ function commentRoutes(db, log) {
         authorName: req.user.username || req.user.nickname || null,
         content: b.content,
         timestampMs: b.timestamp_ms != null ? b.timestamp_ms : null,
+        voiceUrl: b.voice_url != null ? b.voice_url : null,          // S20-T02 语音评论
+        voiceDuration: b.voice_duration != null ? b.voice_duration : null,
       });
       response.created(res, comment);
     } catch (err) { fail(res, err); }

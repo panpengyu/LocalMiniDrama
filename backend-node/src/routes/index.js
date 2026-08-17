@@ -307,6 +307,8 @@ function setupRouter(cfg, db, log) {
 
   // ---------- 上传模块 ----------
   r.post('/upload/image', uploadModule.multerSingle, uploadHandlers.uploadImage);
+  // S20-T02 语音评论：音频上传（mp3/wav/m4a/ogg/webm，≤10MB）
+  r.post('/upload/audio', uploadModule.multerAudioSingle, uploadHandlers.uploadImage);
 
   // ---------- 剧集模块 ----------
   r.post('/episodes/:episode_id/storyboards', drama.generateStoryboard);
@@ -510,6 +512,10 @@ function setupRouter(cfg, db, log) {
   // ---------- 评论批注系统（Sprint 13: S13-T06 画布评论/时间戳批注/@提及/已读未读/批量回复） ----------
   const commentRoutes = require('./comments');
   r.use('/', commentRoutes(db, log));
+
+  // ---------- 分支叙事（Sprint 20: S20-T01 分支/条件连线/按分支导出剧本） ----------
+  const branchRoutes = require('./branch');
+  r.use('/', branchRoutes(db, log));
 
   // ---------- 模板市场（Sprint 14: S14-T01~T05 模板画廊/创作者中心/审核工作台/收益分成） ----------
   const marketplaceRoutes = require('./marketplace');

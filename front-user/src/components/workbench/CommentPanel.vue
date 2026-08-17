@@ -107,6 +107,12 @@
                 <el-tag v-if="t.status === 'resolved'" size="small" type="success" effect="dark">已解决</el-tag>
               </div>
               <div class="thread-text" v-html="renderMentions(t.content)"></div>
+              <!-- S20-T02 语音评论播放器 -->
+              <div v-if="t.voice_url" class="thread-voice">
+                <el-icon><Microphone /></el-icon>
+                <audio :src="t.voice_url" controls preload="metadata" class="voice-audio"></audio>
+                <span v-if="t.voice_duration" class="voice-dur">{{ fmtDur(t.voice_duration) }}</span>
+              </div>
               <div class="thread-actions">
                 <el-button text size="small" @click="startReply(t)">回复</el-button>
                 <el-button
@@ -129,6 +135,12 @@
                     <span class="author">{{ r.author_name || ('用户' + r.author_id) }}</span>
                     <span class="time">{{ fromNow(r.created_at) }}</span>
                     <div class="reply-text" v-html="renderMentions(r.content)"></div>
+                    <!-- S20-T02 语音回复播放器 -->
+                    <div v-if="r.voice_url" class="thread-voice">
+                      <el-icon><Microphone /></el-icon>
+                      <audio :src="r.voice_url" controls preload="metadata" class="voice-audio"></audio>
+                      <span v-if="r.voice_duration" class="voice-dur">{{ fmtDur(r.voice_duration) }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -141,6 +153,12 @@
                   :rows="2"
                   size="small"
                   placeholder="回复内容，可用 @用户名 提及成员"
+                />
+                <!-- S20-T02 语音回复 -->
+                <VoiceRecorder
+                  v-model="replyVoice.url"
+                  :voice-duration="replyVoice.duration"
+                  @change="replyVoice.duration = $event.duration"
                 />
                 <div class="inline-reply-actions">
                   <el-button size="small" @click="cancelReply">取消</el-button>
@@ -163,6 +181,12 @@
           maxlength="1000"
           show-word-limit
           placeholder="发表评论，可用 @用户名 提及成员"
+        />
+        <!-- S20-T02 语音评论 -->
+        <VoiceRecorder
+          v-model="newVoice.url"
+          :voice-duration="newVoice.duration"
+          @change="newVoice.duration = $event.duration"
         />
         <div class="composer-row">
           <el-checkbox v-model="withTimestamp" size="small">时间戳批注</el-checkbox>
@@ -190,9 +214,10 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Check, Aim, VideoPlay } from '@element-plus/icons-vue'
+import { ChatLineSquare, Check, Aim, VideoPlay, Microphone } from '@element-plus/icons-vue'
 import commentAPI from '@/api/comments'
 import { useUserStore } from '@/stores/user'
+import VoiceRecorder from '@/components/comment/VoiceRecorder.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -235,11 +260,14 @@ const newContent = ref('')
 const withTimestamp = ref(false)
 const timestampInput = ref('')
 const submitting = ref(false)
+// S20-T02 语音评论：录制后上传得到的 url 与时长
+const newVoice = ref({ url: '', duration: 0 })
 
 // 回复
 const replyingTo = ref(null)
 const replyContent = ref('')
 const replySubmitting = ref(false)
+const replyVoice = ref({ url: '', duration: 0 })
 
 // 批量
 const selectedIds = ref([])
@@ -294,10 +322,16 @@ function parseTimestamp(input) {
 
 async function submitNew() {
   const content = newContent.value.trim()
-  if (!content) return ElMessage.warning('请输入评论内容')
+  const hasVoice = !!(newVoice.value.url && newVoice.value.duration > 0)
+  // S20-T02：允许「仅语音」评论（文字与语音至少其一）
+  if (!content && !hasVoice) return ElMessage.warning('请输入评论内容，或录制一条语音')
   submitting.value = true
   try {
     const payload = { content }
+    if (hasVoice) {
+      payload.voice_url = newVoice.value.url
+      payload.voice_duration = newVoice.value.duration
+    }
     if (props.nodeKey) payload.node_key = props.nodeKey
     if (withTimestamp.value) {
       const ts = parseTimestamp(timestampInput.value)
@@ -308,6 +342,7 @@ async function submitNew() {
     newContent.value = ''
     timestampInput.value = ''
     withTimestamp.value = false
+    newVoice.value = { url: '', duration: 0 }
     ElMessage.success('评论已发表')
     await Promise.all([loadComments(), loadUnread()])
   } finally {
@@ -319,17 +354,25 @@ async function submitNew() {
 function startReply(t) {
   replyingTo.value = t.id
   replyContent.value = ''
+  replyVoice.value = { url: '', duration: 0 }
 }
 function cancelReply() {
   replyingTo.value = null
   replyContent.value = ''
+  replyVoice.value = { url: '', duration: 0 }
 }
 async function submitReply(t) {
   const content = replyContent.value.trim()
-  if (!content) return ElMessage.warning('请输入回复内容')
+  const hasVoice = !!(replyVoice.value.url && replyVoice.value.duration > 0)
+  if (!content && !hasVoice) return ElMessage.warning('请输入回复内容，或录制一条语音')
   replySubmitting.value = true
   try {
-    await commentAPI.create(props.dramaId, { parent_id: t.id, content })
+    const payload = { parent_id: t.id, content }
+    if (hasVoice) {
+      payload.voice_url = replyVoice.value.url
+      payload.voice_duration = replyVoice.value.duration
+    }
+    await commentAPI.create(props.dramaId, payload)
     cancelReply()
     ElMessage.success('回复已发送')
     await loadComments()
@@ -455,6 +498,13 @@ function fromNow(v) {
   const p = (n) => String(n).padStart(2, '0')
   return `${dt.getMonth() + 1}-${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}`
 }
+/** S20-T02 语音时长格式化（秒 → mm:ss） */
+function fmtDur(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+}
 // 将 @用户名 高亮（纯文本转义后再替换，避免 XSS）
 function renderMentions(text) {
   const esc = String(text || '')
@@ -466,6 +516,25 @@ function renderMentions(text) {
 </script>
 
 <style scoped>
+.thread-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  color: #6366f1;
+}
+.voice-audio {
+  height: 32px;
+  max-width: 220px;
+  flex: 1;
+  min-width: 140px;
+}
+.voice-dur {
+  font-size: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .cd-header { display: flex; align-items: center; }
 .cd-title {
   display: flex;

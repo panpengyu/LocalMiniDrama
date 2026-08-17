@@ -65,7 +65,9 @@ function resolveMentions(db, dramaId, content) {
 function createComment(db, log, opts) {
   const dramaId = Number(opts.dramaId);
   const content = String(opts.content || '').trim();
-  if (!content) {
+  // S20-T02 语音评论：允许「仅有语音无文字」，但两者都为空则拒绝
+  const voiceUrl = opts.voiceUrl ? String(opts.voiceUrl).trim() : null;
+  if (!content && !voiceUrl) {
     const err = new Error('评论内容不能为空');
     err.code = 'EMPTY_CONTENT';
     throw err;
@@ -91,11 +93,13 @@ function createComment(db, log, opts) {
 
   const res = db.prepare(
     `INSERT INTO canvas_comments
-       (drama_id, node_key, parent_id, root_id, author_id, author_name, content, timestamp_ms, status, is_deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ${nowExpr(db)}, ${nowExpr(db)})`
+       (drama_id, node_key, parent_id, root_id, author_id, author_name, content, timestamp_ms,
+        voice_url, voice_duration, status, is_deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ${nowExpr(db)}, ${nowExpr(db)})`
   ).run(
     dramaId, nodeKey, parentId, rootId,
-    Number(opts.authorId), opts.authorName || null, content, timestampMs
+    Number(opts.authorId), opts.authorName || null, content, timestampMs,
+    voiceUrl, opts.voiceDuration != null ? Number(opts.voiceDuration) : null
   );
   const id = res.lastInsertRowid || res.insertId;
 
@@ -190,7 +194,8 @@ function getComment(db, id) {
      FROM comment_mentions m LEFT JOIN users u ON u.id = m.mentioned_user_id
      WHERE m.comment_id = ?`
   ).all(Number(id)) || [];
-  return { ...row, mentions };
+  // S20-T02 语音评论：无文字（DB 中为 NULL）统一归一化为空字符串，保持 API 契约
+  return { ...row, content: row.content || '', mentions };
 }
 
 /**
@@ -222,6 +227,7 @@ function listComments(db, dramaId, opts = {}) {
 
   const decorate = (r) => ({
     ...r,
+    content: r.content || '', // 语音评论无文字时归一化为空字符串
     unread: opts.viewerId ? !readSet.has(Number(r.id)) : false,
   });
 

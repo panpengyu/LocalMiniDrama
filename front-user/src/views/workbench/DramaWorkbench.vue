@@ -81,6 +81,11 @@
             评论
           </el-button>
         </el-badge>
+        <!-- S20-T01: 分支叙事入口 -->
+        <el-button size="small" type="danger" plain @click="branchPanelVisible = true">
+          <el-icon><Share /></el-icon>
+          分支
+        </el-button>
         <el-button size="small" @click="toggleTheme" class="wb-theme-btn">
           <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
           {{ isDark ? '浅色' : '暗色' }}
@@ -562,13 +567,21 @@
       :my-role-tag="collabRoleTag"
       @seek-timestamp="onCommentSeek"
     />
+
+    <!-- ============== S20-T01: 分支叙事面板（创建/重命名/删除/条件连线/按分支导出） ============== -->
+    <BranchPanel
+      v-model="branchPanelVisible"
+      :drama-id="dramaId"
+      :drama="drama"
+      @changed="onBranchChanged"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera, UserFilled, Clock, ChatLineSquare } from '@element-plus/icons-vue'
+import { List, Moon, Plus, Sunny, FullScreen, Connection, Monitor, VideoCamera, UserFilled, Clock, ChatLineSquare, Share } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import ProjectNavTree from './ProjectNavTree.vue'
@@ -584,6 +597,7 @@ import SmartEditTimeline from '@/components/workbench/SmartEditTimeline.vue'
 import CollaborationPanel from '@/components/workbench/CollaborationPanel.vue'
 import VersionManagerPanel from '@/components/workbench/VersionManagerPanel.vue'
 import CommentPanel from '@/components/workbench/CommentPanel.vue'
+import BranchPanel from '@/components/workbench/BranchPanel.vue'
 import { useCollaboration } from '@/composables/useCollaboration'
 
 import { dramaAPI } from '@/api/drama'
@@ -1419,6 +1433,17 @@ const commentPanelVisible = ref(false)
 const activeCommentNodeKey = ref(null)
 const activeCommentVideoSrc = ref('')
 const commentUnread = ref(0)
+
+/* ============================================================
+   S20-T01: 分支叙事面板
+   - 面板内完成创建/重命名/删除分支、条件连线、按分支导出；
+   - 任何变更后通过 wbCanvasRef.refresh() 重拉 drama，保证画布/左树/时间轴同步。
+   ============================================================ */
+const branchPanelVisible = ref(false)
+function onBranchChanged() {
+  log.info('[S20-T01] 分支已变更，刷新画布数据')
+  scheduleCanvasRefresh()
+}
 
 /**
  * 从画布节点数据中提取可播放的视频地址（用于评论面板时间戳跳转的内嵌预览）。
