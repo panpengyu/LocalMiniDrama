@@ -1,0 +1,25 @@
+{
+  "apps": [
+    {
+      "name": "localminidrama-api",
+      "script": "src/server.js",
+      "cwd": "backend-node",
+      "instances": "max",
+      "exec_mode": "cluster",
+      "max_memory_restart": "512M",
+      "env": {
+        "NODE_ENV": "production",
+        "PORT": "5679"
+      },
+      "env_development": {
+        "NODE_ENV": "development",
+        "PORT": "5679",
+        "DEBUG": "1"
+      },
+      "out_file": "../logs/pm2-api-out.log",
+      "error_file": "../logs/pm2-api-error.log",
+      "merge_logs": true,
+      "time": true
+    }
+  ]
+}

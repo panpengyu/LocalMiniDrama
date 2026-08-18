@@ -69,6 +69,7 @@ const routes = [
       { path: 'system/open-platform-apps', name: 'OpenPlatformApps', component: () => import('@/views/system/OpenPlatformApps.vue'), meta: { title: 'API应用审批' } },
       { path: 'system/monitor', name: 'SystemMonitor', component: () => import('@/views/system/Monitor.vue'), meta: { title: '系统监控大屏' } },
       { path: 'system/security-policy', name: 'SecurityPolicy', component: () => import('@/views/system/SecurityPolicy.vue'), meta: { title: '安全策略' } },
+      { path: 'system/ops-center', name: 'OpsCenter', component: () => import('@/views/system/OpsCenter.vue'), meta: { title: '运维操作台' } },
       { path: 'system/online-sessions', name: 'OnlineSessions', component: () => import('@/views/system/OnlineSessions.vue'), meta: { title: '在线会话' } },
       { path: 'operation/data-analytics', name: 'DataAnalytics', component: () => import('@/views/operation/DataAnalytics.vue'), meta: { title: '数据分析平台' } },
       { path: 'operation/dashboard', name: 'OperationDashboard', component: () => import('@/views/operation/Dashboard.vue'), meta: { title: '自定义仪表盘' } },

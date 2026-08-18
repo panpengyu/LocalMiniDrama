@@ -190,7 +190,8 @@ const menuGroups = [
       { path: '/system/open-platform-apps', title: 'API应用审批' },
       { path: '/system/monitor', title: '系统监控大屏' },
       { path: '/system/security-policy', title: '安全策略' },
-      { path: '/system/online-sessions', title: '在线会话' }
+      { path: '/system/online-sessions', title: '在线会话' },
+      { path: '/system/ops-center', title: '运维操作台' }
     ]
   }
 ]

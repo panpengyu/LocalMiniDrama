@@ -163,8 +163,14 @@ test('[S20-T04][3] matchSfx 标签集合过滤（全部命中优先）', () => {
 // ===========================================================================
 test('[S20-T04][4] 无筛选返回最近素材；强度模式输出合理音量建议', () => {
   const all = sfxService.matchSfx(db, log, { limit: 50 });
-  assert.equal(all.length, 3, '无筛选应返回全部 3 条用户素材');
+  // 无筛选返回全部用户素材；多测试文件并行共享同一真实库（S21 版权测试会插入音效素材），
+  // 因此按“包含本测试三条素材”断言而非“恰好 3 条”
+  assert.ok(all.length >= 3, '无筛选应返回本测试的全部 3 条用户素材');
+  const allIds = all.map((i) => i.id);
+  assert.ok(allIds.includes(ASSET_SUS) && allIds.includes(ASSET_PIANO) && allIds.includes(ASSET_BATTLE),
+    '应包含心跳鼓点/温柔钢琴/热血战斗三条素材');
   for (const item of all) {
+    if (!allIds.includes(item.id)) continue; // 跳过其他集成测试的同类型素材（如 S21 版权测试的音效素材）
     assert.ok(item.suggestedStrength >= 0.1 && item.suggestedStrength <= 1, '强度应在 0~1');
     assert.ok(item.tags.length > 0, '应携带标签');
   }

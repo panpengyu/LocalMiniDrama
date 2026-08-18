@@ -172,13 +172,23 @@ async function createQueue() {
     bullQueue.on('failed', (job, err) => {
       console.error(`[Queue] job failed: ${job?.name}/${job?.id}`, err?.message || err);
     });
-    // 通过一个ping动作验证连接
+    // 通过一个ping动作验证连接（限时 3s，防止 Redis 不可达时 ioredis 无限重连挂起事件循环）
     try {
-      await bullQueue.client.ping();
+      let timer;
+      await Promise.race([
+        bullQueue.client.ping(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Redis ping timeout (3s)')), 3000);
+        }),
+      ]);
+      clearTimeout(timer);
       _redisOk = true;
     } catch (pingErr) {
       console.warn('[Queue] Redis ping failed, fallback to MemoryQueue:', pingErr.message);
-      try { await bullQueue.close(); } catch (_) {}
+      try { bullQueue.client.disconnect(); } catch (_) {} // 立即断开，清除 ioredis 重连定时器
+      try {
+        await Promise.race([bullQueue.close(), new Promise((r) => setTimeout(r, 2000))]);
+      } catch (_) {}
       _queue = new MemoryQueue();
       _fallback = true;
       _redisOk = false;

@@ -47,6 +47,7 @@ const editRoutes = require('./edit');
 const styleRoutes = require('./styles');
 const bgmRoutes = require('./bgm');
 const sfxRoutes = require('./sfx');
+const opsRoutes = require('./ops');
 
 function setupRouter(cfg, db, log) {
   const r = express.Router();
@@ -313,6 +314,9 @@ function setupRouter(cfg, db, log) {
 
   // ---------- S20-T04 音效智能匹配 ----------
   r.use('/sfx', sfxRoutes(db, log));
+
+  // ---------- S21-T01/T02 版权检测 + 运维自动化 ----------
+  r.use('/ops', opsRoutes(db, log, cfg));
 
   // ---------- 剧集模块 ----------
   r.post('/episodes/:episode_id/storyboards', drama.generateStoryboard);
