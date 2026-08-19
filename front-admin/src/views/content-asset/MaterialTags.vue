@@ -124,7 +124,7 @@ async function loadDict() {
   loading.value = true
   try {
     const res = await materialAPI.tagDictionary({ kind: kind.value })
-    tags.value = res.data.tags || []
+    tags.value = res.tags || []
   } finally {
     loading.value = false
   }
@@ -132,7 +132,7 @@ async function loadDict() {
 async function loadSummary() {
   try {
     const res = await materialAPI.scopeSummary()
-    summary.value = res.data
+    summary.value = res
   } catch (e) {
     summary.value = null
   }
@@ -145,7 +145,7 @@ async function doBatchTag() {
   batching.value = true
   try {
     const res = await materialAPI.batchTag(kind.value, 50)
-    ElMessage.success(`已处理 ${res.data.processed ?? 0} / ${res.data.total ?? 0} 个未打标签素材`)
+    ElMessage.success(`已处理 ${res.processed ?? 0} / ${res.total ?? 0} 个未打标签素材`)
     reload()
   } catch (e) {
     ElMessage.error(e?.message || '批量打标签失败')

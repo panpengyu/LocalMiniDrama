@@ -18,10 +18,10 @@ function maskUser(u) { return u ? { id: u.id, username: u.username || u.name, ro
 function opsRoutes(db, log, cfg) {
   const express = require('express');
   const router = express.Router();
-  const response = require('../utils/response');
+  const response = require('../response');
   const { requireAuth, requireRole } = require('../middleware/auth');
 
-  const adminOnly = [requireAuth, requireRole(['admin'])];
+  const adminOnly = [requireAuth, requireRole(['admin', 'super_admin'])];
 
   // ============ 版权检测 ============
   router.post('/copyright/detect', ...adminOnly, (req, res) => {

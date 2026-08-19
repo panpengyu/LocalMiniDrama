@@ -15,7 +15,7 @@ function maskUser(u) { return u ? { id: u.id, username: u.username || u.name, ro
 function sfxRoutes(db, log) {
   const express = require('express');
   const router = express.Router();
-  const response = require('../utils/response');
+  const response = require('../response');
   const { requireAuth } = require('../middleware/auth');
 
   router.get('/tags', (req, res) => {

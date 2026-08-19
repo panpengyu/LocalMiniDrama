@@ -194,7 +194,7 @@ function renderCharts() {
 
 async function loadOverview() {
   const res = await lifecycleAPI.overview()
-  ov.value = res.data
+  ov.value = res
   renderCharts()
 }
 async function loadList() {
@@ -205,8 +205,8 @@ async function loadList() {
     if (filters.churn_risk) params.churn_risk = filters.churn_risk
     if (filters.keyword) params.keyword = filters.keyword
     const res = await lifecycleAPI.profiles(params)
-    rows.value = res.data.items || []
-    total.value = res.data.pagination?.total || 0
+    rows.value = res.items || []
+    total.value = res.pagination?.total || 0
   } finally {
     loading.value = false
   }
@@ -218,7 +218,7 @@ async function doRecompute() {
   recomputing.value = true
   try {
     const res = await lifecycleAPI.recompute()
-    ElMessage.success(`已重算 ${res.data.computed} / ${res.data.total} 位用户`)
+    ElMessage.success(`已重算 ${res.computed} / ${res.total} 位用户`)
     await loadAll()
   } catch (e) {
     ElMessage.error(e?.message || '重算失败')

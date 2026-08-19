@@ -129,6 +129,13 @@ function setupRouter(cfg, db, log) {
   r.put('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.updateTeam);
   r.delete('/admin/teams/:id', requireAuth, requireRole(['super_admin']), admin.deleteTeam);
 
+  // S21-P1 管理页补齐（批 A）：渠道管理 + 作品管理（admin/super_admin）
+  const adminExtRoutes = require('./adminExt');
+  r.use('/admin', adminExtRoutes(db, log));
+  // S21-P2/P3 管理页补齐（批 B 站点配置 + 批 C 系统管理）：品牌/短信/TOS/协议/版本日志/公告 + 管理员/角色/菜单/字典/参数/日志检索/问题排查
+  const adminSiteRoutes = require('./adminSite');
+  r.use('/admin', adminSiteRoutes(db, log));
+
   // ---------- 数据异常检测 ----------
   r.get('/admin/data-anomalies',          requireAuth, requireRole(['super_admin']), admin.getDataAnomalies);
   r.get('/admin/data-anomalies/config',   requireAuth, requireRole(['super_admin']), admin.getAnomalyConfig);

@@ -120,8 +120,8 @@ async function load(page) {
       pageSize: query.pageSize
     }
     const res = await securityAPI.sessions(params)
-    rows.value = res.data || []
-    total.value = res.total || 0
+    rows.value = res.items || []
+    total.value = res.pagination?.total || 0
   } catch (e) {
     ElMessage.error('加载会话失败：' + (e.message || '网络错误'))
   } finally {
@@ -170,7 +170,7 @@ async function confirmRevokeAll() {
 async function handlePrune() {
   try {
     const res = await securityAPI.pruneSessions()
-    ElMessage.success(`已清理 ${res.data ? res.data.removed : 0} 条过期/已下线会话`)
+    ElMessage.success(`已清理 ${res?.removed || 0} 条过期/已下线会话`)
     load()
   } catch (e) {
     ElMessage.error('清理失败：' + (e.message || '网络错误'))

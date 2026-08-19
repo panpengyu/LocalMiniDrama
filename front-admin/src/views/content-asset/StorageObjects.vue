@@ -185,12 +185,12 @@ function lifecycleTagType(life) {
 
 async function loadStats() {
   const res = await storageAPI.getStats()
-  stats.value = res.data
+  stats.value = res
 }
 async function loadHealth() {
   try {
     const res = await storageAPI.health()
-    health.value = res.data
+    health.value = res
   } catch (e) {
     health.value = { type: 'unknown', ok: false }
   }
@@ -203,8 +203,8 @@ async function loadList() {
     if (filters.lifecycle) params.lifecycle = filters.lifecycle
     if (filters.drama_id) params.drama_id = filters.drama_id
     const res = await storageAPI.listObjects(params)
-    rows.value = res.data.items || []
-    total.value = res.data.pagination?.total || 0
+    rows.value = res.items || []
+    total.value = res.pagination?.total || 0
   } finally {
     loading.value = false
   }
@@ -230,7 +230,7 @@ async function doLifecycleScan() {
   scanning.value = true
   try {
     const res = await storageAPI.lifecycleScan(90)
-    ElMessage.success(`扫描完成：共 ${res.data.scanned} 个，归档 ${res.data.archived} 个`)
+    ElMessage.success(`扫描完成：共 ${res.scanned} 个，归档 ${res.archived} 个`)
     await loadAll()
   } catch (e) {
     ElMessage.error(e?.message || '扫描失败')

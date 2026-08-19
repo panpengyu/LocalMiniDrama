@@ -172,8 +172,8 @@ async function loadCopyright(p = 1) {
   listLoading.value = true
   try {
     const res = await opsAPI.copyrightList({ page: p, page_size: pageSize.value, status: statusFilter.value })
-    copyrightItems.value = (res.data?.items || []).map((it) => ({ ...it, _detecting: false }))
-    copyrightTotal.value = res.data?.total || 0
+    copyrightItems.value = (res.items || []).map((it) => ({ ...it, _detecting: false }))
+    copyrightTotal.value = res.total || 0
   } catch (e) {
     ElMessage.error('版权状态列表加载失败：' + (e.message || '网络错误'))
   } finally {
@@ -185,7 +185,7 @@ async function handleDetect(row) {
   row._detecting = true
   try {
     const res = await opsAPI.detectCopyright({ asset_id: row.id })
-    const r = res.data?.results?.[0]
+    const r = res.results?.[0]
     if (r) ElMessage[statusMeta[r.status]?.type === 'danger' ? 'warning' : 'success'](`素材 ${row.name}：${r.reason || r.status}`)
     else ElMessage.success('检测完成')
     loadCopyright(page.value)
@@ -205,7 +205,7 @@ async function handleDetectAll() {
   detectingAll.value = true
   try {
     const res = await opsAPI.detectCopyright({ all: true })
-    ElMessage.success(`批量检测完成，共处理 ${res.data?.count || 0} 条`)
+    ElMessage.success(`批量检测完成，共处理 ${res.count || 0} 条`)
     loadCopyright(page.value)
   } catch (e) {
     ElMessage.error('批量检测失败：' + (e.message || '网络错误'))
@@ -240,7 +240,7 @@ async function runOp(action) {
   try {
     const payload = action === 'restore' ? { backup_dir: restoreDir.value.trim() } : action === 'backup' && backupDir.value.trim() ? { backup_dir: backupDir.value.trim() } : {}
     const res = await opsAPI.runScript(action, payload)
-    scriptOutput.value = res.data?.output || '（无输出）'
+    scriptOutput.value = res?.output || '（无输出）'
     ElMessage.success(`${labels[action]}脚本执行成功`)
   } catch (e) {
     scriptOutput.value = e.output || e.message || '脚本执行失败'
@@ -265,8 +265,8 @@ async function loadScaling() {
   scalingLoading.value = true
   try {
     const res = await opsAPI.scalingAdvice()
-    scaling.value = res.data || {}
-    metrics.value = res.data?.metrics || {}
+    scaling.value = res || {}
+    metrics.value = res.metrics || {}
   } catch (e) {
     ElMessage.error('扩缩容建议获取失败：' + (e.message || '网络错误'))
   } finally {

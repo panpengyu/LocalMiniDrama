@@ -153,7 +153,7 @@ const resetting = ref(false)
 async function loadPolicy() {
   try {
     const res = await securityAPI.getPolicy()
-    form.value = JSON.parse(JSON.stringify(res.data || defaultPolicy))
+    form.value = JSON.parse(JSON.stringify(res || defaultPolicy))
   } catch (e) {
     ElMessage.error('读取安全策略失败：' + (e.message || '网络错误'))
   }
@@ -163,7 +163,7 @@ async function handleSave() {
   saving.value = true
   try {
     const res = await securityAPI.updatePolicy(form.value)
-    form.value = res.data
+    form.value = res
     ElMessage.success('安全策略已保存，即时生效')
   } catch (e) {
     ElMessage.error('保存失败：' + (e.message || '网络错误'))
@@ -181,7 +181,7 @@ async function handleReset() {
   resetting.value = true
   try {
     const res = await securityAPI.resetPolicy()
-    form.value = res.data
+    form.value = res
     ElMessage.success('已重置为默认策略')
   } catch (e) {
     ElMessage.error('重置失败：' + (e.message || '网络错误'))
