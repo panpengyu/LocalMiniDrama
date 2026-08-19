@@ -1,6 +1,6 @@
 app:
   name: LocalMiniDrama API
-  version: 1.5.0
+  version: 1.6.0
   debug: true
   language: zh
   # S17-T03 支付配置加密存储密钥（AES-256-GCM；生产环境请改为强随机串并妥善保管）

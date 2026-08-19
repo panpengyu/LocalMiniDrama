@@ -8,6 +8,63 @@
 
 ---
 
+## [1.6.0] - 2026-08-19
+
+### Sprint 17 — 商业化闭环收尾
+
+#### 新增
+
+- **S17-T04 支付订单管理**（`src/routes/membership.js` + `front-admin/src/views/finance/PaymentOrders.vue`）：复用 `membership_orders` 实现管理端订单全量查询（状态 / 渠道 / 时间 / 用户筛选）、单笔关单、退款，真实操作 MySQL，无 mock
+- **S17-T05 全局计费规则与收入成本看板**（`front-admin/src/views/finance/GlobalBilling.vue`）：计费规则编辑表单 + 全局收入 / 成本聚合看板
+- **S17-T06 支付宝真实接入**（`src/services/paymentService.js` + `config.yaml`）：基于 alipay-sdk 实现统一下单（当面付 / 电脑网站支付按渠道）、RSA2 回调验签（替换原恒 false 占位）、退款；沙箱 / 正式开关可切换，密钥加密存储、前端脱敏
+
+### Sprint 18 — 运营增强
+
+#### 新增
+
+- **S18-T01 事件埋点与转化分析**（`migrations/57_s18_ops.sql` + `src/services/trackingService.js` + `src/routes/tracking.js` + 前端双端 SDK）：
+  - `tracking_events` 批量落库 + 定时聚合 + 防刷限流，`/tracking/collect` 采集、`/admin/analytics/events` 聚合查询
+  - `analyticsService` 扩展留存分析 D1 / D7 / D30 与转化漏斗（注册 → 建项目 → 生成分镜 → 出片），前端 `DataAnalytics.vue` 接入
+- **S18-T02 报表订阅与推送**（`src/services/reportJobService.js` + `notifyService.js` + `src/routes/reports.js`）：node-cron 日 / 周 / 月调度生成订阅报表，SMTP 与钉钉双通道推送，失败重试并记录可检索日志
+- **S18-T03 自定义仪表盘**（`dashboard_layout` 表 + `src/routes/dashboard.js` + `Dashboard.vue`）：按管理员持久化 JSON 布局，vuedraggable 拖拽卡片，图表组件化
+- **S18-T04 数据导出与自定义报表**（`src/routes/analytics.js` + `report_templates` 表）：后端生成 CSV / XLSX 流式响应导出，自定义报表模板可保存复用
+
+### Sprint 19 — 模型中枢与安全
+
+#### 新增
+
+- **S19-T01 模型 A/B 测试**（`src/services/modelRoutingService.js` + `abTestService.js` + `src/routes/models.js` + `front-admin/src/views/model-gateway/AbTest.vue`）：按任务类型 / 模型组 / 流量比例 hash 路由，调用结果写入 `ai_model_call_logs.ab_group`，对比报告 + 一键设默认
+- **S19-T02 模型用量配额**（`model_usage_quota` 表 + `modelQuotaService.js`）：主体 / 模型 / 周期多维限额，行锁 + 事务原子防超发，超限在路由层前置拦截
+- **S19-T03 安全策略与会话管理**（`migrations/59_s19_security_session.sql` + `securityPolicyService.js` + `sessionService.js` + `src/routes/security.js`）：
+  - `security_policy` 单一配置行 JSON 存储：密码复杂度 / 有效期 / 连续失败锁定 / IP 白名单 / 2FA-TOTP（otplib），默认关闭、开启即强制生效
+  - `user_sessions` 与 JWT 校验联动，管理端可强制下线、清理过期会话；用户端 2FA 绑定引导
+  - 管理端 `SecurityPolicy.vue` / `OnlineSessions.vue` 配置与查看页面
+
+### Sprint 20 — 创作体验
+
+#### 新增
+
+- **S20-T01 分支叙事**（`migrations/60_s20_branch_voice.sql` + `DramaCanvas.vue` + `CanvasBranch.vue`）：`episodes` / `storyboards` 可空分支列迁移（向后兼容），画布分支节点 / 条件连线 / 分支模式切换 / 按分支导出剧本
+- **S20-T02 语音评论**（`canvas_comments` 语音列 + `VoiceRecorder.vue`）：MediaRecorder 录制 15-60s，复用 `/static` 上传，波形播放器播放
+- **S20-T03 智能剪辑面板**（`SmartEditTimeline.vue` + `videoService`）：字幕 / 水印 / 调色三面板 Tab 切换，参数透传后端处理
+- **S20-T04 音效智能匹配**（`src/services/sfxService.js` + `src/routes/sfx.js` + `SoundEffects.vue`）：基于用户自有素材标签匹配与强度控制，不预置任何第三方版权音效
+
+### Sprint 21 — 版权检测与运维管理
+
+#### 新增
+
+- **S21-T01 版权检测**（`src/services/fingerprintService.js` + `migrations/61_s21_copyright.sql` + `src/routes/ops.js`）：自研 pHash（aHash + dHash 组合，纯 Node 无第三方图像库），上传计算写入 `asset_fingerprint`，与公共素材库指纹比对超阈值标「疑似侵权」，比对基准只用本项目自有素材，无侵权风险
+- **S21-T02 运维自动化**（`deploy/opsScripts/` backup.sh / restore.sh / rollback.sh + `src/services/opsService.js` + `OpsCenter.vue`）：备份 / 恢复 / 回滚脚本配合 Git tag + PM2，运维操作台一键触发并展示实时输出
+- **S21-T03 扩缩容建议**（`opsMonitorService.js` 扩展）：CPU > 70% 持续 5min / 队列积压触发建议，管理端可查看
+- **S21-T04 管理占位页补齐**（`migrations/65/66` + `adminSite.js` / `adminExt.js` + 前端 22 页）：批 A 用户 / 团队 / 渠道 / 作品 / 公共素材 / 演员库，批 B 站点品牌 / 短信 / TOS / 协议 / 公告 / 版本日志，批 C 管理员 / 角色 / 菜单 / 字典 / 参数 / 日志检索 / 问题自检 / 安全策略 / 在线会话 / 运维台，全部替换为真实接口页面；统一修正请求拦截器数据解包（页面直取 `res.items` / `res.pagination.total`）
+- **S21-T05 队列验证**：Bull / Redis 队列连通验证，测试 `after()` 钩子 `closeQueue()` 保障 `node --test` 正常退出
+
+### Sprint 22 — 回归发布
+
+- 全量回归测试 798/798 通过；双前端构建通过；版本号七处同步升级至 1.6.0；交付清单与测试报告见 `docs/Sprint22-交付清单与测试报告.md`
+
+---
+
 ## [1.5.0] - 2026-08-14
 
 ### Sprint 16 — 素材推荐引擎 + 全平台优化 + 正式商用

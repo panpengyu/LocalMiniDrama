@@ -4,7 +4,7 @@
 # ============================================================
 app:
   name: LocalMiniDrama API
-  version: 1.5.0
+  version: 1.6.0
   debug: false                 # 生产关闭调试，错误不输出内部堆栈
   language: zh
 server:
