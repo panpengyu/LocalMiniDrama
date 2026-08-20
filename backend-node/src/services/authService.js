@@ -4,8 +4,10 @@ const { snowflakeId } = require('../utils/snowflake');
 const { mysqlNow } = require('../utils/datetime');
 const securityPolicy = require('./securityPolicyService');
 const sessionService = require('./sessionService');
+const { loadConfig } = require('../config');
 
-const JWT_SECRET = 'localminidrama_jwt_secret_key_2026';
+// JWT 签名密钥：环境变量 > config.yaml(app.jwt_secret) > 开发默认值
+const JWT_SECRET = process.env.JWT_SECRET || loadConfig().app?.jwt_secret || 'localminidrama_jwt_secret_key_2026';
 const JWT_EXPIRES_IN = '7d';
 
 function validatePhone(phone) {
@@ -58,9 +60,11 @@ function toSafeUser(user) {
   return safe;
 }
 
-function initAdmin(db) {
+function initAdmin(db, cfg = null) {
   try {
-    const hashedPassword = hashPassword('admin123');
+    // 初始 admin 密码：环境变量 > config.yaml(app.admin_init_password) > 开发默认值
+    const adminPassword = process.env.ADMIN_INIT_PASSWORD || (cfg || loadConfig()).app?.admin_init_password || 'admin123';
+    const hashedPassword = hashPassword(adminPassword);
     const checkStmt = db.prepare('SELECT id FROM users WHERE username = ?');
     const existing = checkStmt.get(['admin']);
 
@@ -69,11 +73,11 @@ function initAdmin(db) {
         'INSERT INTO users (id, username, password, role, nickname, status, user_type) VALUES (?, ?, ?, ?, ?, ?, ?)'
       );
       insertStmt.run([snowflakeId(), 'admin', hashedPassword, 'super_admin', '系统管理员', 1, 'individual']);
-      console.log('Admin created: admin/admin123');
+      console.log('Admin created: admin/<初始密码，见 config.yaml app.admin_init_password>');
     } else {
       const updateStmt = db.prepare('UPDATE users SET password = ?, role = ? WHERE username = ?');
       updateStmt.run([hashedPassword, 'super_admin', 'admin']);
-      console.log('Admin updated: admin/admin123, role: super_admin');
+      console.log('Admin updated: 密码已重置为配置的初始密码, role: super_admin');
     }
   } catch (err) {
     console.warn('Failed to init admin:', err.message);

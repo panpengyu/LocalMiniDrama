@@ -80,6 +80,8 @@ import { ElMessage } from 'element-plus';
 import { Fold, Expand, User, ArrowDown, SwitchButton, Setting, ChatDotSquare, Sunny, Moon, Grid, VideoPlay, Microphone, ChatSquare, MagicStick, Document, RefreshLeft, Memo, TrendCharts, PictureFilled, Box, Headset, Trophy, ShoppingBag, Star, Key, Lock, QuestionFilled } from '@element-plus/icons-vue';
 import { useUserStore } from '@/stores/user';
 import { useTheme } from '@localmini/shared/composables/useTheme';
+// 客服微信二维码统一收敛到外部资源常量（生产部署时可整体替换为自有二维码资源）
+import { WECHAT_QR_URL } from '@/constants/externalAssets';
 const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
@@ -87,7 +89,7 @@ const { isDark, toggleTheme } = useTheme();
 const sidebarCollapsed = ref(false);
 const showWechat = ref(false);
 const vendorLockEnabled = ref(false);
-const wechatQrCode = 'https://lf-cdn.trae.com.cn/obj/trae-ai-image/page_image/93f5b439665b51def2070e63f3651177.jpeg';
+const wechatQrCode = WECHAT_QR_URL;
 const menuItems = [
  { path: '/dashboard', name: '项目列表', icon: Grid },
  { path: '/screenwriter', name: 'AI编剧助手', icon: MagicStick },

@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 12 - S12-T07 权限与安全增强服务
  *
@@ -105,7 +107,7 @@ function recordAudit(db, log, entry) {
   }
 }
 
-function listAuditLogs(db, { actorId, action, keyword, page = 1, pageSize = 20 } = {}) {
+function listAuditLogs(db, { actorId, action, keyword, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = [];
   const params = [];
   if (actorId) { where.push('actor_id = ?'); params.push(Number(actorId)); }
@@ -158,7 +160,7 @@ function recordLogin(db, log, { userId, username, success, ip, userAgent, reason
   }
 }
 
-function listLoginLogs(db, { username, success, page = 1, pageSize = 20 } = {}) {
+function listLoginLogs(db, { username, success, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = [];
   const params = [];
   if (username) { where.push('username LIKE ?'); params.push(`%${username}%`); }

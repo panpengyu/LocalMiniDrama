@@ -5,6 +5,8 @@
  */
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 const { snowflakeId } = require('../utils/snowflake');
 const { mysqlNow, toMysql } = require('../utils/datetime');
 
@@ -57,7 +59,7 @@ function revokeAllForUser(db, userId) {
 }
 
 /** 分页查询会话列表（支持按用户名/ID 关键字与是否在线筛选） */
-function listSessions(db, { keyword, onlyActive, page = 1, pageSize = 20 } = {}) {
+function listSessions(db, { keyword, onlyActive, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = [];
   const params = [];
   if (keyword) {

@@ -3,8 +3,12 @@ app:
   version: 1.6.0
   debug: true
   language: zh
-  # S17-T03 支付配置加密存储密钥（AES-256-GCM；生产环境请改为强随机串并妥善保管）
+  # S17-T03 支付配置加密存储密钥（AES-256-GCM；生产环境请改为强随机串并妥善保管，或通过 APP_SECRET 环境变量注入）
   secret: LocalMiniDrama#S17#PaySecret#2026
+  # JWT 签名密钥（生产环境请改为强随机串，或通过 JWT_SECRET 环境变量注入）
+  jwt_secret: localminidrama_jwt_secret_key_2026
+  # 首次初始化 admin 账号的初始密码（生产环境请通过 ADMIN_INIT_PASSWORD 环境变量覆盖，并部署后立即改密）
+  admin_init_password: admin123
 server:
   port: 5679
   host: 0.0.0.0

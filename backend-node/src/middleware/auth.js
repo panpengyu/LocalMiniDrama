@@ -4,7 +4,8 @@ const { loadConfig } = require('../config');
 const { mysqlNow } = require('../utils/datetime');
 const response = require('../response');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'localminidrama_jwt_secret_key_2026';
+// JWT 签名密钥：环境变量 > config.yaml(app.jwt_secret) > 开发默认值
+const JWT_SECRET = process.env.JWT_SECRET || loadConfig().app?.jwt_secret || 'localminidrama_jwt_secret_key_2026';
 
 // S16-T02 性能优化：用户查询内存缓存（30s TTL），避免每个请求同步查询 MySQL
 // 缓存 key = `u${userId}`，value = { user, expiresAt }

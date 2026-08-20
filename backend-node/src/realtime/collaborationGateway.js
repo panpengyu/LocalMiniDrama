@@ -17,8 +17,10 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
+const { loadConfig } = require('../config');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'localminidrama_jwt_secret_key_2026';
+// JWT 签名密钥：环境变量 > config.yaml(app.jwt_secret) > 开发默认值
+const JWT_SECRET = process.env.JWT_SECRET || loadConfig().app?.jwt_secret || 'localminidrama_jwt_secret_key_2026';
 
 // 心跳：客户端应每 25s ping，服务端 60s 无 pong 判定断连（Socket.io 内置 pingInterval/pingTimeout）
 const PING_INTERVAL = 25000;

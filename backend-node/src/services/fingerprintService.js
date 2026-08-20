@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * S21-T01 自研版权指纹（aHash + dHash 组合感知哈希）
  *
@@ -329,7 +331,7 @@ function detectCopyright(db, log, cfg, { asset_id, assetId, threshold = DEFAULT_
 }
 
 /** 版权状态列表 */
-function listCopyrightStatus(db, { page = 1, pageSize = 20, status } = {}) {
+function listCopyrightStatus(db, { page = 1, pageSize = DEFAULT_PAGE_SIZE, status } = {}) {
   const where = ['a.deleted_at IS NULL'];
   const params = [];
   if (status && status !== 'all') { where.push('a.copyright_status = ?'); params.push(String(status)); }

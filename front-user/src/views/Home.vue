@@ -144,6 +144,8 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+// Hero 背景图 URL 统一收敛到外部资源常量（部署时可整体替换为自有资源）
+import { HERO_BG_URL } from '@/constants/externalAssets'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -222,7 +224,8 @@ async function handleLogin() {
 .hero-bg {
   position: fixed;
   inset: 0;
-  background: url('https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cinematic%20dark%20blue%20gradient%20abstract%20background%20with%20dramatic%20lighting%20and%20sparkles%20professional%20ui%20design&image_size=landscape_16_9') center center / cover no-repeat;
+  /* 背景图 URL 统一收敛到外部资源常量 externalAssets.js，部署时可整体替换为自有资源 */
+  background: v-bind(HERO_BG_URL) center center / cover no-repeat;
   z-index: 0;
 }
 

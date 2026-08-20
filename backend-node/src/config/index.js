@@ -36,9 +36,42 @@ function loadConfig() {
   if (!parsed?.app?.name) {
     throw new Error('Invalid config: missing app section');
   }
-  configCache = parsed;
+  configCache = applyEnvOverrides(parsed);
   configCacheMtime = mtime;
-  return parsed;
+  return configCache;
+}
+
+/**
+ * 敏感配置的环境变量覆盖（生产安全注入，凭证不落盘）。
+ * 优先级：环境变量 > config.yaml > 代码内默认值。
+ * 生产环境请优先通过环境变量注入敏感值，避免明文写入配置文件：
+ *   JWT_SECRET / APP_SECRET / ADMIN_INIT_PASSWORD
+ *   DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
+ * @param {object} cfg - 从 YAML 解析出的配置对象（原地修改并返回）
+ * @returns {object} 应用环境变量覆盖后的配置
+ */
+function applyEnvOverrides(cfg) {
+  const overrides = {
+    'app.secret': process.env.APP_SECRET,
+    'app.jwt_secret': process.env.JWT_SECRET,
+    'app.admin_init_password': process.env.ADMIN_INIT_PASSWORD,
+    'database.host': process.env.DB_HOST,
+    'database.port': process.env.DB_PORT,
+    'database.user': process.env.DB_USER,
+    'database.password': process.env.DB_PASSWORD,
+    'database.database': process.env.DB_NAME,
+  };
+  for (const [dotPath, value] of Object.entries(overrides)) {
+    if (value === undefined || value === null || value === '') continue;
+    const keys = dotPath.split('.');
+    let node = cfg;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!node[keys[i]] || typeof node[keys[i]] !== 'object') node[keys[i]] = {};
+      node = node[keys[i]];
+    }
+    node[keys[keys.length - 1]] = keys[keys.length - 1] === 'port' ? Number(value) : value;
+  }
+  return cfg;
 }
 
 module.exports = { loadConfig };

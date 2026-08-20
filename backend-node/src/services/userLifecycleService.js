@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 12 - S12-T04 用户生命周期管理
  *
@@ -220,7 +222,7 @@ function overview(db) {
 }
 
 /** 分页列出用户生命周期画像（join 用户名） */
-function listProfiles(db, { stage = null, churnRisk = null, keyword = null, page = 1, pageSize = 20 } = {}) {
+function listProfiles(db, { stage = null, churnRisk = null, keyword = null, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   let sql = `FROM user_lifecycle lc JOIN users u ON u.id = lc.user_id WHERE u.deleted_at IS NULL`;
   const params = [];
   if (stage) { sql += ' AND lc.stage = ?'; params.push(stage); }

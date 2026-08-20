@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 15 - S15-T01 API Key 管理系统
  *
@@ -239,7 +241,7 @@ function reviewApp(db, log, { appId, approve, reason, adminId } = {}) {
 }
 
 /** 管理端分页查询应用（支持状态过滤；LEFT JOIN 带出申请人信息）。 */
-function listAppsAdmin(db, log, { status, keyword, page = 1, pageSize = 20 } = {}) {
+function listAppsAdmin(db, log, { status, keyword, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = ['a.deleted_at IS NULL'];
   const params = [];
   if (status && Object.values(APP_STATUS).includes(status)) {
@@ -512,7 +514,7 @@ function getCallTrend(db, log, { userId, days = 7 } = {}) {
  * 错误日志：最近失败调用（分页）。
  * @param {object} opts { userId, keyId?, page?, pageSize? }
  */
-function getErrorLogs(db, log, { userId, keyId, page = 1, pageSize = 20 } = {}) {
+function getErrorLogs(db, log, { userId, keyId, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const p = Math.max(Number(page) || 1, 1);
   const ps = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
   const offset = (p - 1) * ps;

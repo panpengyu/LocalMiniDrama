@@ -304,6 +304,8 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+// 演示/示例图片 URL 统一收敛到外部资源常量（见文件头部说明，部署时可整体替换为自有资源）
+import { STYLE_IMAGES, SAMPLE_IMAGES, MOCK_GENERATED_IMAGES } from '@/constants/externalAssets'
 
 // 获取当前登录用户
 const userStore = useUserStore()
@@ -379,14 +381,14 @@ const placeholderText = '你可以在这里输入图片生成需求哦~比如:�
 const styleCategories = ['全部', '人物', '场景', '风格', '光影', '色彩']
 
 const styleLibrary = [
-  { name: '写实人像', category: '人物', tags: '高清、细腻、真实感', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=realistic%20portrait%20beautiful%20woman%2C%20soft%20lighting%2C%20professional%20photography&image_size=square_hd' },
-  { name: '动漫少女', category: '人物', tags: '二次元、可爱、萌系', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=anime%20style%20cute%20girl%2C%20kawaii%2C%20anime%20art%2C%20colorful&image_size=square_hd' },
-  { name: '赛博朋克', category: '风格', tags: '未来感、霓虹灯、高科技', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cyberpunk%20city%20night%2C%20neon%20lights%2C%20futuristic%2C%20high%20tech&image_size=square_hd' },
-  { name: '古风山水', category: '场景', tags: '中国风、水墨画、意境', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=chinese%20traditional%20landscape%2C%20ink%20painting%2C%20mountains%2C%20misty&image_size=square_hd' },
-  { name: '科幻星球', category: '场景', tags: '宇宙、外星、科幻', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=fantasy%20alien%20planet%2C%20science%20fiction%2C%20space%2C%20cosmic&image_size=square_hd' },
-  { name: '暖光温馨', category: '光影', tags: '暖色、温馨、柔和', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=warm%20cozy%20room%2C%20soft%20warm%20lighting%2C%20comfortable%2C%20homey&image_size=square_hd' },
-  { name: '冷色调', category: '色彩', tags: '蓝色、冷光、神秘', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cold%20blue%20tone%2C%20mysterious%2C%20cool%20lighting%2C%20serene&image_size=square_hd' },
-  { name: '油画风格', category: '风格', tags: '艺术、油画、古典', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=oil%20painting%20style%2C%20classical%20art%2C%20masterpiece&image_size=square_hd' },
+  { name: '写实人像', category: '人物', tags: '高清、细腻、真实感', image: STYLE_IMAGES['写实人像'] },
+  { name: '动漫少女', category: '人物', tags: '二次元、可爱、萌系', image: STYLE_IMAGES['动漫少女'] },
+  { name: '赛博朋克', category: '风格', tags: '未来感、霓虹灯、高科技', image: STYLE_IMAGES['赛博朋克'] },
+  { name: '古风山水', category: '场景', tags: '中国风、水墨画、意境', image: STYLE_IMAGES['古风山水'] },
+  { name: '科幻星球', category: '场景', tags: '宇宙、外星、科幻', image: STYLE_IMAGES['科幻星球'] },
+  { name: '暖光温馨', category: '光影', tags: '暖色、温馨、柔和', image: STYLE_IMAGES['暖光温馨'] },
+  { name: '冷色调', category: '色彩', tags: '蓝色、冷光、神秘', image: STYLE_IMAGES['冷色调'] },
+  { name: '油画风格', category: '风格', tags: '艺术、油画、古典', image: STYLE_IMAGES['油画风格'] },
 ]
 
 // 根据选中分类过滤风格库
@@ -399,14 +401,14 @@ const filteredStyles = computed(() => {
 
 // UI 示例样例，用于一键填充提示词
 const samples = [
-  { name: '奇幻森林', prompt: '神秘的奇幻森林，发光的蘑菇，小精灵，魔法氛围', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=magical%20fantasy%20forest%2C%20glowing%20mushrooms%2C%20fairies%2C%20magic%20atmosphere&image_size=square_hd', models: ['Seedream 4.5', 'Seedream 5.0-lite'] },
-  { name: '未来战士', prompt: '世界上最帅气的魔装机神风格武神·共工金属流体机甲设计草图，主色深红色，点缀色黄金色，流畅华丽，炫酷，有棱角，威武霸气，对称，夸张的装备，身形修长，装饰繁多，丰富细节，全身模型展示。红色海浪为基底，火神·共工字体运用到图纸上，包括对机甲各部分大量尺寸、解释性文本注释、英文设计说明，不同角度的零散截图增加了场景深度，每个细节都有展示，炫彩融合暗黑。暗黑美学，国风科幻，CG艺术，特写，压迫感。', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=futuristic%20soldier%2C%20mechanical%20armor%2C%20cyberpunk%20style%2C%20battle%20pose&image_size=square_hd', models: ['Seedream 4.5', 'GPT Image-2 臻享版'] },
-  { name: '云端城堡', prompt: '漂浮在云端的城堡，梦幻天空，童话风格', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=castle%20floating%20in%20clouds%2C%20dreamy%20sky%2C%20fantasy%20style&image_size=square_hd', models: ['Seedream 4.5', 'MJ v8.1'] },
-  { name: '小满时节', prompt: '中国传统节气小满，田园风光，清新自然', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=chinese%20traditional%20solstice%20festival%2C%20pastoral%20scene%2C%20fresh%20natural&image_size=square_hd', models: ['Seedream 4.5', 'Wan2.7-极速版'] },
-  { name: '水墨山水', prompt: '中国水墨画风格，山水意境，留白艺术', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=chinese%20ink%20wash%20painting%2C%20mountains%20and%20water%2C%20artistic&image_size=square_hd', models: ['Seedream 4.5', 'MJ v7'] },
-  { name: '樱花少女', prompt: '樱花树下的少女，粉色浪漫，日系风格', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=girl%20under%20cherry%20blossom%2C%20pink%20romantic%2C%20japanese%20style&image_size=square_hd', models: ['Seedream 4.5', '可灵v3-标准版'] },
-  { name: '星空夜景', prompt: '璀璨星空，银河，夜景，浪漫氛围', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=starry%20night%20sky%2C%20milky%20way%2C%20romantic%2C%20beautiful&image_size=square_hd', models: ['Seedream 4.5', 'Nano-banana2'] },
-  { name: '猫咪', prompt: '水粉油画，朦胧感，插画，大师级别，弥散渐变，磨砂质感，毛茸茸的花猫在地上待着，周边是植被，叶子透过阳光温暖的洒在猫咪身上，毛发边缘透光，可爱', image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cute%20cat%2C%20watercolor%20painting%2C%20soft%20lighting%2C%20fluffy&image_size=square_hd', models: ['Seedream 4.5', 'Seedream 5.0-lite', 'GPT Image-2 臻享版'] },
+  { name: '奇幻森林', prompt: '神秘的奇幻森林，发光的蘑菇，小精灵，魔法氛围', image: SAMPLE_IMAGES['奇幻森林'], models: ['Seedream 4.5', 'Seedream 5.0-lite'] },
+  { name: '未来战士', prompt: '世界上最帅气的魔装机神风格武神·共工金属流体机甲设计草图，主色深红色，点缀色黄金色，流畅华丽，炫酷，有棱角，威武霸气，对称，夸张的装备，身形修长，装饰繁多，丰富细节，全身模型展示。红色海浪为基底，火神·共工字体运用到图纸上，包括对机甲各部分大量尺寸、解释性文本注释、英文设计说明，不同角度的零散截图增加了场景深度，每个细节都有展示，炫彩融合暗黑。暗黑美学，国风科幻，CG艺术，特写，压迫感。', image: SAMPLE_IMAGES['未来战士'], models: ['Seedream 4.5', 'GPT Image-2 臻享版'] },
+  { name: '云端城堡', prompt: '漂浮在云端的城堡，梦幻天空，童话风格', image: SAMPLE_IMAGES['云端城堡'], models: ['Seedream 4.5', 'MJ v8.1'] },
+  { name: '小满时节', prompt: '中国传统节气小满，田园风光，清新自然', image: SAMPLE_IMAGES['小满时节'], models: ['Seedream 4.5', 'Wan2.7-极速版'] },
+  { name: '水墨山水', prompt: '中国水墨画风格，山水意境，留白艺术', image: SAMPLE_IMAGES['水墨山水'], models: ['Seedream 4.5', 'MJ v7'] },
+  { name: '樱花少女', prompt: '樱花树下的少女，粉色浪漫，日系风格', image: SAMPLE_IMAGES['樱花少女'], models: ['Seedream 4.5', '可灵v3-标准版'] },
+  { name: '星空夜景', prompt: '璀璨星空，银河，夜景，浪漫氛围', image: SAMPLE_IMAGES['星空夜景'], models: ['Seedream 4.5', 'Nano-banana2'] },
+  { name: '猫咪', prompt: '水粉油画，朦胧感，插画，大师级别，弥散渐变，磨砂质感，毛茸茸的花猫在地上待着，周边是植被，叶子透过阳光温暖的洒在猫咪身上，毛发边缘透光，可爱', image: SAMPLE_IMAGES['猫咪'], models: ['Seedream 4.5', 'Seedream 5.0-lite', 'GPT Image-2 臻享版'] },
 ]
 
 const filteredSamples = computed(() => {
@@ -575,14 +577,9 @@ function generate() {
   // 将新的“生成中”记录插入历史顶部
   results.value = [...newResults, ...results.value]
 
-  // 模拟异步生成（2s 后返回随机 mock 图片）
+  // 模拟异步生成（2s 后返回随机 mock 图片；mock 图片 URL 见 externalAssets.js）
   setTimeout(() => {
-    const mockImages = [
-      'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=a%20giant%20blue%20whale%20swimming%20through%20the%20sky%20above%20a%20city%20skyline%2C%20clouds%20floating%20around%20its%20body%2C%20sunlight%20rays%20piercing%20through%20clouds%2C%20surreal%20fantasy%20scene%2C%20people%20watching%20from%20rooftops%2C%20dreamy%20atmosphere%2C%20cinematic%20lighting%2C%20ultra%20detailed&image_size=square_hd',
-      'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=beautiful%20cyberpunk%20city%20at%20night%2C%20neon%20lights%2C%20flying%20cars%2C%20holographic%20billboards%2C%20rain%20reflections%2C%20futuristic%20architecture%2C%20cyberpunk%20aesthetic%2C%20cinematic%20lighting%2C%20ultra%20realistic&image_size=square_hd',
-      'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=ancient%20chinese%20palace%2C%20traditional%20architecture%2C%20cherry%20blossoms%2C%20misty%20mountains%2C%20golden%20light%2C%20ink%20painting%20style%2C%20serene%20atmosphere%2C%20oriental%20beauty%2C%20cinematic&image_size=square_hd',
-      'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=futuristic%20space%20station%2C%20stars%20in%20background%2C%20earth%20visible%2C%20advanced%20technology%2C%20blue%20energy%20fields%2C%20science%20fiction%2C%20epic%20scale%2C%20cinematic%20lighting&image_size=square_hd',
-    ]
+    const mockImages = MOCK_GENERATED_IMAGES
 
     results.value[0].image = mockImages[Math.floor(Math.random() * mockImages.length)]
     results.value[0].loading = false

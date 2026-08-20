@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 16 - S16-T05 全链路监控告警（运维侧扩展）
  *
@@ -87,7 +89,7 @@ function reportFrontendError(db, log, { userId = null, level = 'error', category
 }
 
 /** 管理端分页查询前端错误 */
-function listFrontendErrors(db, log, { page = 1, pageSize = 20, category, level } = {}) {
+function listFrontendErrors(db, log, { page = 1, pageSize = DEFAULT_PAGE_SIZE, category, level } = {}) {
   const where = ['1=1'];
   const params = [];
   if (category) { where.push('category = ?'); params.push(String(category)); }

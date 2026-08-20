@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,7 +18,8 @@ from .errors import (
     OpenApiRateLimitError,
 )
 
-_DEFAULT_BASE_URL = "http://localhost:5679/api/v1/open"
+# 默认基地址：本地开发默认指向本机后端；生产环境可通过环境变量 OPENAPI_BASE_URL 覆盖
+_DEFAULT_BASE_URL = os.environ.get("OPENAPI_BASE_URL", "http://localhost:5679/api/v1/open")
 
 
 class OpenApiClient(object):

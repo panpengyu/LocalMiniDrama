@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 18 - S18-T01 事件埋点系统
  *
@@ -193,7 +195,7 @@ function stats(db, { days = 30, event = null } = {}) {
 /**
  * 管理端事件明细查询（分页 + 关键字/事件/用户/时间筛选）。
  */
-function listEvents(db, { keyword = null, event = null, userId = null, dateFrom = null, dateTo = null, page = 1, pageSize = 20 } = {}) {
+function listEvents(db, { keyword = null, event = null, userId = null, dateFrom = null, dateTo = null, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = [];
   const params = [];
   if (keyword) {

@@ -2,6 +2,10 @@ import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 
+// 端口与后端代理目标支持环境变量覆盖（避免硬编码）：PORT / API_PROXY_TARGET
+const PORT = Number(process.env.PORT) || 3014
+const API_PROXY_TARGET = process.env.API_PROXY_TARGET || 'http://127.0.0.1:5679'
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -11,16 +15,16 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 3014,
+    port: PORT,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5679',
+        target: API_PROXY_TARGET,
         changeOrigin: true,
         proxyTimeout: 600000,
         timeout: 600000
       },
       '/static': {
-        target: 'http://127.0.0.1:5679',
+        target: API_PROXY_TARGET,
         changeOrigin: true
       }
     }

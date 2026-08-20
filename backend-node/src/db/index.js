@@ -191,11 +191,12 @@ function getDb(config) {
     // 创建 MySQL 连接
     try {
       const conn = new MySql({
-        host: config.host || 'localhost',
-        port: config.port || 3306,
-        user: config.user || 'root',
-        password: config.password || 'root',
-        database: config.database || 'localminidrama',
+        // 兜底仅用于本地开发；生产环境务必通过 config.yaml 或 DB_* 环境变量（见 config/index.js）显式配置
+        host: config.host || process.env.DB_HOST || 'localhost',
+        port: config.port || Number(process.env.DB_PORT) || 3306,
+        user: config.user || process.env.DB_USER || 'root',
+        password: config.password || process.env.DB_PASSWORD || '',
+        database: config.database || process.env.DB_NAME || 'localminidrama',
         charset: 'utf8mb4'
       });
       

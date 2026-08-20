@@ -17,6 +17,9 @@
 
 const { OpenApiError } = require('./errors');
 
+// 默认基地址：本地开发默认指向本机后端；生产环境可通过环境变量 OPENAPI_BASE_URL 覆盖
+const DEFAULT_BASE_URL = process.env.OPENAPI_BASE_URL || 'http://localhost:5679/api/v1/open';
+
 class OpenApiClient {
   /**
    * @param {Object} options
@@ -25,7 +28,7 @@ class OpenApiClient {
    * @param {number} [options.timeoutMs=60000] 请求超时（毫秒）
    * @param {number} [options.maxRetries=0] 网络错误重试次数
    */
-  constructor({ baseUrl = 'http://localhost:5679/api/v1/open', apiKey, timeoutMs = 60000, maxRetries = 0, fetch: fetchImpl } = {}) {
+  constructor({ baseUrl = DEFAULT_BASE_URL, apiKey, timeoutMs = 60000, maxRetries = 0, fetch: fetchImpl } = {}) {
     if (!apiKey) throw new TypeError('OpenApiClient: apiKey 是必填项');
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.apiKey = apiKey;

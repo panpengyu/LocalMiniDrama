@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * S21-P1 管理页补齐（批 A）：渠道管理 + 作品管理
  *  - GET    /admin/channels       渠道分页列表
@@ -22,7 +24,7 @@ function adminExtRoutes(db, log) {
   // ============ 渠道管理 ============
   router.get('/channels', ...adminOnly, (req, res) => {
     try {
-      const { page = 1, page_size = 20, keyword, type } = req.query;
+      const { page = 1, page_size = DEFAULT_PAGE_SIZE, keyword, type } = req.query;
       const offset = (parseInt(page) - 1) * parseInt(page_size);
       let where = 'WHERE 1=1';
       const params = [];
@@ -93,7 +95,7 @@ function adminExtRoutes(db, log) {
   // ============ 作品管理（dramas） ============
   router.get('/works', ...adminOnly, (req, res) => {
     try {
-      const { page = 1, page_size = 20, keyword, status } = req.query;
+      const { page = 1, page_size = DEFAULT_PAGE_SIZE, keyword, status } = req.query;
       const offset = (parseInt(page) - 1) * parseInt(page_size);
       let where = 'WHERE deleted_at IS NULL';
       const params = [];

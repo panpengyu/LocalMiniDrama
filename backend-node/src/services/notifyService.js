@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 18 - S18-T02 报表推送通知服务
  *
@@ -180,7 +182,7 @@ async function dispatch(db, log, notify, { subscription, report, title }) {
   return { results };
 }
 
-function listSendLogs(db, { subscription_id = null, status = null, channel = null, page = 1, pageSize = 20 } = {}) {
+function listSendLogs(db, { subscription_id = null, status = null, channel = null, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   const where = [];
   const params = [];
   if (subscription_id) { where.push('subscription_id = ?'); params.push(Number(subscription_id)); }

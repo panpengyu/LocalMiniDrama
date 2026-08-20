@@ -53,9 +53,9 @@ function createApp() {
   const taskService = require('./services/taskService');
   taskService.failOrphanedAsyncTasksOnStartup(db, log);
 
-  // 初始化管理员账号
+  // 初始化管理员账号（初始密码来自 config.yaml app.admin_init_password，可被 ADMIN_INIT_PASSWORD 环境变量覆盖）
   const authService = require('./services/authService');
-  authService.initAdmin(db);
+  authService.initAdmin(db, config);
 
   // 恢复视频生成处理（继续之前中断的任务）
   const { resumeProcessingVideoGenerations } = require('./services/videoService');

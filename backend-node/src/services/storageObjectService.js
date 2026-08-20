@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
+
 /**
  * Sprint 12 - S12-T03 存储对象元数据与生命周期管理
  *
@@ -70,7 +72,7 @@ function touch(db, backend, objectKey) {
 }
 
 /** 分页列出存储对象 */
-function listObjects(db, { backend = null, lifecycle = null, dramaId = null, page = 1, pageSize = 20 } = {}) {
+function listObjects(db, { backend = null, lifecycle = null, dramaId = null, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   let sql = 'FROM storage_objects WHERE 1=1';
   const params = [];
   if (backend) { sql += ' AND backend = ?'; params.push(backend); }

@@ -10,6 +10,7 @@
  */
 const response = require('../response');
 const alertService = require('../services/alertService');
+const { DEFAULT_PAGE_SIZE } = require('../constants/pagination');
 const { snowflakeId } = require('../utils/snowflake');
 
 /**
@@ -457,7 +458,7 @@ function adminRoutes(db, log) {
    */
   async function getUsers(req, res) {
     try {
-      const { page = 1, page_size = 20, keyword } = req.query;
+      const { page = 1, page_size = DEFAULT_PAGE_SIZE, keyword } = req.query;
       const offset = (page - 1) * page_size;
       
       let sql = 'SELECT * FROM users WHERE role != ?';
@@ -639,7 +640,7 @@ function adminRoutes(db, log) {
    */
   async function getEnterprises(req, res) {
     try {
-      const { page = 1, page_size = 20, keyword } = req.query;
+      const { page = 1, page_size = DEFAULT_PAGE_SIZE, keyword } = req.query;
       const offset = (page - 1) * page_size;
       
       let sql = 'SELECT * FROM enterprises';
@@ -822,7 +823,7 @@ function adminRoutes(db, log) {
    */
   async function getTeams(req, res) {
     try {
-      const { page = 1, page_size = 20, keyword } = req.query;
+      const { page = 1, page_size = DEFAULT_PAGE_SIZE, keyword } = req.query;
       const offset = (page - 1) * page_size;
       
       let sql = 'SELECT t.*, e.name as enterprise_name, (SELECT COUNT(*) FROM users WHERE team_id = t.id) as member_count FROM teams t LEFT JOIN enterprises e ON t.enterprise_id = e.id';
